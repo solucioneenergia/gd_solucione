@@ -1,0 +1,7 @@
+interface:
+  display_name: "Spec Driven Development"
+  short_description: "Cria e revisa especificações verificáveis"
+  default_prompt: "Use $spec-driven-development para criar ou revisar a SPEC desta alteração."
+
+policy:
+  allow_implicit_invocation: true

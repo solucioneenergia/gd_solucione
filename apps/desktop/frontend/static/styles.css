@@ -1,0 +1,63 @@
+@import "../src/styles/theme.css";
+@import "../src/styles/layout.css";
+
+:root {
+  --color-bg: #f5f7fb;
+  --color-panel: #ffffff;
+  --color-border: #dfe5ee;
+  --color-text: #111827;
+  --color-muted: #6b7280;
+  --color-orange: #ff6b00;
+  --color-orange-dark: #ea580c;
+  --color-orange-light: #fff2e7;
+  --color-blue: #005bea;
+  --color-blue-light: #eaf2ff;
+  --color-green: #0f9f61;
+  --color-green-light: #e8f8ef;
+  --color-purple: #6d28d9;
+  --color-purple-light: #f1e9ff;
+  --app-bg: #f5f7fb;
+  --surface: #ffffff;
+  --surface-soft: #f8fafc;
+  --border: #dfe5ee;
+  --text: #111827;
+  --muted: #6b7280;
+  --orange: #ff6b00;
+  --orange-dark: #ea580c;
+  --orange-soft: #fff2e7;
+  --blue: #005bea;
+  --blue-dark: #0048c7;
+  --blue-soft: #eaf2ff;
+  --green: #0f9f61;
+  --green-soft: #e8f8ef;
+  --purple: #6d28d9;
+  --purple-soft: #f1e9ff;
+  --cyan: #38d7ff;
+  --cyan-soft: #e8faff;
+  --radius-sm: 8px;
+  --radius-md: 12px;
+  --radius-lg: 14px;
+  --radius-xl: 18px;
+  --radius-card: 14px;
+  --radius-button: 8px;
+  --shadow-card: 0 6px 18px rgba(15, 23, 42, 0.08);
+  --shadow-soft: 0 4px 14px rgba(15, 23, 42, 0.06);
+  --shadow-glow-blue: 0 0 24px rgba(56, 215, 255, 0.45);
+}
+
+.process-flow {
+  isolation: isolate;
+}
+
+.process-glow {
+  isolation: isolate;
+}
+
+.report-button,
+.report-label {
+  white-space: nowrap;
+}
+
+.table-wrap {
+  overflow-y: visible;
+}

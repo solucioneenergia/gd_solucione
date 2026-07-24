@@ -1,0 +1,7 @@
+interface:
+  display_name: "Engineering Orchestrator"
+  short_description: "Coordena mudanças com riscos e quality gates"
+  default_prompt: "Use $engineering-orchestrator para conduzir esta alteração de engenharia."
+
+policy:
+  allow_implicit_invocation: true

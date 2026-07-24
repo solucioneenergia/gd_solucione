@@ -1,0 +1,7 @@
+interface:
+  display_name: "Senior Code Review"
+  short_description: "Revisa riscos e regressões sem editar arquivos"
+  default_prompt: "Use $senior-code-review para revisar o diff sem modificar arquivos."
+
+policy:
+  allow_implicit_invocation: false

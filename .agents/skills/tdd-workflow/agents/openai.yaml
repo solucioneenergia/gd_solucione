@@ -1,0 +1,7 @@
+interface:
+  display_name: "TDD Workflow"
+  short_description: "Conduz implementação pelos ciclos RED e GREEN"
+  default_prompt: "Use $tdd-workflow para implementar esta alteração com TDD."
+
+policy:
+  allow_implicit_invocation: true

@@ -1,0 +1,131 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 820 250" role="img" aria-labelledby="title desc">
+  <title id="title">Fluxo visual premium da automação GD Neoenergia</title>
+  <desc id="desc">Portal, Download, PDF, Planilha e Arquivo conectados por uma linha azul luminosa.</desc>
+  <defs>
+    <linearGradient id="bg" x1="0" x2="820" y1="0" y2="250" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#eef6fb"/>
+      <stop offset=".48" stop-color="#e9f2f8"/>
+      <stop offset="1" stop-color="#dfeaf4"/>
+    </linearGradient>
+    <radialGradient id="blueGlow" cx="50%" cy="50%" r="65%">
+      <stop stop-color="#9af5ff" stop-opacity=".95"/>
+      <stop offset=".45" stop-color="#20bfff" stop-opacity=".65"/>
+      <stop offset="1" stop-color="#005bea" stop-opacity=".05"/>
+    </radialGradient>
+    <radialGradient id="base" cx="50%" cy="36%" r="70%">
+      <stop stop-color="#dffbff"/>
+      <stop offset=".42" stop-color="#2fd8ff"/>
+      <stop offset=".72" stop-color="#0d89d8"/>
+      <stop offset="1" stop-color="#064d8a"/>
+    </radialGradient>
+    <linearGradient id="panelFace" x1="75" x2="150" y1="64" y2="116">
+      <stop stop-color="#0b2d58"/>
+      <stop offset="1" stop-color="#1d70aa"/>
+    </linearGradient>
+    <linearGradient id="device" x1="246" x2="308" y1="42" y2="145">
+      <stop stop-color="#f8fcff"/>
+      <stop offset=".52" stop-color="#9eb9ce"/>
+      <stop offset="1" stop-color="#365e7d"/>
+    </linearGradient>
+    <linearGradient id="paper" x1="401" x2="467" y1="35" y2="152">
+      <stop stop-color="#ffffff"/>
+      <stop offset="1" stop-color="#d7e7f5"/>
+    </linearGradient>
+    <linearGradient id="sheet" x1="551" x2="618" y1="35" y2="152">
+      <stop stop-color="#ffffff"/>
+      <stop offset="1" stop-color="#dcf8e8"/>
+    </linearGradient>
+    <linearGradient id="folder" x1="684" x2="780" y1="84" y2="151">
+      <stop stop-color="#ffe68e"/>
+      <stop offset=".55" stop-color="#ffc536"/>
+      <stop offset="1" stop-color="#e48a00"/>
+    </linearGradient>
+    <filter id="softShadow" x="-30%" y="-25%" width="160%" height="170%">
+      <feDropShadow dx="0" dy="16" stdDeviation="10" flood-color="#0f4d72" flood-opacity=".28"/>
+    </filter>
+    <filter id="hardShadow" x="-30%" y="-25%" width="160%" height="170%">
+      <feDropShadow dx="0" dy="9" stdDeviation="6" flood-color="#0f172a" flood-opacity=".22"/>
+    </filter>
+    <filter id="lineGlow" x="-10%" y="-300%" width="120%" height="700%">
+      <feGaussianBlur stdDeviation="3" result="blur"/>
+      <feMerge>
+        <feMergeNode in="blur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+    <pattern id="grid" width="46" height="46" patternUnits="userSpaceOnUse">
+      <path d="M46 0H0v46" fill="none" stroke="#8fc7dd" stroke-opacity=".22" stroke-width="1"/>
+      <circle cx="0" cy="0" r="1.2" fill="#38d7ff" fill-opacity=".42"/>
+    </pattern>
+  </defs>
+
+  <rect width="820" height="250" rx="14" fill="url(#bg)"/>
+  <rect width="820" height="250" rx="14" fill="url(#grid)" opacity=".78"/>
+  <path d="M48 42c85-35 164 14 244-7 102-26 184-24 276 5 75 24 142 2 205-12" fill="none" stroke="#ffffff" stroke-opacity=".28"/>
+  <path d="M60 180c102 21 151-17 232 1 95 21 183 24 284 0 76-18 132-3 188 11" fill="none" stroke="#89dff2" stroke-opacity=".2"/>
+  <circle cx="90" cy="59" r="2" fill="#b7f7ff" opacity=".8"/>
+  <circle cx="217" cy="38" r="1.7" fill="#b7f7ff" opacity=".75"/>
+  <circle cx="390" cy="58" r="2" fill="#b7f7ff" opacity=".78"/>
+  <circle cx="663" cy="50" r="2" fill="#b7f7ff" opacity=".72"/>
+  <circle cx="760" cy="76" r="1.8" fill="#b7f7ff" opacity=".8"/>
+
+  <path d="M122 124H699" stroke="#4be8ff" stroke-width="5" stroke-linecap="round" filter="url(#lineGlow)" opacity=".95"/>
+  <path d="M122 124H699" stroke="#dffbff" stroke-width="1.5" stroke-linecap="round" opacity=".75"/>
+
+  <!-- Portal / painel solar -->
+  <g filter="url(#softShadow)">
+    <ellipse cx="92" cy="160" rx="44" ry="12" fill="url(#base)"/>
+    <ellipse cx="92" cy="155" rx="33" ry="7" fill="#dffbff" opacity=".38"/>
+    <path d="M52 119h69l15-45H68z" fill="url(#panelFace)" stroke="#bfeaff" stroke-width="2.2"/>
+    <path d="M68 78 58 117M84 76l-5 43M101 75l2 44M119 74l8 45M61 91h66M56 105h66" stroke="#9ee8ff" stroke-width="1.5" opacity=".9"/>
+    <path d="M92 121v32M66 153h52" stroke="#05bfff" stroke-width="5" stroke-linecap="round"/>
+  </g>
+  <text x="92" y="211" text-anchor="middle" font-family="Segoe UI, Arial, sans-serif" font-size="16" font-weight="700" fill="#111827">Portal</text>
+
+  <!-- Download / equipamento -->
+  <g filter="url(#softShadow)">
+    <ellipse cx="255" cy="160" rx="44" ry="12" fill="url(#base)"/>
+    <ellipse cx="255" cy="155" rx="32" ry="7" fill="#dffbff" opacity=".38"/>
+    <path d="M226 51h50l17 12v87h-67z" fill="url(#device)" stroke="#315d7a" stroke-width="2.2"/>
+    <path d="M276 51l17 12v87l-17-9z" fill="#5e839f" stroke="#315d7a" stroke-width="2.2"/>
+    <rect x="240" y="73" width="22" height="48" rx="4" fill="#163c5e" stroke="#a9d6ef" stroke-width="1.6"/>
+    <circle cx="251" cy="88" r="4.5" fill="#73f0ff"/>
+    <path d="M251 101v18m0 0-7-7m7 7 7-7" fill="none" stroke="#73f0ff" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+    <path d="M270 78h10M270 91h10M270 104h10M240 135h28" stroke="#234c66" stroke-width="2.3" stroke-linecap="round"/>
+  </g>
+  <text x="255" y="211" text-anchor="middle" font-family="Segoe UI, Arial, sans-serif" font-size="16" font-weight="700" fill="#111827">Download</text>
+
+  <!-- PDF -->
+  <g filter="url(#softShadow)">
+    <ellipse cx="419" cy="160" rx="44" ry="12" fill="url(#base)"/>
+    <ellipse cx="419" cy="155" rx="32" ry="7" fill="#dffbff" opacity=".38"/>
+    <path d="M390 38h52l28 28v85h-80z" fill="url(#paper)" stroke="#8aa4bd" stroke-width="2.4"/>
+    <path d="M442 38v30h28" fill="#bfcedc" stroke="#8aa4bd" stroke-width="2.4"/>
+    <path d="M405 86h47M405 127h49" stroke="#c5d8ea" stroke-width="2.4" stroke-linecap="round"/>
+    <rect x="373" y="94" width="70" height="30" rx="5" fill="#e11d26"/>
+    <text x="408" y="114" text-anchor="middle" font-family="Segoe UI, Arial, sans-serif" font-size="19" font-weight="900" fill="#fff">PDF</text>
+  </g>
+  <text x="419" y="211" text-anchor="middle" font-family="Segoe UI, Arial, sans-serif" font-size="16" font-weight="700" fill="#111827">PDF</text>
+
+  <!-- Planilha -->
+  <g filter="url(#softShadow)">
+    <ellipse cx="582" cy="160" rx="44" ry="12" fill="url(#base)"/>
+    <ellipse cx="582" cy="155" rx="32" ry="7" fill="#dffbff" opacity=".38"/>
+    <path d="M553 38h52l28 28v85h-80z" fill="url(#sheet)" stroke="#8aa4bd" stroke-width="2.4"/>
+    <path d="M605 38v30h28" fill="#bfcedc" stroke="#8aa4bd" stroke-width="2.4"/>
+    <rect x="571" y="82" width="39" height="47" rx="2" fill="#16a34a"/>
+    <path d="M584 82v47M597 82v47M571 98h39M571 114h39" stroke="#dbffe9" stroke-width="2"/>
+  </g>
+  <text x="582" y="211" text-anchor="middle" font-family="Segoe UI, Arial, sans-serif" font-size="16" font-weight="700" fill="#111827">Planilha</text>
+
+  <!-- Arquivo -->
+  <g filter="url(#softShadow)">
+    <ellipse cx="735" cy="160" rx="44" ry="12" fill="url(#base)"/>
+    <ellipse cx="735" cy="155" rx="32" ry="7" fill="#dffbff" opacity=".38"/>
+    <path d="M684 85h44l12 13h62v56H684z" fill="#f8b902" stroke="#8b5b00" stroke-width="2.4"/>
+    <path d="M691 101h115l-13 55H674z" fill="url(#folder)" stroke="#8b5b00" stroke-width="2.4"/>
+    <path d="M702 111h78" stroke="#fff1a8" stroke-width="3" opacity=".78"/>
+    <path d="M773 104h31l-11 51h-28z" fill="#d58400" opacity=".24"/>
+  </g>
+  <text x="735" y="211" text-anchor="middle" font-family="Segoe UI, Arial, sans-serif" font-size="16" font-weight="700" fill="#111827">Arquivo</text>
+</svg>

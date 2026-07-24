@@ -1,0 +1,201 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Automação GD Neoenergia — Desktop Visual</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <div class="app-shell">
+      <aside class="sidebar">
+        <nav class="sidebar-nav" aria-label="Navegação principal">
+          <a class="nav-item active" href="#">
+            <span class="sidebar-icon" aria-hidden="true">
+              <img src="./assets/icons/dashboard.svg" alt="" />
+            </span>
+            Dashboard
+          </a>
+          <a class="nav-item" href="#">
+            <span class="sidebar-icon" aria-hidden="true">
+              <img src="./assets/icons/portal.svg" alt="" />
+            </span>
+            Portal
+          </a>
+          <a class="nav-item" href="#">
+            <span class="sidebar-icon" aria-hidden="true">
+              <img src="./assets/icons/pipeline.svg" alt="" />
+            </span>
+            Pipeline
+          </a>
+          <a class="nav-item" href="#">
+            <span class="sidebar-icon" aria-hidden="true">
+              <img src="./assets/icons/protocolos.svg" alt="" />
+            </span>
+            Protocolos
+          </a>
+          <a class="nav-item" href="#">
+            <span class="sidebar-icon" aria-hidden="true">
+              <img src="./assets/icons/relatorios.svg" alt="" />
+            </span>
+            Relatórios
+          </a>
+          <a class="nav-item" href="#">
+            <span class="sidebar-icon" aria-hidden="true">
+              <img src="./assets/icons/configuracoes.svg" alt="" />
+            </span>
+            Configurações
+          </a>
+        </nav>
+        <div class="python-card">
+          <span class="python-logo">Py</span>
+          <div>
+            <strong>Python 3.11</strong>
+            <small title="Modo visual estático. Execute npm run build para ativar React.">Ambiente pronto</small>
+          </div>
+          <span class="status-dot"></span>
+        </div>
+      </aside>
+
+      <main class="main-content">
+        <header class="topbar">
+          <h1>Automação GD Neoenergia — Desktop Visual</h1>
+          <div class="topbar-actions">
+            <div class="system-badge"><span></span>Sistema <strong>Pronto</strong></div>
+            <button class="icon-button" type="button" aria-label="Limpeza de temporários em simulação" title="Limpeza de temporários — simulação" data-action="cleanup-dry-run">⚙</button>
+          </div>
+        </header>
+
+        <section class="status-grid">
+          <article class="status-card green">
+            <div class="status-icon monitor"><img src="./assets/icons/status-system.svg" alt="" /></div>
+            <div><small>Status do sistema</small><strong data-field="system-status">Pronto</strong></div>
+          </article>
+          <article class="status-card blue">
+            <div class="status-icon link"><img src="./assets/icons/cdp-link.svg" alt="" /></div>
+            <div><small>CDP</small><strong data-field="cdp-status">Não testado</strong></div>
+          </article>
+          <article class="status-card purple">
+            <div class="status-icon flask"><img src="./assets/icons/simulation-mode.svg" alt="" /></div>
+            <div><small>Modo</small><strong data-field="mode">Simulação</strong></div>
+          </article>
+          <article class="status-card orange">
+            <div class="status-icon layers"><img src="./assets/icons/batch-layers.svg" alt="" /></div>
+            <div><small>Lote</small><strong data-field="batch-label">10 protocolos</strong></div>
+          </article>
+        </section>
+
+        <section class="middle-grid">
+          <article class="panel execution-panel">
+            <h2>Portal e Execução</h2>
+            <div class="button-grid">
+              <button class="btn primary" data-action="open-edge-cdp"><img class="btn-svg" src="./assets/icons/cdp-link.svg" alt="" />Abrir Edge CDP</button>
+              <button class="btn secondary" data-action="test-cdp"><img class="btn-svg" src="./assets/icons/cdp-link.svg" alt="" />Testar conexão CDP</button>
+              <button class="btn secondary wide" data-action="inspect-portal"><img class="btn-svg" src="./assets/icons/portal.svg" alt="" />Inspecionar portal</button>
+            </div>
+
+            <div class="divider"></div>
+            <h2>Pipeline</h2>
+            <div class="config-grid">
+              <div class="config-chip"><span>Paginação do portal:</span><strong>Ativa</strong></div>
+              <div class="config-chip"><span>Máx. páginas:</span><strong data-field="max-pages">2</strong></div>
+              <div class="config-chip"><span>Máx. protocolos:</span><strong data-field="max-protocols">10</strong></div>
+              <div class="config-chip"><span>Pular concluídos:</span><strong>Sim</strong></div>
+            </div>
+
+            <div class="run-grid">
+              <button class="btn outline" data-action="run-dry-run"><img class="btn-svg" src="./assets/icons/simulation-mode.svg" alt="" />Rodar simulação</button>
+              <button class="btn production" data-action="request-production"><img class="btn-svg" src="./assets/icons/pipeline.svg" alt="" />Rodar produção</button>
+            </div>
+            <div class="warning"><span>⚠</span>Produção exige confirmação antes de atualizar planilha e arquivar PDFs.</div>
+          </article>
+
+          <article class="panel process-panel">
+            <h2>Visualização do Processo</h2>
+            <div class="process-visual process-flow premium-flow" aria-label="Portal, Download, PDF, Planilha e Arquivo">
+              <picture class="process-picture">
+                <source srcset="./assets/images/process-flow-premium.webp" type="image/webp" />
+                <source srcset="./assets/images/process-flow-premium.png" type="image/png" />
+                <img class="process-asset process-premium-image" src="./assets/images/process-flow-premium.svg" alt="Portal → Download → PDF → Planilha → Arquivo" />
+              </picture>
+              <span class="sr-only">Portal</span>
+              <span class="sr-only">Download</span>
+              <span class="sr-only">PDF</span>
+              <span class="sr-only">Planilha</span>
+              <span class="sr-only">Arquivo</span>
+            </div>
+            <div class="activity-status">
+              <span class="process-status-message" data-field="activity-message">◷ Aguardando início da automação</span>
+              <span class="progress-pill process-status-percent" data-field="overall-progress">0%</span>
+            </div>
+          </article>
+        </section>
+
+        <section class="panel protocols-panel">
+          <h2>Protocolos recentes</h2>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Protocolo</th>
+                  <th>Cliente</th>
+                  <th>PDF</th>
+                  <th>Excel</th>
+                  <th>Arquivo</th>
+                  <th>Status</th>
+                </tr>
+              </thead>
+              <tbody data-field="protocols-body">
+                <tr>
+                  <td>2606184625</td>
+                  <td>José Fabio Estevão da Silva</td>
+                  <td>Reutilizado</td>
+                  <td>update_existing</td>
+                  <td>Entrada 18-06-2026</td>
+                  <td><span class="ok-badge">OK</span></td>
+                </tr>
+                <tr>
+                  <td>2606174347</td>
+                  <td>Monica Araujo da Silva Pereira</td>
+                  <td>Baixado</td>
+                  <td>skipped_excel_already_updated</td>
+                  <td>ENTRADA 17-06-2026</td>
+                  <td><span class="ok-badge">OK</span></td>
+                </tr>
+                <tr>
+                  <td>2606123663</td>
+                  <td>Danilo Arruda da Silva</td>
+                  <td>Baixado</td>
+                  <td>skipped_excel_already_updated</td>
+                  <td>Entrada 12-06-2026</td>
+                  <td><span class="ok-badge">OK</span></td>
+                </tr>
+                <tr>
+                  <td>2606021741</td>
+                  <td>Severino Jose da Silva</td>
+                  <td>Baixado</td>
+                  <td>skipped_excel_already_updated</td>
+                  <td>Entrada sítio</td>
+                  <td><span class="ok-badge">OK</span></td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </section>
+
+        <section class="panel reports-panel">
+          <h2>Relatórios</h2>
+          <div class="reports-grid">
+            <button class="report-button" data-action="open-pipeline-report"><img src="./assets/icons/report-file.svg" alt="" /><span class="report-label">Abrir pipeline_cdp_completo.md</span></button>
+            <button class="report-button" data-action="open-processing-report"><img src="./assets/icons/report-file.svg" alt="" /><span class="report-label">Abrir processamento_pdfs_planilha_clientes.md</span></button>
+            <button class="report-button" data-action="open-logs"><img src="./assets/icons/logs-folder.svg" alt="" /><span class="report-label">Abrir pasta de logs</span></button>
+            <button class="report-button sheet" data-action="open-workbook"><img src="./assets/icons/spreadsheet-file.svg" alt="" /><span class="report-label">Abrir planilha</span></button>
+          </div>
+        </section>
+      </main>
+    </div>
+
+    <script src="qrc:///qtwebchannel/qwebchannel.js"></script>
+    <script src="./app.js"></script>
+  </body>
+</html>

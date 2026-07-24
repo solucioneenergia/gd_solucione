@@ -1,0 +1,44 @@
+# Segredos e sessões
+.env
+*.env.local
+data/auth/
+data/browser_profile_edge/
+data/edge_cdp_profile/
+
+# Dados operacionais e PII
+data/downloads/
+data/logs/
+data/temp/
+data/state/
+data/cache/
+/data/
+automacao_gd/data/
+*.xlsx
+*.xlsm
+*.pdf
+
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+.venv/
+venv/
+
+# Build
+build/
+dist/
+frontend/dist/
+frontend/node_modules/
+frontend/*.tsbuildinfo
+*.egg-info/
+*.spec
+
+# IDE/SO
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
