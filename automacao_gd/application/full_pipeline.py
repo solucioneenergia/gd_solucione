@@ -114,6 +114,10 @@ def run_full_cdp_pipeline(
         message="Conexão CDP validada para início do download.",
     )
     download_summary = _run_download_step(settings, state_store)
+    download_summary = _apply_global_protocol_limit(
+        download_summary,
+        settings.MAX_COMPLETED_TO_PROCESS,
+    )
     progress.advance(
         stage="portal_read",
         overall_percent=25,
@@ -309,6 +313,67 @@ def _pdf_paths_for_processing(download_summary: dict) -> list[Path]:
         seen.add(key)
         selected.append(path)
     return selected
+
+
+def _apply_global_protocol_limit(download_summary: dict, max_protocols: int) -> dict:
+    """Limit the final processing set by unique protocol after all sources are known."""
+    limit = int(max_protocols or 0)
+    results = download_summary.get("results") or []
+    selected_protocols: list[str] = []
+    dropped_protocols: list[str] = []
+    seen_processable_protocols: set[str] = set()
+
+    for item in results:
+        if not _download_item_sent_to_processing(item):
+            item["selected_by_global_limit"] = False
+            item.setdefault("global_limit_status", "not_processable")
+            continue
+
+        protocol = str(item.get("protocol") or "")
+        if not protocol:
+            _exclude_from_processing(item, "missing_protocol")
+            continue
+        if protocol in seen_processable_protocols:
+            _exclude_from_processing(item, "duplicate_protocol")
+            continue
+
+        seen_processable_protocols.add(protocol)
+        if limit > 0 and len(selected_protocols) >= limit:
+            _exclude_from_processing(item, "excluded_by_global_limit")
+            dropped_protocols.append(protocol)
+            continue
+
+        item["selected_by_global_limit"] = True
+        item["global_limit_status"] = "selected"
+        selected_protocols.append(protocol)
+
+    download_summary["global_protocol_limit"] = limit
+    download_summary["global_protocol_limit_enforced"] = True
+    download_summary["protocols_selected_by_global_limit"] = selected_protocols
+    download_summary["total_protocols_selected_by_global_limit"] = len(
+        selected_protocols
+    )
+    download_summary["protocols_dropped_by_global_limit"] = dropped_protocols
+    download_summary["total_protocols_dropped_by_global_limit"] = len(
+        dropped_protocols
+    )
+    _refresh_processing_selection_totals(download_summary)
+    return download_summary
+
+
+def _exclude_from_processing(item: dict, status: str) -> None:
+    item["selected_by_global_limit"] = False
+    item["global_limit_status"] = status
+    item["process_pdf_path"] = None
+    item["selected_for_processing"] = False
+    item["processing_reason"] = status
+
+
+def _refresh_processing_selection_totals(download_summary: dict) -> None:
+    results = download_summary.get("results") or []
+    total_for_processing = sum(1 for item in results if _download_item_sent_to_processing(item))
+    download_summary["total_for_processing"] = total_for_processing
+    download_summary["total_sent_to_processing"] = total_for_processing
 
 
 def _is_valid_pdf(path: Path) -> bool:
@@ -702,6 +767,14 @@ def _build_pipeline_totals(
         ),
         "total_force_reprocess": download_summary.get("total_force_reprocess", 0),
         "total_selected": download_summary.get("total_selected", 0),
+        "global_protocol_limit": download_summary.get("global_protocol_limit", 0),
+        "total_protocols_selected_by_global_limit": download_summary.get(
+            "total_protocols_selected_by_global_limit",
+            sum(1 for row in protocol_rows if row.get("sent_to_processing")),
+        ),
+        "total_protocols_dropped_by_global_limit": download_summary.get(
+            "total_protocols_dropped_by_global_limit", 0
+        ),
         "total_skipped_already_completed": max(
             int(download_summary.get("total_already_completed_in_state", 0) or 0),
             sum(
@@ -861,6 +934,10 @@ def _build_markdown_report(payload: dict) -> str:
         f"- Total elegiveis apos skip: {payload['total_eligible_after_skip']}",
         f"- Total forcados por FORCE_REPROCESS_PROTOCOLS: {payload['total_force_reprocess']}",
         f"- Total selecionadas: {payload['total_selected']}",
+        "- Total selecionado pelo limite global: "
+        f"{payload.get('total_protocols_selected_by_global_limit', 0)}",
+        "- Total excluido pelo limite global: "
+        f"{payload.get('total_protocols_dropped_by_global_limit', 0)}",
         f"- Total ja concluidos pulados: {payload['total_skipped_already_completed']}",
         f"- Total retomados: {payload['total_resumed']}",
         f"- Total baixadas: {payload['total_downloaded']}",

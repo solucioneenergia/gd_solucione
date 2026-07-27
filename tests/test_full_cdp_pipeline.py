@@ -2,6 +2,7 @@ from datetime import datetime
 from pathlib import Path
 
 from scripts.run_full_cdp_pipeline import (
+    _apply_global_protocol_limit,
     _build_protocol_rows,
     _pdf_paths_for_processing,
     build_pipeline_payload,
@@ -1029,6 +1030,111 @@ def test_existing_pdf_after_skip_can_be_sent_to_processing(tmp_path: Path) -> No
     assert _pdf_paths_for_processing(download_summary) == [pdf_path]
 
 
+def test_global_protocol_limit_caps_existing_pdfs_after_skip(tmp_path: Path) -> None:
+    results = []
+    for index in range(1, 11):
+        portal_pdf = tmp_path / f"portal_{index}.pdf"
+        portal_pdf.write_bytes(b"%PDF-1.4\n")
+        results.append(
+            {
+                "protocol": f"2600{index:04d}",
+                "download_status": "downloaded",
+                "process_pdf_path": str(portal_pdf),
+            }
+        )
+    for index in range(11, 21):
+        existing_pdf = tmp_path / f"existing_{index}.pdf"
+        existing_pdf.write_bytes(b"%PDF-1.4\n")
+        results.append(
+            {
+                "protocol": f"2600{index:04d}",
+                "download_status": "existing_pdf_after_skip",
+                "process_pdf_path": str(existing_pdf),
+                "previous_state": "completed",
+                "previous_last_step": "pdf_reused",
+            }
+        )
+    summary = {"results": results, "selected_protocols": [{"protocol": r["protocol"]} for r in results]}
+
+    limited = _apply_global_protocol_limit(summary, 5)
+
+    assert len(_pdf_paths_for_processing(limited)) == 5
+    assert limited["protocols_selected_by_global_limit"] == [
+        "26000001",
+        "26000002",
+        "26000003",
+        "26000004",
+        "26000005",
+    ]
+    assert limited["total_protocols_selected_by_global_limit"] == 5
+    assert limited["total_protocols_dropped_by_global_limit"] == 15
+    assert limited["total_sent_to_processing"] == 5
+
+
+def test_global_protocol_limit_deduplicates_same_protocol(tmp_path: Path) -> None:
+    first_pdf = tmp_path / "first.pdf"
+    second_pdf = tmp_path / "second.pdf"
+    third_pdf = tmp_path / "third.pdf"
+    for pdf_path in [first_pdf, second_pdf, third_pdf]:
+        pdf_path.write_bytes(b"%PDF-1.4\n")
+    summary = {
+        "results": [
+            {
+                "protocol": "2601",
+                "download_status": "downloaded",
+                "process_pdf_path": str(first_pdf),
+            },
+            {
+                "protocol": "2601",
+                "download_status": "existing_pdf_after_skip",
+                "process_pdf_path": str(second_pdf),
+            },
+            {
+                "protocol": "2602",
+                "download_status": "existing_pdf_after_skip",
+                "process_pdf_path": str(third_pdf),
+            },
+        ],
+        "selected_protocols": [{"protocol": "2601"}, {"protocol": "2601"}, {"protocol": "2602"}],
+    }
+
+    limited = _apply_global_protocol_limit(summary, 5)
+
+    assert [path.name for path in _pdf_paths_for_processing(limited)] == [
+        "first.pdf",
+        "third.pdf",
+    ]
+    assert limited["protocols_selected_by_global_limit"] == ["2601", "2602"]
+    assert limited["results"][1]["process_pdf_path"] is None
+    assert limited["results"][1]["global_limit_status"] == "duplicate_protocol"
+
+
+def test_global_protocol_limit_counts_resumed_protocols(tmp_path: Path) -> None:
+    pdfs = []
+    for index in range(3):
+        pdf = tmp_path / f"resume_{index}.pdf"
+        pdf.write_bytes(b"%PDF-1.4\n")
+        pdfs.append(pdf)
+    summary = {
+        "results": [
+            {
+                "protocol": f"260{index}",
+                "download_status": "existing_pdf_after_skip",
+                "process_pdf_path": str(pdf),
+                "previous_state": "failed",
+                "previous_last_step": "pdf_reused",
+            }
+            for index, pdf in enumerate(pdfs, start=1)
+        ]
+    }
+
+    limited = _apply_global_protocol_limit(summary, 2)
+
+    assert limited["protocols_selected_by_global_limit"] == ["2601", "2602"]
+    assert len(_pdf_paths_for_processing(limited)) == 2
+    assert limited["results"][2]["global_limit_status"] == "excluded_by_global_limit"
+
+
 def test_pipeline_totals_match_protocol_rows(tmp_path: Path) -> None:
     pdf_1 = tmp_path / "Orcamento_de_Conexao_2601.pdf"
     pdf_2 = tmp_path / "Orcamento_de_Conexao_2602.pdf"
@@ -1144,6 +1250,67 @@ def test_pipeline_no_safe_protocols_to_apply_remains_blocked(tmp_path: Path) -> 
 
     assert payload["status"] == "BLOQUEADO"
     assert payload["total_excel_updated"] == 0
+
+
+def test_global_limit_metrics_close_with_processing_categories(tmp_path: Path) -> None:
+    pdfs = []
+    results = []
+    for index in range(4):
+        pdf = tmp_path / f"Orcamento_de_Conexao_260{index}.pdf"
+        pdf.write_bytes(b"%PDF-1.4\n")
+        pdfs.append(pdf)
+        results.append(
+            {
+                "protocol": f"260{index}",
+                "download_status": "existing_pdf_after_skip",
+                "process_pdf_path": str(pdf),
+            }
+        )
+    download_summary = _apply_global_protocol_limit(
+        {
+            "total_rows": 4,
+            "total_completed": 4,
+            "total_selected": 4,
+            "results": results,
+            "selected_protocols": [{"protocol": f"260{index}"} for index in range(4)],
+        },
+        4,
+    )
+    processing_summary = {
+        "total_success": 2,
+        "total_errors": 1,
+        "total_pdfs_analyzed": 4,
+        "total_safe_protocols": 1,
+        "total_no_change_protocols": 1,
+        "total_pending_protocols": 1,
+        "total_failed_protocols": 1,
+        "total_excel_updated": 1,
+        "total_archived": 0,
+        "results": [
+            {"protocol": "2600", "success": True, "action": "update_existing"},
+            {"protocol": "2601", "success": True, "action": "skipped_excel_already_updated"},
+            {"protocol": "2602", "success": False, "action": "pending_technical_review"},
+            {"protocol": "2603", "success": False, "error": "Falha sistemica"},
+        ],
+    }
+
+    payload = build_pipeline_payload(
+        settings=DummySettings(),
+        started_at=datetime(2026, 1, 1, 10, 0, 0),
+        finished_at=datetime(2026, 1, 1, 10, 1, 0),
+        download_summary=download_summary,
+        processing_summary=processing_summary,
+        download_report_path=tmp_path / "download.json",
+        pdf_paths=pdfs,
+    )
+
+    assert payload["total_protocols_selected_by_global_limit"] == 4
+    assert (
+        payload["total_safe_protocols"]
+        + payload["total_no_change_protocols"]
+        + payload["total_pending_protocols"]
+        + payload["total_failed_protocols"]
+    ) == payload["total_protocols_selected_by_global_limit"]
 
 
 def test_consolidated_report_counts_skipped_completed_and_resumed(

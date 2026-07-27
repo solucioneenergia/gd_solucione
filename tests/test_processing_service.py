@@ -618,7 +618,7 @@ def test_real_run_technical_pending_does_not_block_safe_protocol(
     assert payload["total_excel_updated"] == 1
     assert payload["total_archived"] == 1
     assert payload["pending_pdf_paths"] == [str(pdfs[1])]
-    assert calls == [(pdfs[0], True), (pdfs[1], True), (pdfs[0], False), (pdfs[1], False)]
+    assert calls == [(pdfs[0], True), (pdfs[1], True), (pdfs[0], False)]
 
 
 def test_real_run_only_pending_protocols_blocks_without_backup(
@@ -870,6 +870,80 @@ def test_processing_metrics_distinguish_analyzed_safe_pending_and_applied(
     assert payload["total_safe_protocols"] == 1
     assert payload["total_pending_protocols"] == 1
     assert payload["total_updates_planned"] == 1
+    assert payload["total_updates_applied"] == 1
+
+
+def test_real_run_reuses_pending_simulation_result_without_second_warning(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    safe = tmp_path / "Orcamento_de_Conexao_2500000150.pdf"
+    pending = tmp_path / "Orcamento_de_Conexao_2500000151.pdf"
+    calls: list[tuple[str, bool]] = []
+
+    def fake_process(pdf_path, *_args, dry_run=True, **_kwargs):
+        actual_dry_run = _args[2] if len(_args) >= 3 else dry_run
+        protocol = pdf_path.stem.rsplit("_", 1)[-1]
+        calls.append((protocol, bool(actual_dry_run)))
+        is_pending = pdf_path == pending
+        return {
+            **processing_service._empty_result(pdf_path),
+            "success": not is_pending,
+            "protocol": protocol,
+            "action": "pending_technical_review" if is_pending else "update_existing",
+            "technical_review_required": is_pending,
+            "technical_validation_status": "pending_review" if is_pending else "approved",
+            "error": "Extração técnica inconclusiva" if is_pending else None,
+            "excel_status": {
+                "success": not is_pending,
+                "can_write": not is_pending,
+                "skipped": is_pending,
+            },
+            "archive_status": {
+                "success": not is_pending,
+                "skipped": is_pending,
+                "simulated": actual_dry_run,
+            },
+        }
+
+    monkeypatch.setattr(processing_service, "_process_single_pdf", fake_process)
+    monkeypatch.setattr(processing_service, "ensure_directories", lambda: None)
+    monkeypatch.setattr(processing_service, "clear_folder_cache", lambda: None)
+    monkeypatch.setattr(
+        processing_service,
+        "_real_run_preflight_result",
+        lambda *args, **kwargs: {"success": True, "error": None, "code": None},
+    )
+    monkeypatch.setattr(
+        processing_service,
+        "create_workbook_backup",
+        lambda path: tmp_path / "backup.xlsx",
+    )
+    monkeypatch.setattr(
+        processing_service,
+        "get_settings",
+        lambda: SimpleNamespace(logs_dir_path=tmp_path / "logs", BACKUP_EXCEL=True),
+    )
+    monkeypatch.setattr(processing_service, "atomic_write_json", lambda *args, **kwargs: None)
+    monkeypatch.setattr(processing_service, "atomic_write_text", lambda *args, **kwargs: None)
+
+    payload = processing_service.process_downloaded_pdfs(
+        downloads_root=tmp_path,
+        workbook_path=tmp_path / "planilha.xlsx",
+        clientes_root=tmp_path / "clientes",
+        dry_run=False,
+        pdf_paths=[safe, pending],
+        apply_excel=True,
+        apply_archive=True,
+    )
+
+    assert calls == [
+        ("2500000150", True),
+        ("2500000151", True),
+        ("2500000150", False),
+    ]
+    assert payload["total_pdfs_analyzed"] == 2
+    assert payload["total_pending_protocols"] == 1
     assert payload["total_updates_applied"] == 1
 
 

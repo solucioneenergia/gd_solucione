@@ -105,3 +105,54 @@ O pipeline CDP completo bloqueou a gravacao de todo o lote quando a simulacao de
 - `test_real_run_systemic_failure_rolls_back_safe_subset`
 - `test_processing_metrics_distinguish_analyzed_safe_pending_and_applied`
 - `test_pipeline_no_safe_protocols_to_apply_remains_blocked`
+
+## Adendo 2026-07-26 - hotfix v2.0.1 / limite global do lote
+
+### Problema
+
+Uma execucao de producao controlada com reutilizacao de PDFs existentes analisou
+mais protocolos do que o limite operacional pretendido para a rodada. O pipeline
+mantinha o isolamento de pendencias individuais, mas nao havia uma guarda final
+que limitasse o conjunto unico efetivamente enviado ao processamento apos juntar
+PDFs baixados, PDFs reutilizados e retomadas.
+
+### Comportamento esperado
+
+- `MAX_COMPLETED_TO_PROCESS` deve limitar globalmente a quantidade de protocolos
+  unicos analisados em uma execucao de producao controlada.
+- O limite global deve considerar conjuntamente protocolos novos do Portal,
+  retomados e PDFs locais reutilizados por `PROCESS_EXISTING_AFTER_SKIP=true`.
+- Nenhuma fase posterior pode adicionar `process_pdf_path` alem do limite global.
+- O mesmo protocolo presente em mais de uma origem deve ser analisado uma unica vez.
+- Protocolos pendentes consomem o limite, mas continuam bloqueando apenas a si
+  proprios.
+- Os relatorios devem separar protocolos encontrados, candidatos, selecionados
+  pelo limite global, PDFs baixados, PDFs reutilizados, PDFs analisados,
+  protocolos seguros, `NO_CHANGE`, pendentes, falhos, updates planejados,
+  updates aplicados e PDFs arquivados.
+- Pendencias tecnicas classificadas na simulacao nao devem gerar warnings
+  indistinguiveis duplicados na fase real; o relatorio estruturado deve manter
+  rastreabilidade suficiente por protocolo.
+
+### Criterios de aceite
+
+1. Dado 10 protocolos do Portal e 10 PDFs locais reutilizaveis com limite global
+   5, entao no maximo 5 protocolos unicos sao analisados.
+2. Dado o mesmo protocolo no Portal e nos downloads locais, entao ele e enviado
+   ao processamento uma unica vez.
+3. Dado protocolo retomado com PDF local valido, entao ele tambem consome o limite
+   global.
+4. Dado protocolo pendente dentro do limite, entao ele nao e aplicado, mas tambem
+   nao bloqueia protocolo seguro do mesmo subconjunto.
+5. Dado warning de pendencia tecnica, entao o console/resultado operacional nao
+   deve emitir duplicidade indistinguivel de simulacao e aplicacao.
+6. Dadas as metricas finais, entao
+   `protocolos_selecionados_pelo_limite_global = seguros + no_change + pendentes + falhos`.
+
+### Casos de teste
+
+- `test_global_protocol_limit_caps_existing_pdfs_after_skip`
+- `test_global_protocol_limit_deduplicates_same_protocol`
+- `test_global_protocol_limit_counts_resumed_protocols`
+- `test_global_limit_metrics_close_with_processing_categories`
+- `test_real_run_reuses_pending_simulation_result_without_second_warning`

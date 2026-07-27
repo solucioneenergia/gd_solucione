@@ -168,19 +168,16 @@ def process_downloaded_pdfs(
                     and _has_excel_updates_to_apply(simulation_results)
                 ):
                     backup_path = create_workbook_backup(workbook_path)
-                results = [
-                    _process_single_pdf(
-                        pdf_path,
-                        workbook_path,
-                        clientes_root,
-                        dry_run,
-                        backup_path,
-                        apply_excel,
-                        apply_archive,
-                        state_store,
-                    )
-                    for pdf_path in pdfs
-                ]
+                results = _apply_processable_subset_from_simulation(
+                    pdfs=pdfs,
+                    simulation_results=simulation_results,
+                    workbook_path=workbook_path,
+                    clientes_root=clientes_root,
+                    backup_path=backup_path,
+                    apply_excel=apply_excel,
+                    apply_archive=apply_archive,
+                    state_store=state_store,
+                )
                 systemic_issues = _systemic_real_apply_issues(results, apply_excel)
                 if systemic_issues:
                     systemic_apply_failure = True
@@ -1017,6 +1014,62 @@ def _has_excel_updates_to_apply(results: list[dict]) -> bool:
         for item in results
         if not _is_protocol_pending_review(item)
     )
+
+
+def _apply_processable_subset_from_simulation(
+    *,
+    pdfs: list[Path],
+    simulation_results: list[dict],
+    workbook_path: Path,
+    clientes_root: Path,
+    backup_path: Path | None,
+    apply_excel: bool,
+    apply_archive: bool,
+    state_store,
+) -> list[dict]:
+    simulation_by_path: dict[str, dict] = {}
+    for item in simulation_results:
+        raw_pdf_path = item.get("pdf_path")
+        if not raw_pdf_path:
+            continue
+        simulation_by_path[str(Path(str(raw_pdf_path)).resolve(strict=False))] = item
+    real_results_by_path: dict[str, dict] = {}
+
+    for pdf_path in pdfs:
+        key = str(Path(pdf_path).resolve(strict=False))
+        simulation_item = simulation_by_path.get(key)
+        if simulation_item is not None and not _is_protocol_safe_or_no_change(
+            simulation_item,
+            apply_excel,
+        ):
+            continue
+        real_result = _process_single_pdf(
+            pdf_path,
+            workbook_path,
+            clientes_root,
+            False,
+            backup_path,
+            apply_excel,
+            apply_archive,
+            state_store,
+        )
+        real_result["processing_phase"] = "application"
+        real_results_by_path[key] = real_result
+
+    results: list[dict] = []
+    for pdf_path in pdfs:
+        key = str(Path(pdf_path).resolve(strict=False))
+        if key in real_results_by_path:
+            results.append(real_results_by_path[key])
+            continue
+        simulation_item = dict(simulation_by_path.get(key) or _blocked_result(
+            pdf_path,
+            "Resultado de simulacao nao localizado para o protocolo.",
+        ))
+        simulation_item["processing_phase"] = "simulation_only"
+        simulation_item["real_run_skipped_reason"] = "protocol_not_safe_to_apply"
+        results.append(simulation_item)
+    return results
 
 
 def _systemic_real_apply_issues(results: list[dict], apply_excel: bool) -> list[dict]:

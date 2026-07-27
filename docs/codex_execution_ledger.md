@@ -17,6 +17,7 @@
 - Backfill historico: CLOSED
 - Automacao ponta a ponta: CLOSED
 - Release de producao: APPROVED
+- Hotfix v2.0.1: RELEASED
 - Producao controlada: AUTHORIZED
 - Operacao ampla: BLOCKED UNTIL EXPLICIT AUTHORIZATION
 
@@ -615,3 +616,123 @@ Arquivos gerados: `docs/releases/release_v2_manifest.md`; `docs/production_runbo
 Decisoes fechadas: Backfill historico CLOSED; Rules-4 APPLIED/HISTORICAL; Rules-7 APPLIED/HISTORICAL; Automacao ponta a ponta CLOSED; Release tecnica APPROVED; Producao controlada AUTHORIZED; Operacao ampla BLOCKED UNTIL EXPLICIT AUTHORIZATION.
 
 Proxima acao: operar em producao controlada seguindo o runbook; nao iniciar lote amplo sem autorizacao operacional explicita.
+
+## Execucao 22 - Hotfix v2.0.1 / limite global do lote
+
+Objetivo: corrigir exclusivamente o controle de amplitude do lote em producao para que `MAX_COMPLETED_TO_PROCESS` limite globalmente protocolos unicos analisados, inclusive quando `PROCESS_EXISTING_AFTER_SKIP=true` reutiliza PDFs locais ou retoma protocolos.
+
+Resultado anterior: execucao de producao controlada registrou `status=PARCIAL`, 1 PDF baixado, 60 PDFs analisados nos artefatos atuais, 54 tecnicamente aprovados, 11 updates aplicados, 43 `NO_CHANGE` e 6 pendencias tecnicas. O resumo operacional do prompt citava 54 PDFs processados; nos logs atuais, 54 corresponde a tecnicamente aprovados/sucessos, nao ao total analisado.
+
+Causa raiz: o download/seleção aplicava limite antes da composição final, mas o conjunto final enviado para processamento era derivado de `process_pdf_path` apos juntar PDFs baixados e PDFs existentes. Faltava uma guarda final por protocolo unico em `automacao_gd.application.full_pipeline` antes de `_pdf_paths_for_processing()`.
+
+Correcao: adicionada `_apply_global_protocol_limit()` para deduplicar e limitar protocolos unicos apos reunir todas as origens e antes de salvar o resumo de download/processar PDFs. Pendencias tecnicas classificadas na simulacao agora permanecem como `simulation_only` e nao sao reprocessadas na fase real, evitando warnings duplicados indistinguiveis sem remover a validacao. O resumo operacional passou a separar `PDFs analisados` de `PDFs aprovados tecnicamente`.
+
+Reconciliação: 60 protocolos unicos enviados/analisados nos logs atuais; origens portal_novo=1, pdf_reutilizado=25, retomada=34; updates unicos=11; `NO_CHANGE`=43; pendencias=6; equacao `60 = 11 updates + 43 no_change + 6 pendencias`.
+
+Pendencias: protocolos 2605250167, 2605148473, 2605056663, 2604275348, 2603166924 e 2602098916 classificados conservadoramente como `SOURCE_INCOMPLETE`; a quantidade total aparece no documento, mas a quantidade individual por modelo/fabricante nao esta documentalmente separada. Nao inferir quantidade e nao classificar como `PARSER_GAP` sem nova evidencia documental.
+
+Testes RED/GREEN: testes direcionados adicionados para limite global com PDFs existentes, deduplicacao, retomada consumindo limite, metricas reconciliaveis e reaproveitamento de pendencia da simulacao sem warning duplicado. Resultado direcionado final: `tests/test_full_cdp_pipeline.py tests/test_processing_service.py tests/test_operational_output.py` = 91 passed.
+
+Quality gates: `python -m pytest -q` = 681 passed e 1 failed por `FileNotFoundError` ao tentar abrir a planilha oficial em `Z:`; `python -m ruff check automacao_gd apps tests` = passed; `python -m compileall -q automacao_gd apps` = passed; `python -m mypy --follow-imports=skip automacao_gd/application/full_pipeline.py automacao_gd/application/processing_service.py automacao_gd/presentation/operational_output.py` = passed.
+
+Canario limite 5: tentativa com `MAX_COMPLETED_TO_PROCESS=5`, `PROCESS_EXISTING_AFTER_SKIP=true`, `RESUME_PIPELINE=true`, `SKIP_ALREADY_COMPLETED=true`, `RESET_PIPELINE_STATE=false`, `DRY_RUN=false`, `APPLY_EXCEL=true` e `APPLY_ARCHIVE=true` foi bloqueada antes do Portal por `NETWORK_DRIVE_UNAVAILABLE` na unidade `Z:`. PDFs baixados 0; Portal acessado NAO; planilha modificada NAO.
+
+SHA oficial: SHA anterior registrado no release v2.0.0 permanece `c86c97a1c31f58e0150222872f91e79941bf8b5ede8fcac715c3fffc0bca973e`. O SHA apos os 11 updates da execucao atual nao foi recalculado porque a planilha oficial em `Z:` esta indisponivel nesta sessao.
+
+Arquivos modificados: `automacao_gd/application/full_pipeline.py`; `automacao_gd/application/processing_service.py`; `automacao_gd/presentation/operational_output.py`; `tests/test_full_cdp_pipeline.py`; `tests/test_processing_service.py`; `tests/test_operational_output.py`; `specs/terminal_pipeline_error_stability.md`; `docs/releases/release_v2_manifest.md`; `docs/production_runbook.md`; `docs/operator_checklist.md`; `docs/codex_execution_ledger.md`.
+
+Artefatos: `production_batch_limit_hotfix_20260726T230458Z.json`; `production_batch_limit_hotfix_20260726T230458Z.md`.
+
+Revisao senior: P0=0; P1=0; P2=1; P3=0. P2: a unidade `Z:` indisponivel impede calcular o SHA atual da planilha e executar o canario real exigido para liberar v2.0.1.
+
+Decisao: HOTFIX_REJECTED - LIMITE GLOBAL AINDA NAO GARANTIDO em ambiente real, apesar de testes direcionados e replay dos logs confirmarem o corte por protocolo unico no codigo.
+
+Proxima acao: restabelecer a unidade `Z:`, recalcular SHA oficial, reexecutar a suite completa e repetir o canario real com limite 5. Somente apos sucesso criar commit/tag `v2.0.1` e liberar producao controlada.
+
+## Execucao 23 - Etapa 3.4 / revalidacao do hotfix v2.0.1
+
+Objetivo: com a unidade `Z:` novamente disponivel, concluir exclusivamente a validacao operacional do hotfix de limite global ja implementado, calcular SHA atual, executar quality gates, tentar canario real com limite 5 e liberar `v2.0.1` somente se todos os criterios fossem aprovados.
+
+Resultado anterior: hotfix v2.0.1 estava IMPLEMENTED/NOT_RELEASED porque a unidade `Z:` estava indisponivel, impedindo calculo de SHA, suite completa e canario real.
+
+Unidade Z: disponivel. `Z:`, `Z:/Clientes` e a planilha oficial foram acessados; leitura da planilha, abertura read-only do workbook e probe de escrita no diretorio foram aprovados; espaco livre suficiente.
+
+SHA recuperado: `b1bfedc497db8f207d900234b185c80f974ce2a0b628cb437edb19e13953c441`. A baseline foi recuperada por reconciliacao operacional porque o relatorio anterior dos 11 updates nao continha SHA final. A reconciliacao historica permanece: 60 PDFs analisados, 54 tecnicamente aprovados, 11 updates unicos, 43 `NO_CHANGE`, 6 pendencias, equacao `60 = 11 + 43 + 6`.
+
+Suite completa: `python -m pytest -q` = 682 passed.
+
+Quality gates: `python -m ruff check automacao_gd apps tests` = passed; `python -m compileall -q automacao_gd apps` = passed; `python -m mypy --follow-imports=skip automacao_gd/application/full_pipeline.py automacao_gd/application/processing_service.py automacao_gd/presentation/operational_output.py` = passed.
+
+Configuracao do canario: `APP_ENV=production`; `DRY_RUN=false`; `APPLY_EXCEL=true`; `APPLY_ARCHIVE=true`; `MAX_COMPLETED_TO_PROCESS=5`; `PROCESS_EXISTING_AFTER_SKIP=true`; `RESUME_PIPELINE=true`; `SKIP_ALREADY_COMPLETED=true`; `RESET_PIPELINE_STATE=false`; `ENABLE_PORTAL_PAGINATION=true`; `MAX_PORTAL_PAGES=11`.
+
+Pre-voo do Portal: endpoint CDP `127.0.0.1:9222` indisponivel; `webSocketDebuggerUrl` nao pôde ser obtido; Portal nao foi acessado; canario real nao foi iniciado.
+
+Protocolos unicos antes do limite: nao avaliado nesta execucao porque a dependencia CDP bloqueou antes da leitura do Portal.
+
+Protocolos selecionados: 0 nesta execucao.
+
+PDFs analisados: 0 nesta execucao.
+
+Duplicacoes: nao avaliadas no canario real porque CDP estava indisponivel. Replay dos logs e testes direcionados do hotfix continuam aprovados para deduplicacao e limite global.
+
+Pendencias: as seis pendencias historicas permanecem protegidas como `SOURCE_INCOMPLETE`: 2605250167, 2605148473, 2605056663, 2604275348, 2603166924 e 2602098916. Nao inferir quantidade.
+
+Updates: 0 nesta execucao; nenhum novo lote foi iniciado.
+
+Allowlist: nenhuma aplicacao ocorreu; mudancas fora da allowlist 0.
+
+SHA antes/depois: antes `b1bfedc497db8f207d900234b185c80f974ce2a0b628cb437edb19e13953c441`; depois `b1bfedc497db8f207d900234b185c80f974ce2a0b628cb437edb19e13953c441`; planilha modificada NAO.
+
+Revisao senior: P0=0; P1=0; P2=1; P3=0. P2: dependencia externa CDP indisponivel impede o canario real e, portanto, a liberacao do hotfix.
+
+Commit: nao criado.
+
+Tag: `v2.0.1` nao criada.
+
+Artefatos: `production_batch_limit_hotfix_revalidation_20260727T122842Z.json`; `production_batch_limit_hotfix_revalidation_20260727T122842Z.md`.
+
+Decisao: HOTFIX_REVALIDATION_BLOCKED - DEPENDENCIA EXTERNA.
+
+Proxima acao: abrir Edge com CDP em `127.0.0.1:9222`, autenticar o Portal GD e repetir somente o pre-voo/canario real com limite 5. Nao iniciar lote amplo.
+
+## Execucao 24 - Etapa 3.4 / revalidacao final do hotfix v2.0.1
+
+Objetivo: repetir somente a validacao operacional do hotfix com a unidade `Z:` e o Edge CDP disponiveis, provar o limite global com `PROCESS_EXISTING_AFTER_SKIP=true`, registrar SHA oficial final e liberar `v2.0.1` sem iniciar lote amplo.
+
+Resultado anterior: Execucao 23 ficou bloqueada por dependencia externa CDP/Portal, embora unidade `Z:`, planilha e quality gates estivessem aprovados.
+
+Unidade Z: disponivel; planilha oficial acessivel em leitura e escrita futura; workbook legivel; sem bloqueio detectado.
+
+SHA recuperado: `b1bfedc497db8f207d900234b185c80f974ce2a0b628cb437edb19e13953c441`. A baseline permanece recuperada por reconciliacao operacional porque o relatorio da execucao dos 11 updates nao registrava SHA final. O canario desta execucao nao aplicou updates e preservou o mesmo SHA.
+
+Suite completa: `python -m pytest -q` = 682 passed.
+
+Quality gates: `python -m ruff check automacao_gd apps tests` = passed; `python -m compileall -q automacao_gd apps` = passed; `python -m mypy --follow-imports=skip automacao_gd/application/full_pipeline.py automacao_gd/application/processing_service.py automacao_gd/presentation/operational_output.py` = passed.
+
+Configuracao do canario: `APP_ENV=production`; `DRY_RUN=false`; `APPLY_EXCEL=true`; `APPLY_ARCHIVE=true`; `MAX_COMPLETED_TO_PROCESS=5`; `PROCESS_EXISTING_AFTER_SKIP=true`; `RESUME_PIPELINE=true`; `SKIP_ALREADY_COMPLETED=true`; `RESET_PIPELINE_STATE=false`; `ENABLE_PORTAL_PAGINATION=true`; `MAX_PORTAL_PAGES=11`.
+
+Protocolos unicos antes do limite: 462 elegiveis apos leitura de 11 paginas do Portal.
+
+Protocolos selecionados: 5 protocolos unicos pelo limite global; 0 protocolos adicionados apos o limite; 0 duplicacoes.
+
+PDFs analisados: 5; PDFs baixados 0; PDFs reutilizados 5; PDFs tecnicamente aprovados 5.
+
+Pendencias: 0 no canario. As seis pendencias historicas permanecem protegidas como `SOURCE_INCOMPLETE`: 2605250167, 2605148473, 2605056663, 2604275348, 2603166924 e 2602098916. Nao inferir quantidade.
+
+Updates: 0 planejados e 0 aplicados no canario; os cinco protocolos foram `NO_CHANGE`/`skipped_excel_already_updated` e 5 PDFs foram arquivados conforme politica atual.
+
+Allowlist: nenhuma escrita Excel ocorreu; mudancas fora da allowlist 0; fingerprints divergentes 0; rollback nao necessario.
+
+SHA antes/depois: antes `b1bfedc497db8f207d900234b185c80f974ce2a0b628cb437edb19e13953c441`; depois `b1bfedc497db8f207d900234b185c80f974ce2a0b628cb437edb19e13953c441`.
+
+Revisao senior: P0=0; P1=0; P2=0; P3=0. Sem achados bloqueantes.
+
+Commit: criado nesta etapa e identificado pela tag local `v2.0.1`.
+
+Tag: `v2.0.1` criada localmente; push remoto NAO executado.
+
+Artefatos: `production_batch_limit_hotfix_revalidation_<timestamp>.json`; `production_batch_limit_hotfix_revalidation_<timestamp>.md`.
+
+Decisao: HOTFIX_RELEASED - PRODUCAO CONTROLADA LIBERADA EM v2.0.1.
+
+Proxima acao: operar em producao controlada com `MAX_COMPLETED_TO_PROCESS=5`; nao iniciar operacao ampla sem autorizacao explicita.

@@ -203,7 +203,10 @@ def _processing_summary(result: OperationResult, payload: dict) -> str:
 
 def _pipeline_summary(result: OperationResult, payload: dict) -> str:
     dry_run = bool(payload.get("dry_run", True))
-    processing = payload.get("processing") if isinstance(payload.get("processing"), dict) else {}
+    raw_processing = payload.get("processing")
+    processing: dict[str, Any] = (
+        raw_processing if isinstance(raw_processing, dict) else {}
+    )
     if result.status is OperationStatus.BLOQUEADO:
         lines = [
             "Execução não iniciada.",
@@ -223,7 +226,10 @@ def _pipeline_summary(result: OperationResult, payload: dict) -> str:
             if processing.get("blocked_real_run")
             else "O pipeline terminou com resultados parciais.",
             f"- PDFs baixados: {payload.get('total_downloaded', 0)}",
-            f"- PDFs processados: {payload.get('total_processed_success', 0)}",
+            "- Protocolos selecionados pelo limite global: "
+            f"{payload.get('total_protocols_selected_by_global_limit', 0)}",
+            f"- PDFs analisados: {payload.get('total_pdfs_analyzed', 0)}",
+            f"- PDFs aprovados tecnicamente: {payload.get('total_processed_success', 0)}",
             f"- Planilha atualizada: {payload.get('total_excel_updated', 0)}",
         ]
         if processing.get("blocked_real_run"):
@@ -245,9 +251,12 @@ def _pipeline_summary(result: OperationResult, payload: dict) -> str:
         f"- Solicitações concluídas: {payload.get('total_completed', 0)}",
         f"- Protocolos elegíveis: {payload.get('total_eligible_after_skip', 0)}",
         f"- Protocolos selecionados: {payload.get('total_selected', 0)}",
+        "- Selecionados pelo limite global: "
+        f"{payload.get('total_protocols_selected_by_global_limit', 0)}",
         f"- PDFs baixados: {payload.get('total_downloaded', 0)}",
         f"- PDFs reutilizados: {payload.get('total_existing_reused', 0)}",
-        f"- PDFs processados com sucesso: {payload.get('total_processed_success', 0)}",
+        f"- PDFs analisados: {payload.get('total_pdfs_analyzed', 0)}",
+        f"- PDFs aprovados tecnicamente: {payload.get('total_processed_success', 0)}",
         f"- Erros: {payload.get('total_errors', 0)}",
         f"- Planilha atualizada: {payload.get('total_excel_updated', 0)}",
         f"- PDFs arquivados: {payload.get('total_archived', 0)}",
@@ -311,7 +320,7 @@ def _format_protocol_line(row: dict, *, dry_run: bool) -> str:
     pdf_status = {
         "downloaded": "PDF baixado",
         "existing_pdf_after_skip": "PDF reutilizado",
-    }.get(row.get("download_status"), "PDF não disponível")
+    }.get(str(row.get("download_status") or ""), "PDF não disponível")
 
     excel_action = sanitize_for_console(
         str(row.get("excel_action") or row.get("excel_state") or "não aplicável")
@@ -427,7 +436,8 @@ def _report_paths(payload: dict) -> list[str]:
 
 
 def _attention_lines(result: OperationResult, payload: dict) -> list[str]:
-    download = payload.get("download") if isinstance(payload.get("download"), dict) else {}
+    raw_download = payload.get("download")
+    download: dict[str, Any] = raw_download if isinstance(raw_download, dict) else {}
     candidates = {
         "run_error": payload.get("run_error") or download.get("run_error"),
         "abort_reason": payload.get("abort_reason") or download.get("abort_reason"),

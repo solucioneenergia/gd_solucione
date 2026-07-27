@@ -25,6 +25,8 @@ def _pipeline_result() -> OperationResult:
             "total_selected": 1,
             "total_downloaded": 1,
             "total_existing_reused": 0,
+            "total_protocols_selected_by_global_limit": 1,
+            "total_pdfs_analyzed": 1,
             "total_processed_success": 1,
             "total_errors": 0,
             "total_excel_updated": 0,
@@ -66,7 +68,8 @@ def test_pipeline_summary_shows_main_totals() -> None:
     assert "Linhas lidas: 50" in output
     assert "Solicitações concluídas: 26" in output
     assert "Protocolos selecionados: 1" in output
-    assert "PDFs processados com sucesso: 1" in output
+    assert "PDFs analisados: 1" in output
+    assert "PDFs aprovados tecnicamente: 1" in output
     assert "2606184625 | Cliente Teste | PDF reutilizado" in output
     assert "[TELEFONE REMOVIDO] | Cliente Teste" not in output
 

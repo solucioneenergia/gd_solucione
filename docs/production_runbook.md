@@ -1,5 +1,12 @@
 # Runbook de produção controlada — Automação GD Neoenergia
 
+## Estado liberado
+
+- Versão operacional: `v2.0.1`
+- Produção controlada: AUTHORIZED
+- SHA oficial da planilha: `b1bfedc497db8f207d900234b185c80f974ce2a0b628cb437edb19e13953c441`
+- Operação ampla: bloqueada até autorização operacional explícita.
+
 ## Preparação
 
 1. Verificar unidade Z: disponível.
@@ -21,7 +28,13 @@ RESUME_PIPELINE=true
 SKIP_ALREADY_COMPLETED=true
 RESET_PIPELINE_STATE=false
 MAX_COMPLETED_TO_PROCESS=5
+PROCESS_EXISTING_AFTER_SKIP=true
 ```
+
+`MAX_COMPLETED_TO_PROCESS` é limite global de protocolos únicos analisados na
+execução. Ele inclui protocolos novos do Portal, PDFs reutilizados, retomadas e
+itens adicionados por `PROCESS_EXISTING_AFTER_SKIP=true`. Nenhuma fase posterior
+deve adicionar protocolos acima desse limite.
 
 ## Execução
 
@@ -36,6 +49,7 @@ confirmar com SIM
 ```text
 Status: SUCESSO ou PARCIAL
 Páginas lidas > 0
+Protocolos analisados <= MAX_COMPLETED_TO_PROCESS
 Erros sistêmicos = 0
 Mudanças fora da allowlist = 0
 ```
