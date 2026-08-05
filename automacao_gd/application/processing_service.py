@@ -51,6 +51,18 @@ from automacao_gd.infrastructure.pdf.service import (
 
 JSON_REPORT_NAME = "processamento_pdfs_planilha_clientes.json"
 MARKDOWN_REPORT_NAME = "processamento_pdfs_planilha_clientes.md"
+OPEN_COMPLETION_TEXT = "EM ABERTO"
+POINT_OF_CONNECTION_NO_DATE_STATUSES = {
+    "POINT_OF_CONNECTION_COMPLETION_DATE_NOT_AVAILABLE",
+    "POINT_OF_CONNECTION_STAGE_NOT_FOUND",
+}
+POINT_OF_CONNECTION_PENDING_STATUSES = {
+    "AMBIGUOUS_POINT_OF_CONNECTION_COMPLETION_DATE",
+    "AMBIGUOUS_POINT_OF_CONNECTION_STAGE",
+    "INVALID_POINT_OF_CONNECTION_COMPLETION_DATE",
+}
+
+
 def process_downloaded_pdfs(
     downloads_root: Path,
     workbook_path: Path,
@@ -60,6 +72,7 @@ def process_downloaded_pdfs(
     apply_excel: bool = True,
     apply_archive: bool = True,
     state_store=None,
+    allowed_protocols: set[str] | None = None,
 ) -> dict:
     ensure_directories()
     settings = get_settings()
@@ -79,6 +92,16 @@ def process_downloaded_pdfs(
     )
 
     pdfs = _resolve_pdf_paths(downloads_root, pdf_paths)
+    if allowed_protocols is not None:
+        unknown_protocols = sorted(
+            {
+                protocol
+                for protocol in (_protocol_from_filename(path) for path in pdfs)
+                if protocol and protocol not in allowed_protocols
+            }
+        )
+        if unknown_protocols:
+            return _scope_violation_summary(pdfs, unknown_protocols)
     initial_validation = _real_run_preflight_result(
         workbook_path,
         dry_run,
@@ -228,6 +251,14 @@ def process_downloaded_pdfs(
         systemic_apply_failure=systemic_apply_failure,
     )
     metrics = _processing_metrics(results, dry_run, apply_excel)
+    completion_dates_changed = sum(
+        1
+        for item in results
+        if item.get("completion_action") == "COMPLETION_DATE_UPDATED"
+    )
+    completion_open_changed = sum(
+        1 for item in results if item.get("completion_action") == "MARKED_AS_OPEN"
+    )
     payload = {
         "started_at": started_at.isoformat(timespec="seconds"),
         "finished_at": finished_at.isoformat(timespec="seconds"),
@@ -271,6 +302,21 @@ def process_downloaded_pdfs(
             for item in results
             if item.get("archive_status", {}).get("reason") == "archive_already_done"
         ),
+        "total_completion_dates_found": sum(
+            1 for item in results if item.get("completion_normalized")
+        ),
+        "total_completion_dates_updated": completion_dates_changed,
+        "total_completion_marked_open": completion_open_changed,
+        "completion_dates_proposed": completion_dates_changed if dry_run else 0,
+        "completion_dates_applied": 0 if dry_run else completion_dates_changed,
+        "open_values_proposed": completion_open_changed if dry_run else 0,
+        "open_values_applied": 0 if dry_run else completion_open_changed,
+        "total_completion_no_change": sum(
+            1 for item in results if item.get("completion_action") == "NO_CHANGE"
+        ),
+        "total_completion_pending_review": sum(
+            1 for item in results if item.get("completion_pending_review")
+        ),
         "blocked_real_run": blocked_real_run,
         "real_run_block_reason": real_run_block_reason,
         "real_run_block_code": real_run_block_code,
@@ -307,6 +353,75 @@ def process_downloaded_pdfs(
     logger.info(f"Relatório JSON salvo em: {json_path}")
     logger.info(f"Relatório Markdown salvo em: {markdown_path}")
     return payload
+
+
+def _completion_value_from_metadata(portal_metadata: dict | None) -> dict[str, Any]:
+    if not portal_metadata:
+        return {
+            "value": None,
+            "raw": None,
+            "normalized": None,
+            "source_stage": None,
+            "extraction_status": None,
+            "reason": None,
+            "pending_review": False,
+        }
+    status = str(portal_metadata.get("completion_extraction_status") or "")
+    normalized = portal_metadata.get("completion_date") or portal_metadata.get(
+        "completion_date_normalized"
+    )
+    raw = portal_metadata.get("completion_date_raw")
+    completed_status = _is_completed_status(portal_metadata.get("status"))
+    if normalized:
+        return {
+            "value": normalized,
+            "raw": raw,
+            "normalized": normalized,
+            "source_stage": portal_metadata.get("completion_source_stage"),
+            "extraction_status": status or "FOUND",
+            "reason": "POINT_OF_CONNECTION_COMPLETION_DATE_FOUND",
+            "pending_review": False,
+        }
+    if completed_status and status in POINT_OF_CONNECTION_NO_DATE_STATUSES:
+        return {
+            "value": OPEN_COMPLETION_TEXT,
+            "raw": raw,
+            "normalized": None,
+            "source_stage": portal_metadata.get("completion_source_stage"),
+            "extraction_status": status,
+            "reason": "POINT_OF_CONNECTION_COMPLETION_DATE_NOT_AVAILABLE",
+            "pending_review": False,
+        }
+    if status in POINT_OF_CONNECTION_PENDING_STATUSES:
+        return {
+            "value": None,
+            "raw": raw,
+            "normalized": None,
+            "source_stage": portal_metadata.get("completion_source_stage"),
+            "extraction_status": status,
+            "reason": status,
+            "pending_review": True,
+        }
+    return {
+        "value": None,
+        "raw": raw,
+        "normalized": normalized,
+        "source_stage": portal_metadata.get("completion_source_stage"),
+        "extraction_status": status or None,
+        "reason": None,
+        "pending_review": False,
+    }
+
+
+def _is_completed_status(status: Any) -> bool:
+    normalized = str(status or "").upper()
+    normalized = (
+        normalized.replace("Ç", "C")
+        .replace("Ã‡", "C")
+        .replace("Í", "I")
+        .replace("Ã", "A")
+    )
+    return "CONCLUID" in normalized
 
 
 def _process_single_pdf(
@@ -354,9 +469,8 @@ def _process_single_pdf(
             protocol,
         )
         entry_date = portal_metadata.get("entry_date") if portal_metadata else None
-        completion_date = (
-            portal_metadata.get("completion_date") if portal_metadata else None
-        )
+        completion_decision = _completion_value_from_metadata(portal_metadata)
+        completion_date = completion_decision["value"]
 
         match = find_client_folder(clientes_root, protocol, client_name)
         if state_store:
@@ -555,6 +669,13 @@ def _process_single_pdf(
                 "client_name": client_name,
                 "entry_date": entry_date,
                 "completion_date": completion_date,
+                "completion_raw": completion_decision["raw"],
+                "completion_normalized": completion_decision["normalized"],
+                "completion_source_stage": completion_decision["source_stage"],
+                "completion_extraction_status": completion_decision["extraction_status"],
+                "completion_action": excel_status.get("completion_action"),
+                "completion_reason": completion_decision["reason"],
+                "completion_pending_review": completion_decision["pending_review"],
                 "metadata_source": metadata_source,
                 "target_sheet": excel_status.get("target_sheet"),
                 "source_sheet": excel_status.get("source_sheet"),
@@ -964,6 +1085,33 @@ def _blocked_result(pdf_path: Path, error: str) -> dict:
     return result
 
 
+def _scope_violation_summary(pdfs: list[Path], unknown_protocols: list[str]) -> dict:
+    message = "FROZEN_BATCH_SCOPE_VIOLATION"
+    now = datetime.now().isoformat(timespec="seconds")
+    results = [_blocked_result(pdf_path, message) for pdf_path in pdfs]
+    return {
+        "started_at": now,
+        "finished_at": now,
+        "dry_run": True,
+        "apply_excel": False,
+        "apply_archive": False,
+        "status": "BLOQUEADO",
+        "operation_message": "Processamento bloqueado por protocolo fora do lote congelado.",
+        "real_run_block_code": message,
+        "real_run_block_reason": message,
+        "blocked_real_run": True,
+        "blocked_pending_protocols": 0,
+        "unknown_protocols_after_freeze": unknown_protocols,
+        "protocols_added_after_freeze": len(unknown_protocols),
+        "total_pdfs": len(pdfs),
+        "total_success": 0,
+        "total_errors": len(pdfs),
+        "total_excel_updated": 0,
+        "total_archived": 0,
+        "results": results,
+    }
+
+
 def _critical_simulation_issues(results: list[dict], apply_excel: bool) -> list[dict]:
     critical = []
     for item in results:
@@ -1260,6 +1408,10 @@ def _compact_excel_status(status: dict[str, Any]) -> dict:
         "moved_from": status.get("moved_from"),
         "moved_to": status.get("moved_to"),
         "entry_date": status.get("entry_date"),
+        "ingress_no_change": status.get("ingress_no_change"),
+        "equipment_no_change": status.get("equipment_no_change"),
+        "completion_no_change": status.get("completion_no_change"),
+        "completion_action": status.get("completion_action"),
     }
 
 
@@ -1482,6 +1634,15 @@ def _privacy_safe_report_payload(payload: dict) -> dict:
         "total_archived",
         "total_pending_review",
         "total_technical_pending_review",
+        "total_completion_dates_found",
+        "total_completion_dates_updated",
+        "total_completion_marked_open",
+        "completion_dates_proposed",
+        "completion_dates_applied",
+        "open_values_proposed",
+        "open_values_applied",
+        "total_completion_no_change",
+        "total_completion_pending_review",
         "blocked_real_run",
         "real_run_block_code",
         "block_stage",
@@ -1498,6 +1659,14 @@ def _privacy_safe_report_payload(payload: dict) -> dict:
         "module_source",
         "inverter_source",
         "recommended_action",
+        "completion_date",
+        "completion_raw",
+        "completion_normalized",
+        "completion_source_stage",
+        "completion_extraction_status",
+        "completion_action",
+        "completion_reason",
+        "completion_pending_review",
         "client_folder_match_type",
     }
     report = {

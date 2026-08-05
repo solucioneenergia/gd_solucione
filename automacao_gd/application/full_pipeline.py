@@ -1,6 +1,8 @@
 import json
+from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
+from uuid import uuid4
 
 from playwright.sync_api import Error as PlaywrightError
 from playwright.sync_api import sync_playwright
@@ -13,6 +15,7 @@ from automacao_gd.infrastructure.portal.cdp_service import (
 from automacao_gd.infrastructure.config import Settings, get_settings
 from automacao_gd.infrastructure.files.file_service import ensure_directories
 from automacao_gd.infrastructure.logging import logger, setup_logger
+from automacao_gd.infrastructure.locking import ExecutionLock, ExecutionLockError
 from automacao_gd.infrastructure.persistence.atomic import atomic_write_json, atomic_write_text
 from automacao_gd.infrastructure.state.pipeline_state import PipelineStateStore
 from automacao_gd.application.contracts import (
@@ -22,6 +25,12 @@ from automacao_gd.application.contracts import (
 )
 from automacao_gd.application.preflight import run_preflight
 from automacao_gd.application.processing_service import process_downloaded_pdfs
+from automacao_gd.application.reconciliation_service import (
+    ReconciliationResult,
+    reconcile_portal_workbook,
+    reconciliation_summary,
+    save_reconciliation_reports,
+)
 from automacao_gd.domain.errors import PreflightBlockedError
 
 
@@ -29,6 +38,131 @@ PIPELINE_JSON_REPORT_NAME = "pipeline_cdp_completo.json"
 PIPELINE_MARKDOWN_REPORT_NAME = "pipeline_cdp_completo.md"
 DOWNLOAD_JSON_REPORT_NAME = "downloads_orcamentos_concluidos_cdp.json"
 VALID_DOWNLOAD_STATUSES_FOR_PROCESSING = {"downloaded", "existing_pdf_after_skip"}
+CONTROLLED_PRODUCTION_AUTHORIZATION_SCOPE = "CONTROLLED_PRODUCTION_V2_0_1"
+SYNTHETIC_BATCH10_AUTHORIZATION_SCOPE = "SYNTHETIC_BATCH10_VALIDATION"
+
+
+class BatchAuthorizationError(ValueError):
+    def __init__(self, code: str, message: str) -> None:
+        super().__init__(message)
+        self.code = code
+
+
+class StrongConfirmationError(ValueError):
+    def __init__(self, code: str, message: str) -> None:
+        super().__init__(message)
+        self.code = code
+
+
+class FrozenBatchScopeError(ValueError):
+    def __init__(self, code: str, message: str) -> None:
+        super().__init__(message)
+        self.code = code
+
+
+@dataclass(frozen=True)
+class BatchAuthorizationPolicy:
+    authorized_max_protocols: int
+    authorization_scope: str
+
+
+@dataclass(frozen=True)
+class BatchAuthorization:
+    requested_batch_limit: int
+    authorized_batch_limit: int
+    authorization_scope: str
+
+
+@dataclass(frozen=True)
+class FrozenProtocolBatch:
+    requested_limit: int
+    authorized_limit: int
+    authorization_scope: str
+    protocols: tuple[str, ...]
+    unique_before_limit: int
+    dropped_by_limit: int
+    duplicate_protocols_in_frozen_batch: int = 0
+    protocols_added_after_freeze: int = 0
+
+    def __post_init__(self) -> None:
+        if self.requested_limit <= 0 or self.requested_limit > self.authorized_limit:
+            raise FrozenBatchScopeError(
+                "FROZEN_BATCH_SCOPE_VIOLATION",
+                "Limites do lote congelado são inválidos.",
+            )
+        if len(self.protocols) > self.requested_limit:
+            raise FrozenBatchScopeError(
+                "FROZEN_BATCH_SCOPE_VIOLATION",
+                "Lote congelado excede o limite solicitado.",
+            )
+        if len(self.protocols) != len(set(self.protocols)):
+            raise FrozenBatchScopeError(
+                "FROZEN_BATCH_SCOPE_VIOLATION",
+                "Lote congelado contém protocolos duplicados.",
+            )
+
+    def validate_phase_protocols(self, protocols: list[str], *, phase: str) -> None:
+        unknown = sorted({protocol for protocol in protocols if protocol not in self.protocols})
+        if unknown:
+            raise FrozenBatchScopeError(
+                "FROZEN_BATCH_SCOPE_VIOLATION",
+                f"Fase {phase} tentou processar protocolos fora do lote congelado.",
+            )
+
+
+@dataclass(frozen=True)
+class LimitedProtocolSelection:
+    summary: dict
+    frozen_batch: FrozenProtocolBatch
+
+
+def default_batch_authorization_policy() -> BatchAuthorizationPolicy:
+    return BatchAuthorizationPolicy(
+        authorized_max_protocols=5,
+        authorization_scope=CONTROLLED_PRODUCTION_AUTHORIZATION_SCOPE,
+    )
+
+
+def validate_requested_batch_limit(
+    requested_batch_limit: int,
+    policy: BatchAuthorizationPolicy | None = None,
+) -> BatchAuthorization:
+    active_policy = policy or default_batch_authorization_policy()
+    requested = int(requested_batch_limit or 0)
+    authorized = int(active_policy.authorized_max_protocols or 0)
+    if requested <= 0 or authorized <= 0 or requested > authorized:
+        raise BatchAuthorizationError(
+            "BATCH_LIMIT_NOT_AUTHORIZED",
+            "Limite de protocolos solicitado não está autorizado.",
+        )
+    return BatchAuthorization(
+        requested_batch_limit=requested,
+        authorized_batch_limit=authorized,
+        authorization_scope=active_policy.authorization_scope,
+    )
+
+
+def build_option5_strong_confirmation(protocol_limit: int) -> str:
+    limit = int(protocol_limit)
+    if limit <= 0:
+        raise BatchAuthorizationError(
+            "BATCH_LIMIT_NOT_AUTHORIZED",
+            "Limite de protocolos inválido para confirmação forte.",
+        )
+    return f"APLICAR OPÇÃO 5 COM CONCLUSÃO EM {limit} PROTOCOLOS"
+
+
+def validate_option5_strong_confirmation(
+    confirmation: str,
+    authorization: BatchAuthorization,
+) -> bool:
+    expected = build_option5_strong_confirmation(authorization.requested_batch_limit)
+    if confirmation != expected:
+        raise StrongConfirmationError(
+            "STRONG_CONFIRMATION_MISMATCH",
+            "Confirmação forte não corresponde ao lote autorizado.",
+        )
+    return True
 
 
 def main() -> None:
@@ -52,6 +186,53 @@ def run_full_cdp_pipeline(
     progress_callback: ProgressCallback | None = None,
 ) -> dict:
     settings = settings or get_settings()
+    requested_batch_limit = getattr(settings, "MAX_COMPLETED_TO_PROCESS", 5)
+    lock_path = getattr(settings, "option5_execution_lock_path", None)
+    if lock_path is None:
+        lock_path = Path(getattr(settings, "LOGS_DIR", Path("data/logs"))) / "option5_execution.lock"
+    try:
+        authorization = validate_requested_batch_limit(
+            requested_batch_limit,
+            default_batch_authorization_policy(),
+        )
+    except BatchAuthorizationError as exc:
+        raise PreflightBlockedError(
+            code=exc.code,
+            user_message=str(exc),
+            stage="autorização do lote",
+            technical_cause=exc.code,
+        ) from exc
+    execution_id = uuid4().hex
+    try:
+        with ExecutionLock(
+            lock_path,
+            execution_id=execution_id,
+            operation="option5",
+            requested_batch_limit=authorization.requested_batch_limit,
+            authorization_scope=authorization.authorization_scope,
+        ):
+            return _run_full_cdp_pipeline_locked(
+                settings=settings,
+                progress_callback=progress_callback,
+                authorization=authorization,
+                execution_id=execution_id,
+            )
+    except ExecutionLockError as exc:
+        raise PreflightBlockedError(
+            code=exc.code,
+            user_message=str(exc),
+            stage="lock global de execução",
+            technical_cause=exc.code,
+        ) from exc
+
+
+def _run_full_cdp_pipeline_locked(
+    *,
+    settings: Settings,
+    progress_callback: ProgressCallback | None,
+    authorization: BatchAuthorization,
+    execution_id: str,
+) -> dict:
     progress = ProgressTracker(progress_callback)
     progress.start("Iniciando pipeline CDP.")
     if not settings.CDP_MODE:
@@ -114,10 +295,11 @@ def run_full_cdp_pipeline(
         message="Conexão CDP validada para início do download.",
     )
     download_summary = _run_download_step(settings, state_store)
-    download_summary = _apply_global_protocol_limit(
+    limited_selection = apply_authorized_global_protocol_limit(
         download_summary,
-        settings.MAX_COMPLETED_TO_PROCESS,
+        authorization,
     )
+    download_summary = limited_selection.summary
     progress.advance(
         stage="portal_read",
         overall_percent=25,
@@ -155,6 +337,7 @@ def run_full_cdp_pipeline(
             apply_excel=settings.APPLY_EXCEL,
             apply_archive=settings.APPLY_ARCHIVE,
             state_store=state_store,
+            allowed_protocols=set(limited_selection.frozen_batch.protocols),
         )
         progress.advance(
             stage="protocol_processing",
@@ -179,6 +362,9 @@ def run_full_cdp_pipeline(
         processing_summary=processing_summary,
         download_report_path=download_report_path,
         pdf_paths=pdf_paths,
+        authorization=authorization,
+        execution_id=execution_id,
+        global_lock_acquired=True,
     )
     json_path, markdown_path = _save_pipeline_reports(settings.logs_dir_path, payload)
     payload["json_report_path"] = str(json_path)
@@ -223,6 +409,7 @@ def _run_download_step(settings, state_store=None) -> dict:
             process_existing_after_skip=settings.PROCESS_EXISTING_AFTER_SKIP,
             state_store=state_store,
             skip_already_completed=settings.SKIP_ALREADY_COMPLETED,
+            reconciliation_callback=_reconciliation_callback(settings),
         )
         summary["run_error"] = summary.get("run_error")
         return summary
@@ -241,6 +428,86 @@ def _run_download_step(settings, state_store=None) -> dict:
             logger.info("Encerrando conexao CDP sem fechar o Edge aberto manualmente.")
         if playwright:
             playwright.stop()
+
+
+def _reconciliation_callback(settings):
+    state: dict[str, object] = {}
+
+    def callback(
+        stage: str,
+        completed_records: list,
+        selected_protocols: list[str],
+        portal_context: dict | None = None,
+    ) -> dict:
+        if stage == "before_limit":
+            logger.info("Calculando reconciliação global Portal x planilha.")
+            result = reconcile_portal_workbook(
+                completed_records,
+                settings.planilha_path,
+                operational_selected_protocols=[],
+                pagination=portal_context,
+            )
+            if portal_context:
+                result.portal_summary.update(portal_context)
+            state["result"] = result
+            state["timestamp"] = datetime.now().strftime("%Y%m%dT%H%M%SZ")
+            json_path, markdown_path = save_reconciliation_reports(
+                result,
+                settings.logs_dir_path,
+                timestamp=str(state["timestamp"]),
+                filename_prefix="portal_workbook_reconciliation_global",
+            )
+            logger.info(
+                "Reconciliação global salva antes da seleção operacional: "
+                f"{markdown_path}"
+            )
+            summary = reconciliation_summary(result, _display_path(markdown_path))
+            summary["json_report_path"] = _display_path(json_path)
+            summary["markdown_report_path"] = _display_path(markdown_path)
+            summary["decision"] = result.decision
+            return summary
+        stored_result = state.get("result")
+        cached_result = (
+            stored_result if isinstance(stored_result, ReconciliationResult) else None
+        )
+        if cached_result is None:
+            cached_result = reconcile_portal_workbook(
+                completed_records,
+                settings.planilha_path,
+                operational_selected_protocols=selected_protocols,
+                pagination=portal_context,
+            )
+            if portal_context:
+                cached_result.portal_summary.update(portal_context)
+            state["result"] = cached_result
+            state.setdefault("timestamp", datetime.now().strftime("%Y%m%dT%H%M%SZ"))
+        result = cached_result
+        result.operational_batch["operational_protocols_selected"] = len(
+            selected_protocols
+        )
+        result.operational_batch["operational_protocols_processed"] = len(
+            selected_protocols
+        )
+        json_path, markdown_path = save_reconciliation_reports(
+            result,
+            settings.logs_dir_path,
+            timestamp=str(state.get("timestamp")),
+            filename_prefix="portal_workbook_reconciliation_global",
+        )
+        summary = reconciliation_summary(result, _display_path(markdown_path))
+        summary["json_report_path"] = _display_path(json_path)
+        summary["markdown_report_path"] = _display_path(markdown_path)
+        summary["decision"] = result.decision
+        return summary
+
+    return callback
+
+
+def _display_path(path: Path) -> str:
+    try:
+        return str(path.resolve(strict=False).relative_to(Path.cwd().resolve(strict=False)))
+    except (OSError, ValueError):
+        return path.name or str(path)
 
 
 def _download_error_summary(settings, message: str) -> dict:
@@ -315,9 +582,12 @@ def _pdf_paths_for_processing(download_summary: dict) -> list[Path]:
     return selected
 
 
-def _apply_global_protocol_limit(download_summary: dict, max_protocols: int) -> dict:
-    """Limit the final processing set by unique protocol after all sources are known."""
-    limit = int(max_protocols or 0)
+def apply_authorized_global_protocol_limit(
+    download_summary: dict,
+    authorization: BatchAuthorization,
+) -> LimitedProtocolSelection:
+    """Limit the final processing set and freeze the selected protocol batch."""
+    limit = authorization.requested_batch_limit
     results = download_summary.get("results") or []
     selected_protocols: list[str] = []
     dropped_protocols: list[str] = []
@@ -349,6 +619,9 @@ def _apply_global_protocol_limit(download_summary: dict, max_protocols: int) -> 
 
     download_summary["global_protocol_limit"] = limit
     download_summary["global_protocol_limit_enforced"] = True
+    download_summary["requested_batch_limit"] = authorization.requested_batch_limit
+    download_summary["authorized_batch_limit"] = authorization.authorized_batch_limit
+    download_summary["authorization_scope"] = authorization.authorization_scope
     download_summary["protocols_selected_by_global_limit"] = selected_protocols
     download_summary["total_protocols_selected_by_global_limit"] = len(
         selected_protocols
@@ -357,8 +630,44 @@ def _apply_global_protocol_limit(download_summary: dict, max_protocols: int) -> 
     download_summary["total_protocols_dropped_by_global_limit"] = len(
         dropped_protocols
     )
+    download_summary["protocols_unique_before_limit"] = len(seen_processable_protocols)
+    download_summary["protocols_added_after_limit"] = 0
+    download_summary["duplicate_protocols_in_frozen_batch"] = 0
+    frozen_batch = FrozenProtocolBatch(
+        requested_limit=authorization.requested_batch_limit,
+        authorized_limit=authorization.authorized_batch_limit,
+        authorization_scope=authorization.authorization_scope,
+        protocols=tuple(selected_protocols),
+        unique_before_limit=len(seen_processable_protocols),
+        dropped_by_limit=len(dropped_protocols),
+        duplicate_protocols_in_frozen_batch=0,
+        protocols_added_after_freeze=0,
+    )
+    download_summary["frozen_batch_created"] = True
+    download_summary["frozen_batch"] = {
+        "requested_limit": frozen_batch.requested_limit,
+        "authorized_limit": frozen_batch.authorized_limit,
+        "authorization_scope": frozen_batch.authorization_scope,
+        "protocols": list(frozen_batch.protocols),
+        "unique_before_limit": frozen_batch.unique_before_limit,
+        "dropped_by_limit": frozen_batch.dropped_by_limit,
+        "duplicate_protocols_in_frozen_batch": (
+            frozen_batch.duplicate_protocols_in_frozen_batch
+        ),
+        "protocols_added_after_freeze": frozen_batch.protocols_added_after_freeze,
+    }
     _refresh_processing_selection_totals(download_summary)
-    return download_summary
+    return LimitedProtocolSelection(summary=download_summary, frozen_batch=frozen_batch)
+
+
+def _apply_global_protocol_limit(download_summary: dict, max_protocols: int) -> dict:
+    """Compatibility wrapper for the historical limit helper."""
+    authorization = BatchAuthorization(
+        requested_batch_limit=int(max_protocols or 0),
+        authorized_batch_limit=max(1, int(max_protocols or 0)),
+        authorization_scope="LEGACY_COMPATIBILITY_LIMIT",
+    )
+    return apply_authorized_global_protocol_limit(download_summary, authorization).summary
 
 
 def _exclude_from_processing(item: dict, status: str) -> None:
@@ -388,6 +697,9 @@ def build_pipeline_payload(
     processing_summary: dict,
     download_report_path: Path,
     pdf_paths: list[Path],
+    authorization: BatchAuthorization | None = None,
+    execution_id: str | None = None,
+    global_lock_acquired: bool = False,
 ) -> dict:
     protocol_rows = _build_protocol_rows(download_summary, processing_summary)
     totals = _build_pipeline_totals(download_summary, processing_summary, protocol_rows)
@@ -398,6 +710,30 @@ def build_pipeline_payload(
         "apply_excel": settings.APPLY_EXCEL,
         "apply_archive": settings.APPLY_ARCHIVE,
         "max_completed_to_process": settings.MAX_COMPLETED_TO_PROCESS,
+        "requested_batch_limit": (
+            authorization.requested_batch_limit
+            if authorization
+            else settings.MAX_COMPLETED_TO_PROCESS
+        ),
+        "authorized_batch_limit": (
+            authorization.authorized_batch_limit
+            if authorization
+            else settings.MAX_COMPLETED_TO_PROCESS
+        ),
+        "authorization_scope": (
+            authorization.authorization_scope if authorization else "LEGACY_COMPATIBILITY"
+        ),
+        "strong_confirmation_contract": build_option5_strong_confirmation(
+            authorization.requested_batch_limit
+            if authorization
+            else settings.MAX_COMPLETED_TO_PROCESS
+        ),
+        "global_lock_acquired": global_lock_acquired,
+        "global_lock_status": "acquired" if global_lock_acquired else "not_acquired",
+        "global_lock_waited": False,
+        "execution_id": execution_id,
+        "batch_10_authorized_for_production": False,
+        "synthetic_validation": False,
         "enable_portal_pagination": settings.ENABLE_PORTAL_PAGINATION,
         "max_portal_pages": settings.MAX_PORTAL_PAGES,
         "reprocess_existing_pdfs": settings.REPROCESS_EXISTING_PDFS,
@@ -451,6 +787,11 @@ def _classify_pipeline_result(payload: dict) -> tuple[OperationStatus, str]:
         status = OperationStatus.PARCIAL if downloaded + reused else OperationStatus.BLOQUEADO
         return status, message
     if payload.get("run_error"):
+        if payload.get("download", {}).get("abort_reason") == "PORTAL_PAGINATION_INCOMPLETE":
+            return (
+                OperationStatus.BLOQUEADO,
+                "Reconciliação global não concluída; páginas do Portal ainda não lidas.",
+            )
         status = OperationStatus.PARCIAL if useful_work else OperationStatus.FALHOU
         return status, "O pipeline foi interrompido por uma falha operacional."
     if errors:
@@ -539,6 +880,8 @@ def _protocol_row(selected: dict, download_item: dict, processing_item: dict | N
         archive_fallback_mode = None
         legacy_gd_ignored = None
         arquivo_final = None
+        completion_action = None
+        completion_reason = None
     else:
         processing_result = "success" if processing_item.get("success") else "error"
         excel_status = processing_item.get("excel_status", {})
@@ -555,6 +898,8 @@ def _protocol_row(selected: dict, download_item: dict, processing_item: dict | N
         archive_fallback_mode = processing_item.get("archive_fallback_mode")
         legacy_gd_ignored = processing_item.get("legacy_gd_ignored")
         arquivo_final = processing_item.get("arquivo_final")
+        completion_action = processing_item.get("completion_action")
+        completion_reason = processing_item.get("completion_reason")
 
     error = _first_non_empty(
         download_item.get("cdp_error"),
@@ -590,6 +935,35 @@ def _protocol_row(selected: dict, download_item: dict, processing_item: dict | N
         "processing_result": processing_result,
         "excel_action": excel_action,
         "excel_state": excel_state,
+        "completion_current": (
+            processing_item.get("excel_status", {}).get("current_completion")
+            if processing_item
+            else None
+        ),
+        "completion_raw": (
+            processing_item.get("completion_raw")
+            if processing_item
+            else download_item.get("completion_date_raw")
+        ),
+        "completion_normalized": (
+            processing_item.get("completion_normalized")
+            if processing_item
+            else download_item.get("completion_date_normalized")
+        ),
+        "completion_source_stage": (
+            processing_item.get("completion_source_stage")
+            if processing_item
+            else download_item.get("completion_source_stage")
+        ),
+        "completion_extraction_status": (
+            processing_item.get("completion_extraction_status")
+            if processing_item
+            else download_item.get("completion_extraction_status")
+        ),
+        "completion_action": completion_action,
+        "completion_reason": completion_reason,
+        "completion_excel_updated": completion_action
+        in {"COMPLETION_DATE_UPDATED", "MARKED_AS_OPEN"},
         "archive_state": archive_state,
         "archive_destination_folder": archive_destination_folder,
         "archive_match_type": archive_match_type,
@@ -742,6 +1116,14 @@ def _build_pipeline_totals(
         "total_rows": download_summary.get("total_rows", 0),
         "total_pages_read": download_summary.get("total_pages_read", 0),
         "pagination_stop_reason": download_summary.get("pagination_stop_reason"),
+        "pagination_complete": download_summary.get("pagination_complete"),
+        "last_page_confirmed": download_summary.get("last_page_confirmed"),
+        "last_page_number": download_summary.get("last_page_number"),
+        "next_page_available_after_stop": download_summary.get(
+            "next_page_available_after_stop"
+        ),
+        "pagination_safety_cap": download_summary.get("pagination_safety_cap"),
+        "pages_visited": download_summary.get("pages_visited", []),
         "pagination_next_found": download_summary.get("pagination_next_found", False),
         "pagination_click_attempts": download_summary.get(
             "pagination_click_attempts", 0
@@ -775,6 +1157,18 @@ def _build_pipeline_totals(
         "total_protocols_dropped_by_global_limit": download_summary.get(
             "total_protocols_dropped_by_global_limit", 0
         ),
+        "protocols_unique_before_limit": download_summary.get(
+            "protocols_unique_before_limit",
+            download_summary.get("total_protocols_selected_by_global_limit", 0),
+        ),
+        "protocols_added_after_limit": download_summary.get(
+            "protocols_added_after_limit",
+            processing_summary.get("protocols_added_after_freeze", 0),
+        ),
+        "duplicate_protocols_in_frozen_batch": download_summary.get(
+            "duplicate_protocols_in_frozen_batch", 0
+        ),
+        "frozen_batch_created": bool(download_summary.get("frozen_batch_created")),
         "total_skipped_already_completed": max(
             int(download_summary.get("total_already_completed_in_state", 0) or 0),
             sum(
@@ -845,7 +1239,31 @@ def _build_pipeline_totals(
         "total_archive_already_done": processing_summary.get(
             "total_archive_already_done", 0
         ),
+        "total_completion_dates_found": processing_summary.get(
+            "total_completion_dates_found", 0
+        ),
+        "total_completion_dates_updated": processing_summary.get(
+            "total_completion_dates_updated", 0
+        ),
+        "total_completion_marked_open": processing_summary.get(
+            "total_completion_marked_open", 0
+        ),
+        "completion_dates_proposed": processing_summary.get(
+            "completion_dates_proposed", 0
+        ),
+        "completion_dates_applied": processing_summary.get(
+            "completion_dates_applied", 0
+        ),
+        "open_values_proposed": processing_summary.get("open_values_proposed", 0),
+        "open_values_applied": processing_summary.get("open_values_applied", 0),
+        "total_completion_no_change": processing_summary.get(
+            "total_completion_no_change", 0
+        ),
+        "total_completion_pending_review": processing_summary.get(
+            "total_completion_pending_review", 0
+        ),
         "total_errors": total_errors,
+        "reconciliation": download_summary.get("reconciliation") or {},
     }
 
 
@@ -914,6 +1332,20 @@ def _build_markdown_report(payload: dict) -> str:
         f"- APPLY_EXCEL: {payload['apply_excel']}",
         f"- APPLY_ARCHIVE: {payload['apply_archive']}",
         f"- MAX_COMPLETED_TO_PROCESS: {payload['max_completed_to_process']}",
+        f"- requested_batch_limit: {payload.get('requested_batch_limit')}",
+        f"- authorized_batch_limit: {payload.get('authorized_batch_limit')}",
+        f"- authorization_scope: {payload.get('authorization_scope')}",
+        "- strong_confirmation_contract: "
+        f"{payload.get('strong_confirmation_contract')}",
+        f"- global_lock_acquired: {payload.get('global_lock_acquired')}",
+        f"- global_lock_status: {payload.get('global_lock_status')}",
+        f"- frozen_batch_created: {payload.get('frozen_batch_created')}",
+        f"- protocols_unique_before_limit: {payload.get('protocols_unique_before_limit')}",
+        f"- protocols_added_after_limit: {payload.get('protocols_added_after_limit')}",
+        "- duplicate_protocols_in_frozen_batch: "
+        f"{payload.get('duplicate_protocols_in_frozen_batch')}",
+        "- batch_10_authorized_for_production: "
+        f"{payload.get('batch_10_authorized_for_production')}",
         f"- ENABLE_PORTAL_PAGINATION: {payload['enable_portal_pagination']}",
         f"- MAX_PORTAL_PAGES: {payload['max_portal_pages']}",
         f"- pagination_stop_reason: {payload.get('pagination_stop_reason')}",
@@ -948,6 +1380,7 @@ def _build_markdown_report(payload: dict) -> str:
         f"- Total atualizacoes reais na planilha: {payload['total_excel_updated']}",
         f"- Total PDFs arquivados: {payload['total_archived']}",
         f"- Total arquivos ja arquivados: {payload['total_archive_already_done']}",
+        *_completion_summary_markdown_lines(payload),
         f"- Total erros: {payload['total_errors']}",
         f"- Total de linhas: {payload['total_rows']}",
         f"- Total duplicados evitados: {payload['total_skipped_duplicate']}",
@@ -1013,6 +1446,34 @@ def _build_markdown_report(payload: dict) -> str:
         lines.extend(["", "## Erro geral", "", f"- {payload['run_error']}"])
 
     return "\n".join(lines) + "\n"
+
+
+def _completion_summary_markdown_lines(payload: dict) -> list[str]:
+    dry_run = bool(payload.get("dry_run", True))
+    lines = [
+        f"- Datas de conclusao encontradas: {payload.get('total_completion_dates_found', 0)}",
+    ]
+    if dry_run:
+        lines.extend(
+            [
+                f"- Conclusoes propostas com data: {payload.get('completion_dates_proposed', 0)}",
+                f"- Conclusoes propostas EM ABERTO: {payload.get('open_values_proposed', 0)}",
+            ]
+        )
+    else:
+        lines.extend(
+            [
+                f"- Conclusoes atualizadas com data: {payload.get('completion_dates_applied', 0)}",
+                f"- Conclusoes marcadas EM ABERTO: {payload.get('open_values_applied', 0)}",
+            ]
+        )
+    lines.extend(
+        [
+            f"- Conclusoes sem alteracao: {payload.get('total_completion_no_change', 0)}",
+            f"- Conclusoes pendentes: {payload.get('total_completion_pending_review', 0)}",
+        ]
+    )
+    return lines
 
 
 def _md(value) -> str:

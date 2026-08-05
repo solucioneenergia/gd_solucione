@@ -43,11 +43,21 @@ class ApplicationController:
         )
 
     def run_pipeline(self) -> OperationResult:
-        from automacao_gd.application.use_cases.run_pipeline import RunFullPipelineUseCase
+        from automacao_gd.application.full_pipeline import run_full_cdp_pipeline
 
         return self._execute(
             "Pipeline CDP concluído.",
-            lambda: RunFullPipelineUseCase(self.settings).execute(),
+            lambda: run_full_cdp_pipeline(self.settings),
+        )
+
+    def sync_completion_status(self) -> OperationResult:
+        from automacao_gd.application.use_cases.sync_completion import (
+            SyncCompletionStatusUseCase,
+        )
+
+        return self._execute(
+            "SincronizaÃ§Ã£o de conclusÃ£o concluÃ­da.",
+            lambda: SyncCompletionStatusUseCase(self.settings).execute(),
         )
 
     @staticmethod

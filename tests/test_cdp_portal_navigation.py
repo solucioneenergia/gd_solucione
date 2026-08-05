@@ -80,12 +80,12 @@ def test_missing_pdf_requires_opening_detail(tmp_path: Path) -> None:
     assert should_open_detail_for_budget("2601", tmp_path, False) is True
 
 
-def test_existing_pdf_does_not_require_opening_detail(tmp_path: Path) -> None:
+def test_existing_pdf_still_requires_opening_detail_for_completion(tmp_path: Path) -> None:
     protocol_dir = tmp_path / "2601"
     protocol_dir.mkdir()
     (protocol_dir / "Orcamento_de_Conexao_2601.pdf").write_bytes(b"%PDF-1.4\n")
 
-    assert should_open_detail_for_budget("2601", tmp_path, False) is False
+    assert should_open_detail_for_budget("2601", tmp_path, False) is True
 
 
 def test_unsafe_navigation_urls_are_rejected_for_history() -> None:

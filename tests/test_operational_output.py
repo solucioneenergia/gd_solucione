@@ -74,6 +74,75 @@ def test_pipeline_summary_shows_main_totals() -> None:
     assert "[TELEFONE REMOVIDO] | Cliente Teste" not in output
 
 
+def test_pipeline_dry_run_summary_labels_completion_updates_as_proposals() -> None:
+    result = _pipeline_result()
+    result.payload.update(
+        {
+            "dry_run": True,
+            "total_completion_dates_found": 5,
+            "completion_dates_proposed": 5,
+            "completion_dates_applied": 0,
+            "open_values_proposed": 1,
+            "open_values_applied": 0,
+            "total_completion_no_change": 0,
+            "total_completion_pending_review": 0,
+        }
+    )
+
+    output = format_operation_summary("pipeline", result)
+
+    assert "Datas propostas: 5" in output
+    assert "EM ABERTO propostos: 1" in output
+    assert "Datas atualizadas: 5" not in output
+    assert "EM ABERTO aplicados: 1" not in output
+
+
+def test_pipeline_real_run_summary_labels_completion_updates_as_applied() -> None:
+    result = _pipeline_result()
+    result.payload.update(
+        {
+            "dry_run": False,
+            "total_completion_dates_found": 5,
+            "completion_dates_proposed": 0,
+            "completion_dates_applied": 5,
+            "open_values_proposed": 0,
+            "open_values_applied": 1,
+            "total_completion_no_change": 0,
+            "total_completion_pending_review": 0,
+        }
+    )
+
+    output = format_operation_summary("pipeline", result)
+
+    assert "Datas atualizadas: 5" in output
+    assert "EM ABERTO aplicados: 1" in output
+    assert "Datas propostas: 5" not in output
+    assert "EM ABERTO propostos: 1" not in output
+
+
+def test_pipeline_summary_shows_reconciliation_totals() -> None:
+    result = _pipeline_result()
+    result.payload["reconciliation"] = {
+        "portal_concluded_unique": 461,
+        "workbook_unique_protocols": 631,
+        "matched_unique": 450,
+        "missing_in_workbook_unique": 11,
+        "duplicate_workbook_protocols": 0,
+        "wrong_year_sheet": 2,
+        "completion_empty": 20,
+        "equipment_empty_requires_review": 3,
+        "incomplete_records": 4,
+        "markdown_report_path": "data/logs/portal_workbook_reconciliation_20260728T120000Z.md",
+    }
+
+    output = format_operation_summary("pipeline", result)
+
+    assert "Reconciliação Portal × planilha:" in output
+    assert "Concluídos únicos no Portal: 461" in output
+    assert "Ausentes na planilha: 11" in output
+    assert "portal_workbook_reconciliation_20260728T120000Z.md" in output
+
+
 def test_pipeline_summary_shows_limited_operational_protocol_details() -> None:
     result = _pipeline_result()
     result.payload["protocol_results"] = [

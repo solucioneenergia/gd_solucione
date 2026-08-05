@@ -24,7 +24,15 @@ from automacao_gd.application.historical_backfill.report import (
     write_apply_reports,
     write_audit_reports,
 )
-from automacao_gd.application.contracts import OperationStatus
+from automacao_gd.application.contracts import OperationResult, OperationStatus
+from automacao_gd.application.full_pipeline import (
+    BatchAuthorizationError,
+    StrongConfirmationError,
+    build_option5_strong_confirmation,
+    default_batch_authorization_policy,
+    validate_option5_strong_confirmation,
+    validate_requested_batch_limit,
+)
 from automacao_gd.infrastructure.config import get_settings
 from automacao_gd.infrastructure.excel.availability import validate_workbook_availability
 from automacao_gd.infrastructure.files.file_service import ensure_directories
@@ -43,6 +51,8 @@ _EXIT_CODES = {
     OperationStatus.BLOQUEADO: 2,
     OperationStatus.PARCIAL: 3,
 }
+COMPLETION_SYNC_STRONG_CONFIRMATION = "APLICAR CONCLUSÃO 5 PROTOCOLOS"
+OPTION5_COMPLETION_STRONG_CONFIRMATION = build_option5_strong_confirmation(5)
 
 
 def exit_code_for_status(status: OperationStatus | str) -> int:
@@ -287,9 +297,50 @@ def _confirmed_real_processing(controller: ApplicationController):
 
 def _confirmed_pipeline(controller: ApplicationController):
     if not controller.settings.DRY_RUN:
-        if input("DRY_RUN=false. Digite SIM para confirmar: ").strip().upper() != "SIM":
+        try:
+            authorization = validate_requested_batch_limit(
+                getattr(controller.settings, "MAX_COMPLETED_TO_PROCESS", 5),
+                default_batch_authorization_policy(),
+            )
+        except BatchAuthorizationError:
+            return controller.preflight(require_cdp=True)
+        required_confirmation = build_option5_strong_confirmation(
+            authorization.requested_batch_limit
+        )
+        confirmation = input(
+            f"DRY_RUN=false. Digite {required_confirmation} "
+            "para confirmar: "
+        ).strip()
+        try:
+            validate_option5_strong_confirmation(confirmation, authorization)
+        except StrongConfirmationError:
             return controller.preflight(require_cdp=True)
     return controller.run_pipeline()
+
+
+def _confirmed_completion_sync(controller: ApplicationController):
+    real_completion_write = (
+        not controller.settings.DRY_RUN
+        and controller.settings.APPLY_COMPLETION_STATUS
+    )
+    if real_completion_write:
+        confirmation = input(
+            f"Digite {COMPLETION_SYNC_STRONG_CONFIRMATION} para confirmar: "
+        ).strip()
+        if confirmation != COMPLETION_SYNC_STRONG_CONFIRMATION:
+            return OperationResult(
+                False,
+                "Confirmação forte da sincronização de conclusão não recebida.",
+                {
+                    "code": "STRONG_CONFIRMATION_REQUIRED",
+                    "operation_message": (
+                        "Confirmação forte da sincronização de conclusão não recebida."
+                    ),
+                    "confirmation_required": COMPLETION_SYNC_STRONG_CONFIRMATION,
+                },
+                status=OperationStatus.BLOQUEADO,
+            )
+    return controller.sync_completion_status()
 
 
 def _open_desktop_visual() -> None:

@@ -137,6 +137,17 @@ class PipelineStateStore:
         return protocol in self.force_reprocess_protocols
 
     def mark_discovered(self, record: Any) -> dict:
+        entry = self._mark_discovered_entry(record)
+        self.save()
+        return entry
+
+    def mark_discovered_many(self, records: list[Any]) -> list[dict]:
+        entries = [self._mark_discovered_entry(record) for record in records]
+        if entries:
+            self.save()
+        return entries
+
+    def _mark_discovered_entry(self, record: Any) -> dict:
         protocol = str(record.protocol)
         entry = self.protocol_entry(protocol)
         now = utc_now_iso()
@@ -155,7 +166,6 @@ class PipelineStateStore:
         if entry.get("status") != "completed":
             entry["status"] = "discovered"
             entry["last_step"] = "discovered"
-        self.save()
         return entry
 
     def mark_selected(self, record: Any) -> dict:

@@ -1,6 +1,6 @@
 """Testes para excel_service — valida planilha, backup, inserção e atualização."""
 
-from datetime import date
+from datetime import date, datetime
 from pathlib import Path
 from unittest.mock import patch
 
@@ -171,6 +171,80 @@ class TestUpdateExcelFromPdfData:
         assert result["can_write"] is False
         assert validation["success"] is True
         assert validation["already_updated"] is True
+
+    def test_real_run_updates_completion_when_equipment_is_already_same(
+        self, sample_workbook: Path
+    ):
+        result = update_excel_from_pdf_data(
+            workbook_path=sample_workbook,
+            protocol="2606021741",
+            client_name="JOAO SILVA",
+            entry_date="01/06/2025",
+            completion_date="15/06/2025",
+            module_text="18x MOD X",
+            inverter_text="1x INV Y",
+            dry_run=False,
+        )
+
+        wb = load_workbook(sample_workbook)
+        ws = wb["2025"]
+        try:
+            assert result["success"] is True
+            assert result["action"] == "update_existing"
+            assert result["completion_no_change"] is False
+            assert result["equipment_no_change"] is True
+            assert ws.cell(row=2, column=1).value == "João Silva"
+            assert ws.cell(row=2, column=4).value == datetime(2025, 6, 15)
+            assert ws.cell(row=2, column=4).number_format == DATE_NUMBER_FORMAT
+        finally:
+            wb.close()
+
+    def test_real_run_skips_when_equipment_and_completion_are_already_same(
+        self, sample_workbook: Path
+    ):
+        wb = load_workbook(sample_workbook)
+        ws = wb["2025"]
+        ws.cell(row=2, column=4).value = datetime(2025, 6, 15)
+        ws.cell(row=2, column=4).number_format = DATE_NUMBER_FORMAT
+        wb.save(sample_workbook)
+        wb.close()
+
+        result = update_excel_from_pdf_data(
+            workbook_path=sample_workbook,
+            protocol="2606021741",
+            client_name="Joao Silva",
+            entry_date="01/06/2025",
+            completion_date="15/06/2025",
+            module_text="18x MOD X",
+            inverter_text="1x INV Y",
+            dry_run=False,
+        )
+
+        assert result["success"] is True
+        assert result["action"] == "skipped_excel_already_updated"
+        assert result["completion_no_change"] is True
+        assert result["equipment_no_change"] is True
+
+    def test_real_run_writes_em_aberto_as_text(self, sample_workbook: Path):
+        result = update_excel_from_pdf_data(
+            workbook_path=sample_workbook,
+            protocol="2606021741",
+            client_name="Joao Silva",
+            entry_date="01/06/2025",
+            completion_date="EM ABERTO",
+            module_text="18x MOD X",
+            inverter_text="1x INV Y",
+            dry_run=False,
+        )
+
+        wb = load_workbook(sample_workbook)
+        ws = wb["2025"]
+        try:
+            assert result["success"] is True
+            assert result["action"] == "update_existing"
+            assert ws.cell(row=2, column=4).value == "EM ABERTO"
+        finally:
+            wb.close()
 
     def test_real_run_updates_existing_when_equipment_text_changed(
         self, sample_workbook: Path

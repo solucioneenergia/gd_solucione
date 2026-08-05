@@ -18,6 +18,19 @@
 - Automacao ponta a ponta: CLOSED
 - Release de producao: APPROVED
 - Hotfix v2.0.1: RELEASED
+- Sincronizacao de conclusao v2.1.0: STAGE1_COMPLETE
+- Etapa 4.4 / canario integrado da conclusao: APPROVED_BY_IDEMPOTENT_REVALIDATION
+- Reconciliação global Portal x planilha: READ_ONLY_APPROVED_WITH_NON_BLOCKING_FINDINGS
+- Manutencao e limpeza segura do projeto: STAGE5_1_CLOSED/NO_CLEANUP_AUTHORIZED
+- Implementacao do diagnostico read-only Stage 5.1: STAGE5_1A_CORRECTED
+- Disposicao terminal Stage 5.1C: COMPLETE
+- Etapa 3.1 / plano de saneamento: PLAN_GENERATED_READ_ONLY
+- Etapa 3.1 / pre-voo de saneamento: PREFLIGHT_READ_ONLY_APPROVED_FOR_REVIEW
+- Padronizacao visual/estrutural da planilha: APPLIED/HISTORICAL
+- Pre-voo visual/estrutural da planilha: CLOSED/APPROVED/HISTORICAL
+- Aplicacao visual/estrutural da planilha: CLOSED/APPLIED
+- Certificacao visual/estrutural da planilha: CLOSED/CERTIFIED
+- SHA oficial da planilha: 192084b5d780db5ad027aaa640ed418072cfafc4ca9b8b62648a987acc58594b
 - Producao controlada: AUTHORIZED
 - Operacao ampla: BLOCKED UNTIL EXPLICIT AUTHORIZATION
 
@@ -715,6 +728,8 @@ Protocolos unicos antes do limite: 462 elegiveis apos leitura de 11 paginas do P
 
 Protocolos selecionados: 5 protocolos unicos pelo limite global; 0 protocolos adicionados apos o limite; 0 duplicacoes.
 
+Metricas do limite: 462 protocolos unicos antes do limite; 5 selecionados pelo limite global; 457 excluidos pelo limite global (`462 - 5`).
+
 PDFs analisados: 5; PDFs baixados 0; PDFs reutilizados 5; PDFs tecnicamente aprovados 5.
 
 Pendencias: 0 no canario. As seis pendencias historicas permanecem protegidas como `SOURCE_INCOMPLETE`: 2605250167, 2605148473, 2605056663, 2604275348, 2603166924 e 2602098916. Nao inferir quantidade.
@@ -736,3 +751,1003 @@ Artefatos: `production_batch_limit_hotfix_revalidation_<timestamp>.json`; `produ
 Decisao: HOTFIX_RELEASED - PRODUCAO CONTROLADA LIBERADA EM v2.0.1.
 
 Proxima acao: operar em producao controlada com `MAX_COMPLETED_TO_PROCESS=5`; nao iniciar operacao ampla sem autorizacao explicita.
+
+## Execucao 25 - Etapa 3.5 / saneamento documental pos-release
+
+Objetivo: corrigir exclusivamente inconsistencias documentais e de metricas dos artefatos finais da release `v2.0.1`, sem modificar codigo, testes, Portal, planilha, commit ou tag.
+
+Inconsistencias corrigidas: a metrica `protocols_dropped_by_global_limit` do artefato final estava registrada como 0 apesar de `protocols_unique_before_limit=462` e `protocols_selected_by_global_limit=5`; o manifesto `release_v2_manifest.md` misturava identidade historica `v2.0.0` com detalhes finais do hotfix `v2.0.1`; a lista de pendencias precisava estar sincronizada em seis protocolos; a cronologia de bloqueios precisava separar `NETWORK_DRIVE_UNAVAILABLE` de `CDP_UNAVAILABLE`.
+
+Metrica corrigida: `protocols_dropped_by_global_limit=457`, com formula explicita `protocols_unique_before_limit - protocols_selected_by_global_limit = 462 - 5`.
+
+Manifesto v2.0.1: criado `docs/releases/release_v2.0.1_manifest.md` com versao `v2.0.1`, commit `070a4206b017b51f142919e6e98a0b290e0c8953`, tag `v2.0.1`, SHA oficial `b1bfedc497db8f207d900234b185c80f974ce2a0b628cb437edb19e13953c441`, correcao do limite global, canario 5/5, 682 testes, zero duplicacoes, zero mudancas fora da allowlist, seis pendencias protegidas, producao controlada autorizada e operacao ampla bloqueada.
+
+Protocolos sincronizados: 2605250167, 2605148473, 2605056663, 2604275348, 2603166924 e 2602098916 permanecem `PENDING_REVIEW/SOURCE_INCOMPLETE`; nao inferir quantidade individual por modelo ou fabricante.
+
+Cronologia corrigida: tentativa 1 `NETWORK_DRIVE_UNAVAILABLE`; tentativa 2 `CDP_UNAVAILABLE`; tentativa final `HOTFIX_RELEASED`.
+
+Codigo alterado: NAO.
+
+Testes executados: NAO NECESSARIO; validacao restrita a JSON, listas de protocolos, consistencia de contagens, links documentais e git diff.
+
+Decisao: DOCUMENTATION_ALIGNED - RELEASE v2.0.1 ENCERRADA.
+
+## Execucao 26 - Etapa 4.0 / sincronizacao de conclusao
+
+Objetivo: adicionar funcionalidade aditiva v2.1.0 para sincronizar a coluna `Conclusao` da planilha com status/data do Portal GD, sem reabrir backfill historico, sem alterar parser V6, sem alterar validador V7 e sem aplicar na planilha oficial nesta primeira etapa.
+
+Arquitetura: criado servico isolado `automacao_gd/application/completion_sync_service.py`, com modelos proprios `CompletionPortalRecord`, `CompletionSyncAction` e `CompletionSyncStatus`; criado use case `SyncCompletionStatusUseCase`; adicionada opcao CLI `7 - Sincronizar datas de conclusao`.
+
+Arquivos alterados: `automacao_gd/application/completion_sync_service.py`; `automacao_gd/application/use_cases/sync_completion.py`; `automacao_gd/infrastructure/config.py`; `automacao_gd/presentation/controller.py`; `automacao_gd/presentation/cli.py`; `automacao_gd/presentation/operational_output.py`; `tests/test_completion_sync_service.py`; `specs/SPEC-003-project-completion-sync.md`; `docs/production_runbook.md`; `docs/operator_checklist.md`; `docs/codex_execution_ledger.md`.
+
+Regras de transicao: concluido com data valida atualiza data Excel; aberto sem data marca `EM ABERTO`; informacao identica gera `NO_CHANGE`; `EM ABERTO` passa para data quando Portal conclui; data divergente, regressao de status, concluido sem data e data invalida ficam em `PENDING_REVIEW`.
+
+Configuracao: `SYNC_COMPLETION_STATUS=false` por padrao; `APPLY_COMPLETION_STATUS=false` por padrao; `MAX_COMPLETION_PROTOCOLS_PER_RUN=5`.
+
+Testes: testes RED direcionados criados antes da implementacao; RED inicial falhou por `ModuleNotFoundError` do novo servico; GREEN final `tests/test_completion_sync_service.py` = 10 passed; integracao direcionada com controller/preflight/resumo = 23 passed com filtro; suite completa final `python -m pytest -q` = 692 passed; Ruff `automacao_gd apps tests` = passed; Compileall `automacao_gd apps` = passed; MyPy com `--follow-imports=skip` nos arquivos de producao alterados = passed.
+
+Simulacao: nao executada contra Portal nesta etapa; funcionalidade entregue pronta para dry-run controlado com `SYNC_COMPLETION_STATUS=true`, `DRY_RUN=true`, `APPLY_COMPLETION_STATUS=false`, `MAX_COMPLETION_PROTOCOLS_PER_RUN=5`.
+
+Canario: nao executado; aplicacao real permanece bloqueada ate revisao do dry-run.
+
+SHA: planilha oficial nao modificada nesta etapa.
+
+Allowlist: servico de escrita altera somente a coluna `Conclusao` das linhas aprovadas; testes sintéticos confirmam preservacao de Cliente, Protocolo, Data de ingresso, Parecer, Placa e Inversor.
+
+Regressoes: pipeline de equipamentos nao foi alterado; parser V6 e validador V7 permanecem fechados.
+
+Revisao: diff revisado sem achados P0/P1; `git diff --check` sem erros, apenas avisos de normalizacao LF/CRLF ja esperados no Windows.
+
+Decisao: COMPLETION_SYNC_READY_FOR_DRY_RUN.
+
+Proxima acao: executar dry-run da opcao 7 em etapa separada; nao habilitar `APPLY_COMPLETION_STATUS=true` sem canario aprovado.
+
+## Execucao 27 - Etapa 4.1 / dry-run da conclusao dos protocolos da opcao 5
+
+Objetivo: executar a opcao 7 em dry-run real para sincronizar a coluna `Conclusao` exclusivamente para protocolos previamente identificados pela opcao 5 como solicitacoes concluidas no Portal GD, sem escrita na planilha oficial e sem reprocessar equipamentos.
+
+Origem dos protocolos: artefatos da opcao 5, principalmente `data/logs/downloads_orcamentos_concluidos_cdp.json`, `data/logs/pipeline_cdp_completo.json` e `data/logs/processamento_pdfs_planilha_clientes.json`.
+
+Defeito encontrado: a primeira tentativa da opcao 7 selecionou registros diretamente da listagem atual do Portal e gerou 5 pendencias `PROTOCOL_NOT_FOUND_IN_WORKBOOK` para protocolos externos a execucao da opcao 5. Classificacao: P1 `PROTOCOL_OUTSIDE_OPTION_5`.
+
+Correcao aplicada: `automacao_gd/application/completion_sync_service.py` agora carrega a lista elegivel da opcao 5, deduplica por protocolo, aplica `MAX_COMPLETION_PROTOCOLS_PER_RUN`, consulta no Portal somente os protocolos selecionados e registra origem `option_5_completed_pipeline`. Para protocolos da opcao 5 sem data de conclusao disponivel no Portal, a proposta em dry-run passa a ser `EM ABERTO` com motivo `COMPLETION_DATE_NOT_AVAILABLE`, salvo quando ja existir data na planilha.
+
+SPEC: `specs/SPEC-003-project-completion-sync.md` atualizada para registrar o contrato de origem exclusiva da opcao 5 na producao controlada inicial da v2.1.0.
+
+Configuracao executada: `APP_ENV=production`; `SYNC_COMPLETION_STATUS=true`; `DRY_RUN=true`; `APPLY_COMPLETION_STATUS=false`; `APPLY_EXCEL=true`; `MAX_COMPLETION_PROTOCOLS_PER_RUN=5`.
+
+Protocolos disponiveis pela opcao 5: 60.
+
+Protocolos selecionados: 5 unicos - 2606103168, 2606021741, 2606011490, 2605291225 e 2605280999.
+
+Reconciliação: protocolos analisados 5; datas propostas 0; `EM ABERTO` propostos 5; `NO_CHANGE` 0; pendencias 0; nao localizados 0; protocolos externos a opcao 5 0; protocolos adicionados apos limite 0; duplicacoes 0.
+
+SHA: antes `635a382cb053070aa162be4d90e0f51f7255951a1deb4e169a347116d58fb982`; depois `635a382cb053070aa162be4d90e0f51f7255951a1deb4e169a347116d58fb982`; mtime preservado; planilha modificada NAO.
+
+Isolamento: Parser V6, Validador V7, pipeline de equipamentos, download de orcamento e arquivamento nao foram executados pela opcao 7; estado de retomada da opcao 5 nao foi alterado.
+
+Testes: `tests/test_completion_sync_service.py` = 12 passed; suite completa `python -m pytest -q` = 694 passed; Ruff `automacao_gd apps tests` = passed; Compileall `automacao_gd apps` = passed; MyPy `automacao_gd/application/completion_sync_service.py` com `--follow-imports=skip` = passed.
+
+Revisao senior: P0=0; P1=0; P2=0; P3=0. A revisao confirmou origem exclusiva da opcao 5, limite 5, zero duplicacao, zero escrita, SHA preservado e privacidade dos relatorios.
+
+Artefatos: `data/logs/completion_status_sync_20260727T122433.json`; `data/logs/completion_status_sync_20260727T122433.md`. A tentativa anterior `completion_status_sync_20260727T120918.*` permanece como historico rejeitado por selecao ampla fora da opcao 5.
+
+Decisao: COMPLETION_SYNC_DRY_RUN_APPROVED - READY_FOR_CONTROLLED_CANARY.
+
+Proxima acao: executar canario controlado da opcao 7 somente com autorizacao explicita de escrita, mantendo `APPLY_COMPLETION_STATUS=true` bloqueado ate essa autorizacao.
+
+## Execucao 28 - Etapa 4.2 / canario real da coluna Conclusao
+
+Objetivo: aplicar de forma controlada as cinco propostas aprovadas no dry-run da Etapa 4.1, alterando exclusivamente a coluna `Conclusao` da planilha oficial para `EM ABERTO` nos protocolos 2606103168, 2606021741, 2606011490, 2605291225 e 2605280999.
+
+Autorizacao: a etapa exige confirmacao forte exata `APLICAR CONCLUSÃO 5 PROTOCOLOS`. Antes da escrita foi identificado que a CLI ainda aceitava `SIM`; classificado como P1 de contrato de seguranca.
+
+Dry-run utilizado: `data/logs/completion_status_sync_20260727T122433.json`, origem `option_5_completed_pipeline`, 5 protocolos selecionados, 0 externos, 0 duplicados, 5 propostas `EM ABERTO` por `COMPLETION_DATE_NOT_AVAILABLE`.
+
+Correcoes aplicadas antes da escrita: a opcao 7 passou a exigir a frase forte exata na CLI; a aplicacao real passou a carregar propostas congeladas do dry-run aprovado, sem nova coleta ampla do Portal e sem depender de CDP; a escrita real passou a criar backup validado, temporario no mesmo volume, validar somente a allowlist da coluna `Conclusao` e gerar relatorio `completion_status_sync_apply_<timestamp>`.
+
+Protocolos autorizados: 2606103168, 2606021741, 2606011490, 2605291225 e 2605280999.
+
+Fingerprints/planilha: nao recalculados nesta tentativa porque a planilha oficial ficou indisponivel em `Z:\Clientes\000\Levantamento de projetos\Planilha.xlsx`.
+
+Aplicacoes: 0. Nenhuma escrita foi iniciada; nenhum backup foi criado; nenhum temporario de aplicacao foi criado; `os.replace` nao foi executado.
+
+Pendencias: canario real bloqueado por dependencia externa `NETWORK_DRIVE_UNAVAILABLE`/planilha oficial indisponivel.
+
+Allowlist: nenhuma mudanca em workbook.
+
+Backup: nao criado.
+
+SHA: nao recalculado nesta etapa devido indisponibilidade da unidade `Z:`. Ultimo SHA aprovado do dry-run permanece `635a382cb053070aa162be4d90e0f51f7255951a1deb4e169a347116d58fb982`, mas deve ser recalculado antes de nova tentativa.
+
+Idempotencia: nao executada porque a aplicacao nao iniciou.
+
+Testes: direcionados da sincronizacao = 14 passed; Ruff focal = passed. Quality gates completos foram executados uma vez apos alteracao de codigo: `python -m pytest -q` = 695 passed, 1 failed por indisponibilidade da planilha oficial `Z:\Clientes\000\Levantamento de projetos\Planilha.xlsx`; Ruff `automacao_gd apps tests` = passed; Compileall `automacao_gd apps` = passed; MyPy dos arquivos alterados = passed.
+
+Revisao: P0=0; P1=0 apos correcoes de confirmacao forte e fonte congelada; bloqueio remanescente e externo.
+
+Decisao: COMPLETION_SYNC_BLOCKED - EXTERNAL_DEPENDENCY.
+
+Proxima acao: restabelecer a unidade `Z:` e repetir a Etapa 4.2 a partir do pre-voo, recalculando o SHA da planilha antes de qualquer backup ou escrita.
+
+## Execucao 29 - Etapa 4.3 / integracao da conclusao na opcao 5
+
+Objetivo: integrar definitivamente a leitura e o preenchimento da coluna `Conclusao` ao pipeline CDP completo da opcao 5, usando exclusivamente protocolos selecionados no filtro `Concluidos` e extraindo a data do bloco `Ponto de Conexao Aprovado`.
+
+Estado anterior: servico isolado de conclusao implementado; origem restrita a opcao 5 validada em dry-run; opcao 5 ainda nao integrava a conclusao; opcao 7 ainda existia como fluxo separado.
+
+Causa da alteracao: a rotina separada deixava risco operacional de processar equipamentos e arquivamento sem preencher a conclusao correspondente.
+
+Arquitetura adotada: a opcao 5 abre detalhes para todos os protocolos selecionados, inclusive quando o PDF e reutilizado, extrai metadados de conclusao, salva os metadados do download e passa a decisao de conclusao para o processamento de Excel da mesma linha.
+
+Seletor do estagio: busca estrutural pelo bloco normalizado `Ponto de Conexao Aprovado`; extracao limitada ao texto `Concluido em dd/mm/aaaa` dentro do mesmo bloco; proibida captura por primeira/ultima ocorrencia global, maior data global ou etapa `Solicitacao Concluida`.
+
+Testes RED: adicionados testes para multiplas datas na linha do tempo, ordem diferente, texto quebrado em elementos filhos, etapa ausente, etapa sem data, ambiguidade de data, PDF reutilizado exigindo detalhe, `NO_CHANGE` com conclusao separada, data real Excel, `EM ABERTO` texto e remocao da opcao 7.
+
+Arquivos alterados: `specs/SPEC-003-project-completion-sync.md`; `automacao_gd/infrastructure/portal/cdp_service.py`; `automacao_gd/infrastructure/metadata/service.py`; `automacao_gd/application/processing_service.py`; `automacao_gd/application/full_pipeline.py`; `automacao_gd/infrastructure/excel/service.py`; `automacao_gd/presentation/cli.py`; `automacao_gd/presentation/operational_output.py`; `docs/production_runbook.md`; `docs/operator_checklist.md`; testes direcionados.
+
+Dry-run: nao executado contra o Portal porque o endpoint CDP `http://127.0.0.1:9222/json/version` estava indisponivel (`CDP_UNAVAILABLE`). A planilha em `Y:\000\Levantamento de projetos\planilha.xlsx` estava acessivel.
+
+Canario: nao executado. O dry-run integrado ficou bloqueado por dependencia externa e nao houve autorizacao forte para escrita real.
+
+Protocolos: nenhum protocolo real processado nesta etapa devido ao bloqueio de CDP.
+
+PDF novo/reutilizado: comportamento coberto por testes; PDF reutilizado agora tambem exige abertura dos detalhes para extrair conclusao.
+
+Datas extraidas: nenhuma em Portal real nesta etapa; testes confirmam extracao correta do bloco autorizado.
+
+EM ABERTO: comportamento coberto por testes e documentado como `data de conclusao nao disponivel`.
+
+NO_CHANGE: decisao passa a considerar `completion_no_change` separadamente de ingresso e equipamentos.
+
+Pendencias: validacao operacional integrada contra Portal permanece pendente por CDP indisponivel.
+
+Backup: nenhum backup criado; nenhuma escrita iniciada.
+
+SHA: planilha oficial observada em `Y:` com SHA `635a382cb053070aa162be4d90e0f51f7255951a1deb4e169a347116d58fb982`; planilha nao modificada.
+
+Idempotencia: nao executada porque nao houve canario real.
+
+Quality gates: testes direcionados dos componentes afetados = 140 passed; suite completa `python -m pytest -q` = 706 passed; Ruff `automacao_gd apps tests` = passed; Compileall `automacao_gd apps` = passed; MyPy com `--follow-imports=skip` nos 7 arquivos de producao alterados = passed.
+
+Revisao: P0=0; P1=0; P2=0; P3=0 no diff de codigo/documentacao. Achado operacional: CDP indisponivel bloqueia dry-run integrado.
+
+Artefatos: `data/logs/option5_completion_integration_20260728T103951Z.json`; `data/logs/option5_completion_integration_20260728T103951Z.md`.
+
+Decisao: STAGE1_BLOCKED - EXTERNAL_DEPENDENCY.
+
+Proxima acao: reabrir o Edge com CDP em `127.0.0.1:9222`, confirmar Portal autenticado e repetir somente o dry-run integrado da opcao 5 com `DRY_RUN=true`, `MAX_COMPLETED_TO_PROCESS=5` e a planilha oficial preservada.
+
+## Execucao 30 - Etapa 4.3 / canario real e fechamento da integracao da conclusao
+
+Objetivo: com CDP restabelecido, executar o dry-run integrado da opcao 5, aplicar o canario real autorizado para ate 5 protocolos, validar allowlist, corrigir defeito P1 encontrado e confirmar idempotencia.
+
+Autorizacao: usuario informou a frase forte `APLICAR OPCAO 5 COM CONCLUSAO EM 5 PROTOCOLOS`. A CLI foi corrigida para rejeitar `SIM` e exigir a frase forte exata em `DRY_RUN=false`.
+
+Dry-run integrado: `SUCESSO`; 11 paginas lidas; 550 linhas lidas; 461 solicitacoes concluidas; 5 protocolos selecionados; 0 PDFs baixados; 5 PDFs reutilizados; 5 PDFs analisados; 5 datas de conclusao encontradas; 5 propostas de atualizacao; 0 escritas; 0 erros.
+
+Primeira tentativa real: `SUCESSO` operacional, mas reprovada pela validacao pos-aplicacao manual porque houve mudanca fora da allowlist em `2026!A105 Cliente` e `2026!A109 Cliente`. A planilha foi revertida imediatamente usando `Y:\000\Levantamento de projetos\planilha_backup_20260728_112619.xlsx`; SHA restaurado `635a382cb053070aa162be4d90e0f51f7255951a1deb4e169a347116d58fb982`.
+
+Causa raiz: `_write_excel_row()` era usado para linha existente e regravava campos fora da allowlist ao atualizar somente `Conclusao`.
+
+Correcao: criado writer parcial para linhas existentes, gravando somente `Conclusao`, `Placa` e `Inversor` quando esses campos mudam; adicionada regressao para impedir alteracao de `Cliente` quando apenas `Conclusao` muda.
+
+Quality gates apos correcao: testes direcionados afetados = 131 passed; suite completa `python -m pytest -q` = 707 passed; Ruff `automacao_gd apps tests` = passed; Compileall `automacao_gd apps` = passed; MyPy com `--follow-imports=skip` nos arquivos alterados = passed.
+
+Canario final: `SUCESSO`; protocolos 2606306197, 2606184625, 2606174347, 2606123663 e 2606103279; 5 PDFs reutilizados; 5 datas extraidas do bloco `Ponto de Conexao Aprovado`; 5 conclusoes atualizadas; 0 pendencias; 0 erros. O arquivamento foi desabilitado na reaplicacao final (`APPLY_ARCHIVE=false`) porque os PDFs ja tinham sido arquivados na primeira tentativa e duplicar `_vN` seria indevido.
+
+Allowlist: comparacao entre `planilha_backup_20260728_113225.xlsx` e `planilha.xlsx` encontrou 5 mudancas de valor, todas na coluna `Conclusao`; 0 mudancas fora da allowlist; 0 mudancas de dimensao; 0 mudancas de estilo fora da allowlist.
+
+SHA: antes `635a382cb053070aa162be4d90e0f51f7255951a1deb4e169a347116d58fb982`; depois `6b0c2dd541050526297e5ba611ee97d15e040a3bcd86ceda3cceedd44bb6f4a5`.
+
+Idempotencia: reavaliacao em dry-run dos mesmos 5 protocolos retornou 5 `NO_CHANGE`, 0 atualizacoes adicionais e 0 erros.
+
+Arquivos gerados: `data/logs/option5_completion_integration_20260728T113528Z.json`; `data/logs/option5_completion_integration_20260728T113528Z.md`.
+
+Revisao: P0=0; P1=0; P2=0; P3=0.
+
+Decisao: STAGE1_COMPLETE - OPTION5_COMPLETION_INTEGRATED.
+
+Proxima acao: manter producao controlada com `MAX_COMPLETED_TO_PROCESS=5`; nao iniciar lote amplo; preparar manifestacao de release v2.1.0 somente em etapa propria.
+
+## Execucao 31 - Etapa 4.4 / canario integrado da conclusao na opcao 5
+
+Objetivo: concluir a validacao operacional da Etapa 1 com correcao da nomenclatura de simulacao, novo dry-run integrado, plano congelado, canario real de ate cinco protocolos, validacao de allowlist/SHA e idempotencia.
+
+Resultado anterior: dry-run integrado da opcao 5 aprovado com 5 datas encontradas e canario real anterior aplicado nos protocolos 2606306197, 2606184625, 2606174347, 2606123663 e 2606103279.
+
+Correcao da nomenclatura: em `DRY_RUN=true`, o resumo da opcao 5 passou a exibir `Datas propostas` e `EM ABERTO propostos`; em producao, permanece `Datas atualizadas` e `EM ABERTO aplicados`. O JSON passou a separar `completion_dates_proposed`, `completion_dates_applied`, `open_values_proposed` e `open_values_applied`.
+
+Quality gates: teste RED direcionado falhou antes da correcao; `tests/test_operational_output.py` = 15 passed apos a correcao; suite completa `python -m pytest -q` = 709 passed; Ruff `automacao_gd apps tests` = passed; Compileall `automacao_gd apps` = passed; MyPy com `--follow-imports=skip` em `automacao_gd/presentation/operational_output.py`, `automacao_gd/application/processing_service.py` e `automacao_gd/application/full_pipeline.py` = passed.
+
+Pre-voo: caminho efetivo da planilha confirmado como `Y:\000\Levantamento de projetos\planilha.xlsx`; planilha existente e legivel; permissao de escrita futura validada; CDP `/json/version` disponivel com `webSocketDebuggerUrl`; SHA antes da tentativa `6b0c2dd541050526297e5ba611ee97d15e040a3bcd86ceda3cceedd44bb6f4a5`.
+
+Dry-run: tentado com `APP_ENV=production`, `DRY_RUN=true`, `MAX_COMPLETED_TO_PROCESS=5`, `PROCESS_EXISTING_AFTER_SKIP=true`, `RESUME_PIPELINE=true`, `SKIP_ALREADY_COMPLETED=true`, `RESET_PIPELINE_STATE=false`, `ENABLE_PORTAL_PAGINATION=true`, `MAX_PORTAL_PAGES=11` e lote preferencial 2606306197, 2606184625, 2606174347, 2606123663 e 2606103279.
+
+Resultado do dry-run: `FALHOU`; 0 paginas lidas; 0 protocolos selecionados; 0 PDFs analisados; 0 datas encontradas; 0 propostas. Causa: `Nenhuma aba do Portal GD foi encontrada via CDP`. O endpoint CDP estava ativo, mas nao havia aba do Portal GD exposta para a automacao.
+
+Propostas congeladas: nao geradas, pois o dry-run integrado nao concluiu.
+
+Autorizacao: nao usada para escrita real nesta execucao porque a etapa bloqueou antes da geracao de plano congelado.
+
+Canario: nao executado. Nenhum backup criado, nenhum temporario de aplicacao criado, `os.replace` nao executado, rollback nao necessario.
+
+Allowlist/SHA: nenhuma mudanca em workbook; SHA apos tentativa permaneceu `6b0c2dd541050526297e5ba611ee97d15e040a3bcd86ceda3cceedd44bb6f4a5`.
+
+Idempotencia: nao executada porque o canario real nao iniciou.
+
+Revisao: P0=0; P1=0; P2=0; P3=0 para a correcao de nomenclatura; bloqueio operacional classificado como dependencia externa.
+
+Arquivos alterados: `automacao_gd/presentation/operational_output.py`; `automacao_gd/application/processing_service.py`; `automacao_gd/application/full_pipeline.py`; `tests/test_operational_output.py`; `docs/codex_execution_ledger.md`.
+
+Artefatos: `data/logs/option5_completion_canary_20260728T114805.json`; `data/logs/option5_completion_canary_20260728T114805.md`.
+
+Decisao: STAGE1_BLOCKED - EXTERNAL_DEPENDENCY.
+
+Proxima acao: expor uma aba autenticada do Portal GD no mesmo Edge/CDP `127.0.0.1:9222` e repetir somente o dry-run integrado da Etapa 4.4; nao iniciar lote amplo e nao gerar release/tag v2.1.0.
+
+## Execucao 32 - Etapa 4.4 / revalidacao do canario integrado da conclusao
+
+Objetivo: revalidar a Etapa 4.4 apos restabelecimento do CDP, repetindo o dry-run integrado da opcao 5 sobre o lote preferencial e confirmando a idempotencia operacional da conclusao.
+
+Resultado anterior: Execucao 31 bloqueada porque o CDP estava ativo, mas nao expunha aba do Portal GD para a automacao.
+
+Pre-voo: planilha oficial em `Y:\000\Levantamento de projetos\planilha.xlsx`; SHA antes do dry-run `6b0c2dd541050526297e5ba611ee97d15e040a3bcd86ceda3cceedd44bb6f4a5`; CDP `/json/version` disponivel; aba `Solicitacoes de Acesso de Mini e Microgeradores` disponivel em `https://gdneoenergiapernambuco.neoenergia.com/`.
+
+Dry-run: executado com `APP_ENV=production`, `DRY_RUN=true`, `MAX_COMPLETED_TO_PROCESS=5`, `PROCESS_EXISTING_AFTER_SKIP=true`, `RESUME_PIPELINE=true`, `SKIP_ALREADY_COMPLETED=true`, `RESET_PIPELINE_STATE=false`, `ENABLE_PORTAL_PAGINATION=true`, `MAX_PORTAL_PAGES=11` e os protocolos preferenciais 2606306197, 2606184625, 2606174347, 2606123663 e 2606103279.
+
+Resultado do dry-run: `SUCESSO`; 11 paginas lidas; 550 linhas lidas; 461 solicitacoes concluidas; 5 protocolos selecionados; 0 duplicados; 0 externos; 0 PDFs baixados; 5 PDFs reutilizados; 5 PDFs analisados; 5 tecnicamente aprovados; 5 datas encontradas; 0 datas propostas; 0 `EM ABERTO` propostos; 5 `NO_CHANGE`; 0 pendencias; 0 escritas; 0 arquivamentos; 0 erros.
+
+Propostas congeladas: plano no-op gerado em `data/logs/option5_completion_canary_plan_20260728T115045Z.json` e `data/logs/option5_completion_canary_plan_20260728T115045Z.md`; plan hash `84068fbaa97d9823a18ae7124ebb65a59d0d426abff9bf130fc1e12c0e0e3c60`; 5 protocolos; 0 updates; 5 `NO_CHANGE`.
+
+Canario: nenhuma nova escrita foi executada nesta revalidacao porque os cinco protocolos ja estavam atualizados e o dry-run retornou `NO_CHANGE` para todos. A evidencia de escrita real permanece a Execucao 30, que aplicou o lote, validou allowlist, SHA e idempotencia.
+
+Backup: nenhum backup novo criado nesta revalidacao, pois nao havia mudanca pendente.
+
+Allowlist: nenhuma alteracao no workbook; mudancas fora da allowlist = 0.
+
+SHA: antes `6b0c2dd541050526297e5ba611ee97d15e040a3bcd86ceda3cceedd44bb6f4a5`; depois `6b0c2dd541050526297e5ba611ee97d15e040a3bcd86ceda3cceedd44bb6f4a5`.
+
+Substituicao: `os.replace` nao executado nesta revalidacao porque nao houve escrita pendente.
+
+Rollback: nao necessario.
+
+Idempotencia: confirmada pelo dry-run dos mesmos cinco protocolos, com 5 `NO_CHANGE` e 0 updates adicionais.
+
+Revisao: P0=0; P1=0; P2=0; P3=0.
+
+Artefatos: `data/logs/option5_completion_canary_20260728T115045Z.json`; `data/logs/option5_completion_canary_20260728T115045Z.md`; `data/logs/option5_completion_canary_plan_20260728T115045Z.json`; `data/logs/option5_completion_canary_plan_20260728T115045Z.md`.
+
+Decisao: STAGE1_COMPLETE - OPTION5_COMPLETION_OPERATIONALLY_APPROVED.
+
+Proxima acao: nao iniciar lote amplo; preparar a etapa propria de release v2.1.0 quando autorizada.
+
+## Execucao 33 - Etapa 2 / reconciliacao global Portal GD x planilha oficial
+
+Objetivo: implementar e revalidar uma reconciliacao global, read-only, entre todos os protocolos do filtro `Concluidos` do Portal GD e todos os protocolos da planilha oficial, executada automaticamente na opcao 5 apos a leitura de todas as paginas e antes da selecao limitada por `MAX_COMPLETED_TO_PROCESS`.
+
+Estado anterior: opcao 5 ja possuia limite global operacional, isolamento de pendencias e conclusao integrada; faltava auditar globalmente `Portal x planilha` sem ampliar o lote operacional.
+
+Arquitetura: criado `automacao_gd/application/reconciliation_service.py` com normalizacao de protocolo, indices de Portal e workbook, reconciliacao de conjuntos, auditorias de conclusao/equipamentos/registros incompletos e geracao de relatorios JSON/Markdown sanitizados. A opcao 5 chama o servico em callback `before_limit` e atualiza o mesmo artefato em `after_selection` com o lote operacional selecionado.
+
+Arquivos alterados: `specs/SPEC-004-portal-workbook-reconciliation.md`; `automacao_gd/application/reconciliation_service.py`; `automacao_gd/application/full_pipeline.py`; `automacao_gd/infrastructure/portal/cdp_service.py`; `automacao_gd/infrastructure/state/pipeline_state.py`; `automacao_gd/presentation/operational_output.py`; `scripts/repair_workbook_format.py`; `scripts/validate_downloaded_pdfs.py`; `tests/test_reconciliation_service.py`; `tests/test_pipeline_state_batch.py`; `tests/test_operational_output.py`; `tests/test_full_cdp_pipeline.py`; `docs/production_runbook.md`; `docs/operator_checklist.md`; `docs/codex_execution_ledger.md`.
+
+Correcao de performance: a leitura da planilha passou a percorrer linhas com `iter_rows(values_only=True)` e o estado de retomada passou a registrar protocolos descobertos em lote com `mark_discovered_many()`, evitando centenas de escritas individuais de estado.
+
+Dry-run integrado: executado pela opcao 5 com `APP_ENV=production`, `DRY_RUN=true`, `MAX_COMPLETED_TO_PROCESS=5`, `PROCESS_EXISTING_AFTER_SKIP=true`, `RESUME_PIPELINE=true`, `SKIP_ALREADY_COMPLETED=true`, `RESET_PIPELINE_STATE=false`, `ENABLE_PORTAL_PAGINATION=true` e `MAX_PORTAL_PAGES=11`.
+
+Portal: 11 paginas lidas; 550 linhas lidas; 461 solicitacoes concluidas; 461 protocolos concluidos unicos; 0 protocolos invalidos; 0 duplicacoes na listagem.
+
+Planilha: 631 linhas de projeto; 631 protocolos unicos; 0 duplicados; 0 linhas sem protocolo valido; abas classificadas como anuais validas.
+
+Reconciliação de conjuntos: 461 protocolos encontrados nas duas fontes; 0 protocolos concluidos ausentes na planilha; 170 protocolos existentes somente na planilha.
+
+Achados nao bloqueantes: 1 protocolo em aba anual incorreta; 417 conclusoes vazias; 8 registros com campos de equipamento vazios para revisao; 9 registros incompletos. Esses achados nao alteram a planilha e alimentam saneamento posterior.
+
+Lote operacional: 5 protocolos selecionados pelo limite global; 5 PDFs reutilizados; 5 PDFs analisados; 5 PDFs tecnicamente aprovados; 0 PDFs baixados; 0 arquivamentos; 0 escritas; 0 erros.
+
+Seguranca read-only: SHA antes `6b0c2dd541050526297e5ba611ee97d15e040a3bcd86ceda3cceedd44bb6f4a5`; SHA depois `6b0c2dd541050526297e5ba611ee97d15e040a3bcd86ceda3cceedd44bb6f4a5`; `workbook_save_called=false`; `backup_created=false`; `os_replace_called=false`; temporarios residuais 0.
+
+Privacidade: os artefatos novos nao registram caminhos absolutos, nomes de clientes, CPF, CNPJ, e-mails, cookies, tokens ou credenciais. A planilha e referenciada por nome de arquivo e identificador operacional sanitizado.
+
+Artefatos: `data/logs/portal_workbook_reconciliation_20260728T125610Z.json`; `data/logs/portal_workbook_reconciliation_20260728T125610Z.md`; `data/logs/pipeline_cdp_completo.json`; `data/logs/pipeline_cdp_completo.md`.
+
+Testes: direcionados da reconciliacao/pipeline/saida operacional/estado em lote = 78 passed; suite completa `python -m pytest -q` = 725 passed; Ruff `automacao_gd src scripts tests` = passed; Compileall `automacao_gd apps scripts` = passed; MyPy com `--follow-imports=skip` nos arquivos alterados = passed.
+
+Revisao senior: P0=0; P1=0; P2=0; P3=0. A revisao confirmou ordem antes do limite, limite operacional preservado, relatorios sanitizados, SHA preservado, zero download/backup/escrita/arquivamento durante a reconciliacao e ausencia de regressao da opcao 5.
+
+Decisao: STAGE2_PARTIAL - RECONCILIATION_COMPLETED_WITH_NON_BLOCKING_FINDINGS.
+
+Proxima acao: tratar os achados de saneamento em etapa propria, sem iniciar lote amplo e sem ampliar a execucao operacional acima de `MAX_COMPLETED_TO_PROCESS=5`.
+
+## Execucao 34 - Etapa 2.1 / correcao da completude da paginacao global
+
+Objetivo: corrigir a paginação da reconciliação global da opção 5 para comprovar leitura até a última página real do filtro `Concluídos`, sem confundir `MAX_PORTAL_PAGES` com fim efetivo da paginação e sem ampliar o lote operacional acima de cinco protocolos.
+
+Diagnóstico: a execução anterior leu 11 páginas e gerou métricas seguras, porém incompletas. O artefato indicava `pagination_stop_reason=max_portal_pages_reached`, `pagination_next_found=true` e links visíveis para páginas 12, 13 e 14. Portanto, a execução anterior foi reclassificada como `HISTORICAL_PARTIAL_RECONCILIATION`.
+
+Causa raiz: `_collect_completed_listing_rows_across_pages()` tratava `MAX_PORTAL_PAGES` como motivo de parada suficiente e a opção 5 seguia para reconciliação/lote operacional mesmo quando ainda havia página seguinte disponível.
+
+Correção implementada: `MAX_PORTAL_PAGES` passou a ser teto defensivo. A coleta agora registra `pagination_complete`, `last_page_confirmed`, `last_page_number`, `next_page_available_after_stop`, `pagination_safety_cap` e `pages_visited`; tenta fallback pelo botão `Próxima` quando o número futuro não está visível; detecta loop/conteúdo repetido; e bloqueia o lote operacional quando a paginação é parcial. A reconciliação agora grava `metrics_scope=partial|global` e `set_reconciliation_authoritative`.
+
+Arquivos alterados: `automacao_gd/infrastructure/portal/cdp_service.py`; `automacao_gd/application/reconciliation_service.py`; `automacao_gd/application/full_pipeline.py`; `automacao_gd/presentation/operational_output.py`; `tests/test_full_cdp_pipeline.py`; `tests/test_reconciliation_service.py`; `specs/SPEC-004-portal-workbook-reconciliation.md`; `docs/production_runbook.md`; `docs/operator_checklist.md`; `docs/codex_execution_ledger.md`.
+
+Testes RED/GREEN: adicionados testes para última página acima de 11, teto atingido com próxima página, bloqueio do lote operacional em paginação incompleta, fallback pelo botão Próxima e escopo autoritativo/parcial da reconciliação. Resultado direcionado: `tests/test_full_cdp_pipeline.py tests/test_reconciliation_service.py tests/test_cdp_portal_navigation.py tests/test_operational_output.py tests/test_pipeline_state_batch.py` = 89 passed.
+
+Estratégia de paginação: navegar por estado real do Portal, preferindo número alvo quando disponível e usando botão `Próxima` quando a janela numérica não exibir a página futura. O término real exige próxima página indisponível e `last_page_confirmed=true`.
+
+Teto de segurança: quando o teto é atingido sem próxima página, a última página é confirmada; quando o teto é atingido com próxima página, a execução retorna `PORTAL_PAGINATION_INCOMPLETE`, `metrics_scope=partial`, `set_reconciliation_authoritative=false` e lote operacional 0.
+
+Revalidação real: tentativa executada com `APP_ENV=production`, `DRY_RUN=true`, `MAX_COMPLETED_TO_PROCESS=5`, `MAX_PORTAL_PAGES=50`, `ENABLE_PORTAL_PAGINATION=true`, `PROCESS_EXISTING_AFTER_SKIP=true`, `RESUME_PIPELINE=true`, `SKIP_ALREADY_COMPLETED=true`, `RESET_PIPELINE_STATE=false` e planilha oficial `Y:\000\Levantamento de projetos\planilha.xlsx`.
+
+Resultado da revalidação real: bloqueada antes do Portal por `ECONNREFUSED 127.0.0.1:9222`. Páginas visitadas 0; protocolos lidos 0; PDFs baixados 0; lote operacional 0; planilha não modificada.
+
+SHA: antes/depois da tentativa `6b0c2dd541050526297e5ba611ee97d15e040a3bcd86ceda3cceedd44bb6f4a5`.
+
+Relatórios da tentativa bloqueada: `data/logs/downloads_orcamentos_concluidos_cdp.json`; `data/logs/pipeline_cdp_completo.json`; `data/logs/pipeline_cdp_completo.md`. Nenhum artefato `portal_workbook_reconciliation_global_<timestamp>` foi gerado porque o bloqueio ocorreu antes da leitura do Portal.
+
+Quality gates: suite completa `python -m pytest -q` = 731 passed; Ruff `automacao_gd apps scripts tests` = passed; Compileall `automacao_gd apps scripts` = passed; MyPy com `--follow-imports=skip` nos arquivos alterados = passed.
+
+Revisão: P0=0; P1=0 para o diff de código/documentação. A revalidação definitiva permanece bloqueada por dependência externa, não por falha da implementação.
+
+Decisão: STAGE2_BLOCKED - EXTERNAL_DEPENDENCY.
+
+Próxima ação: restabelecer o Edge/CDP em `127.0.0.1:9222` e repetir somente a revalidação real da Etapa 2.1 com `DRY_RUN=true`, `MAX_COMPLETED_TO_PROCESS=5` e teto defensivo `MAX_PORTAL_PAGES` acima da quantidade real de páginas.
+
+### Atualizacao operacional da Execucao 34 apos restabelecimento do CDP
+
+CDP: endpoint `127.0.0.1:9222/json/version` respondeu com `webSocketDebuggerUrl` presente.
+
+SHA oficial: a planilha `Y:\000\Levantamento de projetos\planilha.xlsx` manteve SHA `6b0c2dd541050526297e5ba611ee97d15e040a3bcd86ceda3cceedd44bb6f4a5` antes/depois da tentativa.
+
+Revalidacao real: repetida com `APP_ENV=production`, `DRY_RUN=true`, `MAX_COMPLETED_TO_PROCESS=5`, `MAX_PORTAL_PAGES=50`, `ENABLE_PORTAL_PAGINATION=true`, `PROCESS_EXISTING_AFTER_SKIP=true`, `RESUME_PIPELINE=true`, `SKIP_ALREADY_COMPLETED=true`, `RESET_PIPELINE_STATE=false` e planilha oficial `Y:\000\Levantamento de projetos\planilha.xlsx`.
+
+Resultado atualizado: o Portal foi acessado, a primeira pagina foi lida e a execucao bloqueou corretamente por `PORTAL_PAGINATION_INCOMPLETE`, com `pagination_stop_reason=pagination_loop_detected`, `metrics_scope=partial`, `set_reconciliation_authoritative=false`, paginas visitadas `[1]`, lote operacional 0, downloads 0, detalhes abertos 0, arquivamentos 0 e escrita na planilha 0. O diagnostico mostrou clique executado no link numerico `2`, mas a pagina ativa permaneceu `1`; a protecao impediu falsa reconciliacao global.
+
+Testes adicionais: adicionado teste RED para estabilizacao da pagina ativa apos clique e teste do clique exato por locator visivel. Resultado direcionado atualizado: `tests/test_full_cdp_pipeline.py tests/test_reconciliation_service.py tests/test_cdp_portal_navigation.py tests/test_operational_output.py tests/test_pipeline_state_batch.py` = 91 passed.
+
+Quality gates finais apos ajuste: suite completa `python -m pytest -q` = 733 passed; Ruff `automacao_gd apps scripts tests` = passed; Compileall `automacao_gd apps scripts` = passed; MyPy com `--follow-imports=skip` nos arquivos alterados = passed.
+
+Relatorios atualizados: `data/logs/downloads_orcamentos_concluidos_cdp.json`; `data/logs/portal_workbook_reconciliation_global_20260728T144348Z.json`; `data/logs/portal_workbook_reconciliation_global_20260728T144348Z.md`; `data/logs/pipeline_cdp_completo.json`; `data/logs/pipeline_cdp_completo.md`.
+
+Decisao atualizada: STAGE2_BLOCKED - PORTAL_PAGINATION_INCOMPLETE.
+
+Proxima acao atualizada: diagnosticar o mecanismo real de paginacao do componente JSF/PrimeFaces do Portal ou obter uma fonte oficial equivalente para a listagem completa antes de declarar reconciliacao global. Nao iniciar Etapa 3 e nao executar lote amplo enquanto `pagination_complete=false`.
+
+### Atualizacao final da Execucao 34 - revalidacao com 15 paginas
+
+Contexto: apos confirmacao operacional de que o Portal contem 15 paginas, a revalidacao foi repetida com o mesmo contrato seguro (`APP_ENV=production`, `DRY_RUN=true`, `MAX_COMPLETED_TO_PROCESS=5`, `MAX_PORTAL_PAGES=50`, `ENABLE_PORTAL_PAGINATION=true`, `PROCESS_EXISTING_AFTER_SKIP=true`, `RESUME_PIPELINE=true`, `SKIP_ALREADY_COMPLETED=true`, `RESET_PIPELINE_STATE=false`).
+
+Resultado final da revalidacao: `pagination_complete=true`, `last_page_confirmed=true`, `last_page_number=15`, `next_page_available_after_stop=false`, `pagination_stop_reason=last_page_reached`, `metrics_scope=global`, `set_reconciliation_authoritative=true`.
+
+Metricas globais recalculadas: paginas lidas 15; linhas lidas 733; protocolos concluidos unicos no Portal 629; protocolos unicos na planilha 631; `P ∩ W` 625; `P - W` 4; `W - P` 6; duplicados na planilha 0; em aba anual incorreta 1; conclusoes vazias 417; equipamentos vazios para revisao 8; registros incompletos 9.
+
+Lote operacional em simulacao: protocolos selecionados 5; PDFs baixados 1; PDFs reutilizados 4; PDFs analisados 5; PDFs tecnicamente aprovados 5; planilha atualizada 0; PDFs arquivados 0. O limite operacional permaneceu em 5 e nenhum protocolo foi adicionado apos o limite.
+
+Seguranca: SHA antes/depois `6b0c2dd541050526297e5ba611ee97d15e040a3bcd86ceda3cceedd44bb6f4a5`; `workbook_save_called=false`; `backup_created=false`; `os_replace_called=false`; escrita na planilha 0; arquivamento 0.
+
+Artefatos finais: `data/logs/portal_workbook_reconciliation_global_20260728T145912Z.json`; `data/logs/portal_workbook_reconciliation_global_20260728T145912Z.md`; `data/logs/downloads_orcamentos_concluidos_cdp.json`; `data/logs/processamento_pdfs_planilha_clientes.json`; `data/logs/processamento_pdfs_planilha_clientes.md`; `data/logs/pipeline_cdp_completo.json`; `data/logs/pipeline_cdp_completo.md`.
+
+Decisao final da Etapa 2.1: STAGE2_PARTIAL - PAGINATION_COMPLETE_WITH_NON_BLOCKING_DATA_FINDINGS.
+
+Proxima acao final: tratar os achados de dados em etapa propria, sem iniciar lote amplo e mantendo `MAX_COMPLETED_TO_PROCESS=5` para producao controlada.
+
+## Execucao 35 - Etapa 3.1 / classificacao read-only e plano de saneamento
+
+Objetivo: classificar em modo somente leitura os quatro protocolos presentes no Portal Concluidos e ausentes na planilha (`P - W`) e os seis protocolos existentes somente na planilha (`W - P`), gerando plano de saneamento sem aplicar alteracao real.
+
+Origem: `portal_workbook_reconciliation_global_20260728T145912Z.json`, com `metrics_scope=global`, `set_reconciliation_authoritative=true`, `pagination_complete=true`, `last_page_number=15`, `P - W=4` e `W - P=6`.
+
+Planilha: `planilha.xlsx`; SHA antes/depois `6b0c2dd541050526297e5ba611ee97d15e040a3bcd86ceda3cceedd44bb6f4a5`; leitura feita em modo read-only.
+
+Protocolos `P - W`: 2212284862; 2310257450; 2605229906; 2607077271.
+
+Classificacao `P - W`: 2607077271 classificado como `CONTROLLED_INSERT_CANDIDATE_FROM_OPTION5_DRY_RUN`, pois o dry-run da opcao 5 processou PDF, extraiu conclusao do `PONTO_DE_CONEXAO_APROVADO`, aprovou tecnicamente e simulou `insert_new_chronological`. Os demais tres ficaram como `PENDING_*_BEFORE_INSERT` por ausencia de proposta tecnica processada no lote atual.
+
+Protocolos `W - P`: 2503180158; 2504033105; 2504104239; 2504114444; 2505261647; 2511048787.
+
+Classificacao `W - P`: cinco registros ficaram em revisao por incompletude de equipamento/metadados sem remocao automatica; 2504114444 ficou como `KEEP_ROW_NO_CHANGE_PENDING_PORTAL_STATUS_REVIEW`, pois possui parecer/equipamentos preenchidos mas nao aparece no conjunto atual de Concluidos.
+
+Plano: total 10 itens; candidatos de insercao controlada 1; pendencias/revisoes 8; manter sem alteracao com revisao de status 1; aplicacoes reais 0.
+
+Artefatos: `data/logs/portal_workbook_sanitation_plan_stage3_20260728T181352Z.json`; `data/logs/portal_workbook_sanitation_plan_stage3_20260728T181352Z.md`.
+
+Plan hash: `5323c7acabc57fee3fd946d1dc176de5b07f340d79668f1c8e8d465aa7fed3c1`.
+
+Validacoes: JSON valido; UTF-8 valido; sem caminhos absolutos; sem e-mails; sem CPF; SHA preservado; `apply_now=0`; Portal nao acessado; PDF nao baixado; planilha nao modificada.
+
+Decisao: STAGE3_1_PLAN_GENERATED_READ_ONLY.
+
+Proxima acao: revisar o plano e, se aprovado, preparar pre-voo direcionado para saneamento controlado. Nao aplicar alteracoes sem autorizacao explicita.
+
+## Execucao 36 - Etapa 3.1 / pre-voo read-only do plano de saneamento
+
+Objetivo: revisar criptograficamente o plano da Etapa 3.1 e executar pre-voo read-only, priorizando o protocolo 2607077271, sem inserir, excluir ou modificar qualquer registro.
+
+Plano validado: `portal_workbook_sanitation_plan_stage3_20260728T181352Z.json`.
+
+Hash do plano: registrado `5323c7acabc57fee3fd946d1dc176de5b07f340d79668f1c8e8d465aa7fed3c1`; recalculado `5323c7acabc57fee3fd946d1dc176de5b07f340d79668f1c8e8d465aa7fed3c1`; resultado `MATCH`.
+
+Planilha: `planilha.xlsx`; SHA antes/depois da leitura `6b0c2dd541050526297e5ba611ee97d15e040a3bcd86ceda3cceedd44bb6f4a5`.
+
+Pre-voo: total 10 itens; protocolo prioritario 2607077271; pronto para revisao direcionada 1; pendentes/sem escrita 9; bloqueios 0; updates autorizados 0.
+
+2607077271: ausente da planilha; evidencia congelada da opcao 5 presente; acao dry-run `insert_new_chronological`; aba alvo `2026`; linha alvo `110`; conclusao `2026-07-28`; Placa proposta `5x RENEPV ZY620G12NH-120`; Inversor proposto `1x HUAWEI SUN2000-5KTL`; validacao tecnica `approved`; PDF local existente e hasheado.
+
+Demais protocolos: 2212284862, 2310257450 e 2605229906 permanecem sem proposta congelada suficiente para insercao; 2503180158, 2504033105, 2504104239, 2504114444, 2505261647 e 2511048787 permanecem sem alteracao e pendentes de revisao de status/dados.
+
+Artefatos: `data/logs/portal_workbook_sanitation_preflight_stage3_20260728T182834Z.json`; `data/logs/portal_workbook_sanitation_preflight_stage3_20260728T182834Z.md`.
+
+Preflight hash: `ce8a359e673d593c3bd5e80da7ce6d82f30734cc9ea77e33af508d66ea79dce8`.
+
+Validacoes: JSON valido; UTF-8 valido; sem caminhos absolutos; sem e-mails; sem CPF; planilha nao modificada; Portal nao acessado; PDF nao baixado; backup nao criado; temporario de aplicacao nao criado; `os.replace` nao executado.
+
+Decisao: STAGE3_1_PREFLIGHT_READ_ONLY_APPROVED_FOR_REVIEW.
+
+Proxima acao: se houver autorizacao explicita, preparar etapa de saneamento direcionado para 2607077271 com pre-write validation e confirmacao forte. Sem autorizacao, manter todos os itens em revisao.
+
+## Execucao 37 - Etapa 3.3 / aplicacao direcionada e encerramento controlado da Fase 3
+
+Estado anterior: Etapa 2.1 com reconciliacao global completa e achados nao bloqueantes; Etapa 3.1 com plano read-only gerado; pre-voo 3.1 aprovado para revisao direcionada do protocolo `2607077271`.
+
+Confirmacao: recebida frase forte exata `APLICAR SANEAMENTO DIRECIONADO DO PROTOCOLO 2607077271`.
+
+Plan hash: `5323c7acabc57fee3fd946d1dc176de5b07f340d79668f1c8e8d465aa7fed3c1`; revalidado com serializacao canonica.
+
+Preflight hash: `ce8a359e673d593c3bd5e80da7ce6d82f30734cc9ea77e33af508d66ea79dce8`; revalidado com serializacao canonica.
+
+Pre-escrita: SHA-base revalidado `6b0c2dd541050526297e5ba611ee97d15e040a3bcd86ceda3cceedd44bb6f4a5`; protocolo `2607077271` ausente; aba alvo `2026`; linha alvo `110`; ultima linha real anterior `109`; linha 110 vazia; planilha legivel e sem bloqueio aparente.
+
+Aplicacao: inserida somente a linha do protocolo `2607077271` na aba `2026`, linha `110`, com sete campos autorizados (`Cliente`, `Protocolo`, `Data de ingresso`, `Conclusao`, `Parecer`, `Placa`, `Inversor`). Nome do cliente foi usado apenas na planilha oficial a partir da evidencia congelada e omitido dos relatorios sanitizados.
+
+Backup: `planilha_pre_stage3_protocol_2607077271_20260728T190400Z.xlsx`; SHA backup igual ao SHA anterior `6b0c2dd541050526297e5ba611ee97d15e040a3bcd86ceda3cceedd44bb6f4a5`; backup validado como XLSX legivel.
+
+Allowlist e comparacao: mudancas inesperadas `0`; protocolos existentes alterados fora do alvo `0`; formulas alteradas `0`; abas alteradas `0`; filtros historicos nao corrigidos; larguras/mesclagens/impressao preservadas.
+
+Substituicao: temporario unico no mesmo volume; `os.replace` executado uma vez; rollback nao necessario; temporarios residuais `0`.
+
+SHA final: `7ea22f78b008c236dad7323cefff302f5f4c64aa47ca3f718d12dcc9077b8076`.
+
+Idempotencia: protocolo `2607077271` encontrado exatamente uma vez; nova proposta de insercao `0`; updates adicionais `0`; SHA preservado durante a reavaliacao read-only.
+
+Reconciliacao pos-aplicacao: recalculada em modo read-only com a ultima evidencia global completa congelada do Portal (`portal_workbook_reconciliation_global_20260728T145912Z.json`) e a planilha atual. Resultado: `P=629`, `W=632`, `P ∩ W=626`, `P-W=3`, `W-P=6`; equacoes fechadas. Nova coleta live do Portal nao foi executada nesta subetapa.
+
+Diagnostico residual: `P-W` remanescentes `2212284862`, `2310257450`, `2605229906` classificados para revisao historica/futuro pre-voo direcionado; `W-P` `2503180158`, `2504033105`, `2504104239`, `2504114444`, `2505261647`, `2511048787` preservados para revisao de status/fonte; `2403209071` diagnosticado como divergencia de ano/aba a tratar em plano futuro; conclusoes invalidas preservadas; conclusoes vazias inventariadas; oito equipamentos vazios classificados sem inferencia.
+
+Casos protegidos: `2603166924` e `2604275348` preservados como multifabricante/source incomplete; protocolos historicos `2605250167`, `2605148473`, `2605056663`, `2602098916` permanecem protegidos contra inferencia; `2501312552` preservado como equipamento preenchido e backlog apenas de conclusao.
+
+Artefatos: `data/logs/stage3_targeted_apply_2607077271_20260728T190400Z.json`; `data/logs/stage3_targeted_apply_2607077271_20260728T190400Z.md`; `data/logs/stage3_remaining_findings_diagnostic_20260728T190743Z.json`; `data/logs/stage3_remaining_findings_diagnostic_20260728T190743Z.md`; `data/logs/stage3_final_disposition_plan_20260728T190743Z.json`; `data/logs/stage3_final_disposition_plan_20260728T190743Z.md`.
+
+Documentacao: criada `specs/SPEC-005-controlled-workbook-sanitation.md`; atualizadas `specs/SPEC-004-portal-workbook-reconciliation.md`, `docs/production_runbook.md`, `docs/operator_checklist.md` e este ledger.
+
+Quality gates: sem alteracao de codigo funcional nesta execucao; validacoes operacionais de workbook, backup, allowlist e idempotencia aprovadas. Suite completa reexecutada para diagnostico/finalizacao: `python -m pytest -q -x` = 733 passed; Ruff `python -m ruff check automacao_gd apps scripts tests` = passed; Compileall `python -m compileall -q automacao_gd apps scripts` = passed; MyPy omitido porque nao houve arquivo Python alterado.
+
+Revisao: P0=0; P1=0 para a aplicacao direcionada e disposicao documental. Observacao P2: a reconciliacao pos-aplicacao usou a evidencia global congelada, nao nova coleta live do Portal.
+
+Decisao: STAGE3_COMPLETE - TARGETED_INSERT_APPLIED_AND_ALL_FINDINGS_DISPOSITIONED.
+
+Proxima acao: nao iniciar lote amplo; tratar a proxima etapa apenas por plano especifico, mantendo operacao ampla bloqueada.
+
+## Execucao 38 - Etapa 4.1 / diagnostico visual e estrutural read-only
+
+Objetivo: auditar visual e estruturalmente a planilha oficial em modo somente leitura, usando a aba `2025` como referencia inicial, e gerar um plano de padronizacao futura sem modificar qualquer valor, formula, estilo ou estrutura do workbook.
+
+Planilha oficial: `planilha.xlsx`.
+
+SHA obrigatoria recalculada: `7ea22f78b008c236dad7323cefff302f5f4c64aa47ca3f718d12dcc9077b8076`.
+
+SHA antes/depois da auditoria: `7ea22f78b008c236dad7323cefff302f5f4c64aa47ca3f718d12dcc9077b8076`.
+
+Content hash antes/depois: `eaaf008a1ddef14d25d647e4813a8d9d681e316bfc3a5cd0e36af83aeb7836a3`.
+
+Abas auditadas: `2022 - 2023`, `2024`, `2025`, `2026`.
+
+Aba canonica: `2025`.
+
+Metricas: acoes propostas 75; acoes seguras para plano futuro 27; acoes bloqueadas para revisao 48; inconsistencias na referencia canonica 3; linhas multifabricante detectadas 29; achados de altura multifabricante 58; achados de altura de linha 13; filtros 3; linhas vazias materializadas ao final 8; protocolos numericos 2; larguras de coluna 1.
+
+Seguranca: `apply_now=true` 0; `changes_content=true` 0; alteracoes de conteudo propostas 0; `workbook.save` 0; backup 0; temporario de aplicacao 0; `os.replace` 0; Portal acessado 0; PDFs baixados 0.
+
+Arquitetura: criada SPEC-006 e servico isolado `automacao_gd/application/workbook_visual_audit_service.py` para fingerprint visual/estrutural, auditoria read-only, validacao de invariantes e geracao de artefatos.
+
+Testes RED/direcionados: `tests/test_workbook_visual_audit_service.py` criado com fixtures sinteticas; resultado direcionado final `18 passed`.
+
+Quality gates: suite completa `python -m pytest -q` = 751 passed; Ruff `python -m ruff check automacao_gd apps scripts tests` = passed; Compileall `python -m compileall -q automacao_gd apps scripts` = passed; MyPy focal `python -m mypy --follow-imports=skip automacao_gd\application\workbook_visual_audit_service.py` = passed. Dependencias de desenvolvimento declaradas em `requirements-dev.txt` foram instaladas na `.venv` para disponibilizar Ruff/MyPy.
+
+Artefatos gerados: `data/logs/workbook_visual_standardization_plan_20260728T192839Z.json`; `data/logs/workbook_visual_standardization_plan_20260728T192839Z.md`; `data/logs/workbook_visual_fingerprint_2025_20260728T192839Z.json`; `data/logs/workbook_visual_fingerprint_2025_20260728T192839Z.md`; `data/logs/workbook_visual_structural_audit_20260728T192839Z.json`; `data/logs/workbook_visual_structural_audit_20260728T192839Z.md`.
+
+Revisao: P0=0; P1=0; P2=29; P3=1; achados `INFO=45`. A aplicacao automatica permanece bloqueada porque a referencia canonica `2025` possui inconsistencias internas e parte das linhas multifabricante deve ser revisada antes de qualquer propagacao de estilo.
+
+Decisao: STAGE4_1_PARTIAL - CANONICAL_REFERENCE_REQUIRES_REVIEW.
+
+Proxima acao: revisar os tres achados `CANONICAL_REFERENCE_INCONSISTENT` da aba `2025` e os bloqueios multifabricante antes de gerar um pre-voo de aplicacao visual/estrutural. Nao aplicar padronizacao, nao alterar conteudo e nao iniciar Etapa 5.
+
+## Execucao 39 - Etapa 4.1 final / estabilizacao da referencia canonica
+
+Objetivo: corrigir o servico de auditoria visual e estrutural para eliminar ressalvas tecnicas do diagnostico anterior, estabilizar formalmente a referencia canonica da aba `2025` e regenerar os artefatos finais em modo exclusivamente read-only.
+
+Estado anterior: `STAGE4_1_PARTIAL - CANONICAL_REFERENCE_REQUIRES_REVIEW`, com 75 acoes propostas, 48 bloqueios artificiais, 3 inconsistencias canonicas e 13 achados de altura.
+
+Causas das tres inconsistencias: o hash visual anterior misturava diferencas de altura/linhas com estilo visual e tratava variacoes de linhas multifabricante como decisao canonica pendente. A cor tambem podia serializar mensagens de validacao do openpyxl.
+
+Diferencas semanticas encontradas: as variantes foram separadas por propriedade visual, altura e arquetipo. Variacoes reais com destino deterministico foram convertidas em acoes futuras seguras; protecoes e estados canonicos foram movidos para colecoes informativas/protegidas.
+
+Correcoes de arquitetura: o plano agora separa `findings`, `informational_findings`, `protected_targets`, `proposed_actions` e `blocked_actions`. Conteudo multifabricante protegido nao recebe `action_id`; no-ops e estados corretos ficam fora da equacao de acoes.
+
+Politica canonica: fonte, fill, borda, alinhamento, number format, protecao e `quote_prefix` compoem o estilo; altura, line count, posicao da linha e `style_id` interno nao compoem o hash visual. `freeze_panes` futuro esperado: `A3`.
+
+Politica de altura: `required_visual_line_count = max(explicit_line_count, estimated_wrapped_line_count)`. `equipment_entry_count` nao e usado sozinho para determinar insuficiencia. Todas as alturas anteriores foram reclassificadas como `ROW_HEIGHT_ADJUSTMENT_SAFE` ou `ROW_HEIGHT_ALREADY_ADEQUATE`; `ROW_HEIGHT_REVIEW_REQUIRED=0`.
+
+Correcao das cores: criada serializacao tipada para RGB, indexed, theme, auto, tint e ausencia de cor. Artefatos finais ficaram com `artifact_error_strings=0`, sem `Values must be of type`, `<class`, `TypeError`, `ValueError` ou `Descriptor`.
+
+Freeze panes: `A3` definido como politica canonica futura; divergencias entraram como `FREEZE_PANES_STANDARDIZATION`, todas `apply_now=false` e `changes_content=false`.
+
+Reclassificacao das acoes: informativos e protecoes removidos de `proposed_actions` e `blocked_actions`. Categorias finais de acoes: `STYLE_STANDARDIZATION`, `COLUMN_WIDTH_STANDARDIZATION`, `FILTER_RANGE_EXTENSION`, `FREEZE_PANES_STANDARDIZATION`, `TRAILING_MATERIALIZED_EMPTY_ROW_REMOVAL`, `ROW_HEIGHT_ADJUSTMENT_SAFE`, `PROTOCOL_NUMERIC_TO_TEXT`.
+
+Metricas anteriores: acoes propostas 75; seguras 27; bloqueadas 48; inconsistencias canonicas 3; alteracoes de conteudo propostas 0.
+
+Metricas finais: `findings_total=40`; `informational_findings_total=674`; `protected_targets_total=29`; `proposed_actions=40`; `safe_proposed_actions=40`; `blocked_proposed_actions=0`; `canonical_reference_inconsistencies=0`; `unresolved_canonical_decisions=0`; `row_height_adjustments_safe=20`; `row_height_already_adequate=9`; `height_review_required=0`; `freeze_panes_findings=4`; `filter_findings=4`; `trailing_rows_findings=8`; `protocol_numeric_findings=632`; `content_changes_proposed=0`; `apply_now_true=0`; `artifact_error_strings=0`.
+
+SHA: antes/depois `7ea22f78b008c236dad7323cefff302f5f4c64aa47ca3f718d12dcc9077b8076`.
+
+Content hash: antes/depois `85a0eed71927b8123dfabda0f77f84ad9efd568a2fdeac2aa192643a7ccc9c61`. Observacao: o valor difere do hash documental anterior porque a funcao de fingerprint foi estabilizada; a evidencia de seguranca e a igualdade antes/depois nesta execucao, com SHA oficial preservada.
+
+Canonical policy hash: `e09a710cea0f29d47feb76324bcc4303173a52a48f21f97d438d900feedf0662`.
+
+Final plan hash: `3589c169354395bbe4964699a10acfbc69a00ce2ec1039fca575a87bae6fd670`.
+
+Artefatos finais: `data/logs/workbook_canonical_style_variant_analysis_20260729T115215Z.json`; `data/logs/workbook_canonical_style_variant_analysis_20260729T115215Z.md`; `data/logs/workbook_visual_fingerprint_2025_final_20260729T115215Z.json`; `data/logs/workbook_visual_fingerprint_2025_final_20260729T115215Z.md`; `data/logs/workbook_visual_structural_audit_final_20260729T115215Z.json`; `data/logs/workbook_visual_structural_audit_final_20260729T115215Z.md`; `data/logs/workbook_visual_standardization_plan_final_20260729T115215Z.json`; `data/logs/workbook_visual_standardization_plan_final_20260729T115215Z.md`.
+
+Seguranca: `workbook.save=0`; backup 0; temporario de aplicacao 0; `os.replace=0`; Portal 0; PDFs 0; `apply_now=true=0`; `changes_content=true=0`; planilha oficial preservada.
+
+Quality gates: testes direcionados `tests/test_workbook_visual_audit_service.py` = 26 passed; suite completa `python -m pytest -q` = 759 passed; Ruff `python -m ruff check automacao_gd apps scripts tests` = passed; Compileall `python -m compileall -q automacao_gd apps scripts` = passed; MyPy focal `python -m mypy --follow-imports=skip automacao_gd\application\workbook_visual_audit_service.py` = passed; `git diff --check` = sem erros, apenas avisos LF/CRLF esperados no Windows.
+
+Revisao: P0=0; P1=0; P2 acionaveis 39; P2 resolvidos 39; P2 sem disposicao 0; P3=1 com acao futura segura.
+
+Decisao: STAGE4_1_COMPLETE - CANONICAL_REFERENCE_STABILIZED_AND_READ_ONLY_PLAN_APPROVED.
+
+Proxima acao: somente pre-voo read-only da aplicacao visual/estrutural, se solicitado. Nao aplicar padronizacao, nao solicitar confirmacao forte e nao iniciar Etapa 5.
+
+## Execucao 40 - Etapa 4.2 / pre-voo read-only das 40 acoes visuais
+
+Objetivo: executar exclusivamente o pre-voo read-only das 40 acoes do plano visual/estrutural final, sem criar backup, sem temporario de aplicacao, sem `workbook.save`, sem `os.replace` e sem modificar a planilha oficial.
+
+Plano validado: `data/logs/workbook_visual_standardization_plan_final_20260729T115215Z.json`.
+
+SHA oficial recalculada: `7ea22f78b008c236dad7323cefff302f5f4c64aa47ca3f718d12dcc9077b8076`.
+
+Final plan hash: esperado `3589c169354395bbe4964699a10acfbc69a00ce2ec1039fca575a87bae6fd670`; reproduzido `3589c169354395bbe4964699a10acfbc69a00ce2ec1039fca575a87bae6fd670`; resultado `MATCH`.
+
+Canonical policy hash: esperado `e09a710cea0f29d47feb76324bcc4303173a52a48f21f97d438d900feedf0662`; reproduzido `e09a710cea0f29d47feb76324bcc4303173a52a48f21f97d438d900feedf0662`; resultado `MATCH`.
+
+Acoes: total 40; seguras 40; bloqueadas 0; `apply_now=true` 0; `content_changes_proposed` 0.
+
+Fingerprints: 40/40 alvos revalidados contra a auditoria atual.
+
+Ultimas linhas reais: 4/4 abas revalidadas sem divergencia.
+
+Linhas vazias: 8/8 linhas vazias materializadas revalidadas como seguras para acao futura, sem conteudo, formula, comentario, hyperlink, mesclagem, validacao ou nome definido relevante.
+
+Protocolos numericos: 2/2 revalidados como conversao fisica futura segura (`logical_value_change=false`, `physical_type_change=true`).
+
+Simulacao em memoria: 40/40 acoes simuladas; conteudo logico antes/depois preservado; valores logicos alterados 0; formulas alteradas 0; comentarios alterados 0; hyperlinks alterados 0; textos tecnicos alterados 0; ordem logica de linhas preservada.
+
+Seguranca: SHA antes/depois `7ea22f78b008c236dad7323cefff302f5f4c64aa47ca3f718d12dcc9077b8076`; backup criado 0; temporario de aplicacao criado 0; `workbook.save` 0; `os.replace` 0; Portal 0; PDFs 0; planilha oficial modificada NAO.
+
+Preflight hash: `a7e32e2e86b366874089b17d17ca77bcbab2b7749d3b44ba69c4834d8b4b3cd9`, reproduzido com sucesso na validacao dos artefatos.
+
+Artefatos: `data/logs/workbook_visual_standardization_preflight_20260729T124221Z.json`; `data/logs/workbook_visual_standardization_preflight_20260729T124221Z.md`.
+
+Privacidade: JSON/MD validados sem caminhos absolutos, e-mails, CPF ou CNPJ.
+
+Decisao: STAGE4_2_PREFLIGHT_READ_ONLY_APPROVED.
+
+Proxima acao: a aplicacao visual/estrutural permanece nao executada. Se solicitada futuramente, exigir confirmacao forte e etapa propria de aplicacao; nao iniciar Etapa 5 automaticamente.
+
+## Execucao 41 - Etapa 4.3 / aplicacao da padronizacao visual e estrutural
+
+Objetivo: aplicar a padronizacao visual e estrutural aprovada no pre-voo das 40 acoes, com backup validado, temporario no mesmo volume, substituicao atomica e preservacao de conteudo logico da planilha oficial.
+
+Autorizacao: `APLICAR PADRONIZACAO VISUAL E ESTRUTURAL DA PLANILHA`.
+
+Plano aplicado: `data/logs/workbook_visual_standardization_plan_final_20260729T115215Z.json`.
+
+Final plan hash: `3589c169354395bbe4964699a10acfbc69a00ce2ec1039fca575a87bae6fd670`, reproduzido com sucesso.
+
+Canonical policy hash: `e09a710cea0f29d47feb76324bcc4303173a52a48f21f97d438d900feedf0662`, reproduzido com sucesso.
+
+Preflight hash: `a7e32e2e86b366874089b17d17ca77bcbab2b7749d3b44ba69c4834d8b4b3cd9`, reproduzido com sucesso.
+
+SHA inicial: `7ea22f78b008c236dad7323cefff302f5f4c64aa47ca3f718d12dcc9077b8076`.
+
+Backup inicial: `planilha_pre_visual_standardization_20260729T125050Z.xlsx`; SHA `7ea22f78b008c236dad7323cefff302f5f4c64aa47ca3f718d12dcc9077b8076`; legivel e integro.
+
+Primeira aplicacao: 40/40 acoes executadas em temporario e substituidas atomicamente; SHA intermediario `3345344c7b84cae562acd7a6564790fe9f36e7e22961dbb381056e52580b298a`.
+
+Complementacao: a auditoria pos-primeira-aplicacao ainda apontou 3 grupos de `STYLE_STANDARDIZATION`, porque o alvo do plano registrava uma lista resumida enquanto a evidencia canonica possuia a lista completa de linhas variantes. A complementacao aplicou exclusivamente esses 3 grupos restantes com base na evidencia da auditoria, sem alterar valores logicos, formulas ou textos tecnicos.
+
+Tentativa intermediaria: uma tentativa de complementacao falhou antes de salvar ou substituir a planilha oficial; nenhum `os.replace` foi executado nessa tentativa. O temporario residual foi removido. O backup materializado `planilha_pre_visual_standardization_style_completion_20260729T125229Z.xlsx` foi preservado para auditoria.
+
+Backup complementar: `planilha_pre_visual_standardization_style_completion_20260729T125346Z.xlsx`; SHA `3345344c7b84cae562acd7a6564790fe9f36e7e22961dbb381056e52580b298a`; legivel e integro.
+
+SHA final oficial: `192084b5d780db5ad027aaa640ed418072cfafc4ca9b8b62648a987acc58594b`.
+
+Acoes finais restantes: 0.
+
+Acoes bloqueadas finais: 0.
+
+Validacao de conteudo: mudancas de valor logico 0; formulas alteradas 0; textos tecnicos alterados 0; mudancas fisicas de tipo autorizadas 2, correspondentes aos dois protocolos numericos convertidos para texto.
+
+Idempotencia: auditoria final retornou `NO_ADDITIONAL_VISUAL_STRUCTURAL_ACTIONS`.
+
+Seguranca: Portal acessado 0; PDFs baixados 0; rollback necessario NAO; temporarios residuais 0; planilha modificada somente conforme plano visual/estrutural.
+
+Artefatos: `data/logs/workbook_visual_standardization_apply_20260729T125050Z.json`; `data/logs/workbook_visual_standardization_apply_20260729T125050Z.md`; `data/logs/workbook_visual_standardization_apply_completion_20260729T125346Z.json`; `data/logs/workbook_visual_standardization_apply_completion_20260729T125346Z.md`; `data/logs/workbook_visual_standardization_apply_final_20260729T125703Z.json`; `data/logs/workbook_visual_standardization_apply_final_20260729T125703Z.md`.
+
+Apply final hash: `a46dd57fcb06d46ef3b1fd576f375f0742ee1f737680298c138b17a2af35d682`, reproduzido com sucesso.
+
+Revisao: P0=0; P1=0; P2=0; P3=1, referente apenas ao backup da tentativa intermediaria preservado para auditoria.
+
+Decisao: VISUAL_STANDARDIZATION_APPLIED_SUCCESSFULLY.
+
+Proxima acao: nao iniciar Etapa 5 nem lote amplo automaticamente; seguir somente mediante nova instrucao operacional explicita.
+
+## Execucao 42 - Etapa 4.3 / certificacao final da aplicacao visual
+
+Objetivo: auditar e certificar, em modo estritamente read-only, a aplicacao visual e estrutural ja realizada na planilha oficial, comprovando hashes, backup, topologia da transacao, reconciliacao das 40 acoes, ausencia de alteracao logica, auditoria pos-aplicacao e idempotencia.
+
+Estado anterior: Etapa 4.1 final concluida sem ressalvas; Etapa 4.2 pre-voo read-only aprovado; aplicacao visual informada como `VISUAL_STANDARDIZATION_APPLIED_SUCCESSFULLY`; SHA final candidata `192084b5d780db5ad027aaa640ed418072cfafc4ca9b8b62648a987acc58594b`.
+
+Arquivos auditados: plano final, pre-voo, relatorio consolidado de aplicacao, auditoria final, fingerprint final, analise de variantes, SPEC-006, runbook, checklist e ledger. Todos foram lidos em UTF-8; nenhum artefato obrigatorio ficou ausente.
+
+Hashes reproduzidos: final plan hash `3589c169354395bbe4964699a10acfbc69a00ce2ec1039fca575a87bae6fd670`; canonical policy hash `e09a710cea0f29d47feb76324bcc4303173a52a48f21f97d438d900feedf0662`; preflight hash `a7e32e2e86b366874089b17d17ca77bcbab2b7749d3b44ba69c4834d8b4b3cd9`; apply report hash reproduzido; certification hash `b0f9a9cce314df9b4bd2fc403f64ac6627d8dad2d16c2912722cb3cec9b71862`.
+
+Backup: `planilha_pre_visual_standardization_20260729T125050Z.xlsx` localizado, tamanho maior que zero, ZIP valido, XLSX legivel, quatro abas presentes na ordem esperada, SHA `7ea22f78b008c236dad7323cefff302f5f4c64aa47ca3f718d12dcc9077b8076`. Backup complementar `planilha_pre_visual_standardization_style_completion_20260729T125346Z.xlsx` tambem validado para o estado intermediario `3345344c7b84cae562acd7a6564790fe9f36e7e22961dbb381056e52580b298a`.
+
+Topologia de escrita: `MULTI_CYCLE_FULLY_AUDITED`; ciclos registrados 2; `workbook.save` contabilizado 2 vezes somente em temporarios; `os.replace` contabilizado 2 vezes; backup cycles 2; temporarios criados durante certificacao 0; backup criado durante certificacao 0; `os.replace` durante certificacao 0.
+
+Ciclos: ciclo 1 aplicou as 40 acoes planejadas em temporario com backup da SHA anterior e substituicao atomica; ciclo 2 completou os tres grupos de estilo restantes com backup do SHA intermediario, substituicao atomica e validacao logica. A tentativa intermediaria sem substituicao deixou backup materializado preservado para auditoria e nao alterou a planilha oficial.
+
+40 acoes: action IDs planejados 40; action IDs reconciliados 40; ausentes 0; inesperados 0; duplicados 0; bloqueados 0. Distribuicao validada: `ROW_HEIGHT_ADJUSTMENT_SAFE=20`, `TRAILING_MATERIALIZED_EMPTY_ROW_REMOVAL=8`, `STYLE_STANDARDIZATION=3`, `FILTER_RANGE_EXTENSION=3`, `FREEZE_PANES_STANDARDIZATION=3`, `PROTOCOL_NUMERIC_TO_TEXT=2`, `COLUMN_WIDTH_STANDARDIZATION=1`.
+
+Tres grupos de estilo: grupos planejados 3; grupos completados apos primeira passagem 3; alvos efetivos validados contra a evidencia deterministica do plano aprovado; alvos de estilo fora do plano 0; nenhuma nova politica, linha externa ou action_id novo.
+
+Allowlist e comparacao fisica: mudancas autorizadas em altura de linha 20, largura de coluna 1, filtros 3, congelamento 3, tipos fisicos de protocolo 2 e estilos dentro dos grupos autorizados. Mudancas fisicas inesperadas 0; mesclagens, validacoes de dados, conditional formatting, comentarios, hyperlinks, configuracao de impressao e ordem das abas preservados.
+
+Comparacao logica: `client_value_changes=0`; `protocol_logical_changes=0`; `ingress_date_changes=0`; `completion_changes=0`; `parecer_changes=0`; `module_text_changes=0`; `inverter_text_changes=0`; `formula_changes=0`; `comment_changes=0`; `hyperlink_changes=0`; `row_order_changes=0`; `sheet_order_changes=0`; `value_changes_total=0`.
+
+Protocolos numericos: duas mudancas fisicas autorizadas, somente `PROTOCOL_NUMERIC_TO_TEXT`; valor canonico preservado; alteracao logica 0.
+
+Auditoria pos-aplicacao: executada em modo read-only contra a planilha final; SHA antes/depois `192084b5d780db5ad027aaa640ed418072cfafc4ca9b8b62648a987acc58594b`; `proposed_actions=0`; `safe_proposed_actions=0`; `blocked_proposed_actions=0`; `content_changes_proposed=0`.
+
+Idempotencia: `actions_reproposed=0`; `actions_applicable=0`; `actions_blocked=0`; `workbook_save=0`; `temporary_file=0`; `os.replace=0`; resultado `APPROVED`; SHA preservada durante a certificacao.
+
+Temporarios e residuos: temporarios residuais 0; backups incompletos 0; arquivos orfaos de aplicacao 0.
+
+Quality gates: teste direcionado `python -m pytest -q tests/test_workbook_visual_audit_service.py` = 26 passed; suite completa `python -m pytest -q` = 759 passed; Ruff `python -m ruff check automacao_gd apps scripts tests` = passed; Compileall `python -m compileall -q automacao_gd apps scripts` = passed; MyPy nao aplicavel porque nenhum Python foi modificado nesta certificacao; `git diff --check` = passed, apenas avisos LF/CRLF esperados no Windows.
+
+Artefatos: `data/logs/workbook_visual_standardization_certification_20260729_20260729T132131Z.json`; `data/logs/workbook_visual_standardization_certification_20260729_20260729T132131Z.md`; `data/logs/workbook_visual_standardization_post_apply_audit_20260729T132131Z.json`; `data/logs/workbook_visual_standardization_post_apply_audit_20260729T132131Z.md`; `data/logs/workbook_visual_standardization_action_reconciliation_20260729T132131Z.json`; `data/logs/workbook_visual_standardization_action_reconciliation_20260729T132131Z.md`.
+
+Revisao senior: P0=0; P1=0; P2=0; P3=0.
+
+Decisao: STAGE4_3_COMPLETE - VISUAL_STANDARDIZATION_APPLIED_AND_IDEMPOTENT.
+
+Baseline oficial: SHA `192084b5d780db5ad027aaa640ed418072cfafc4ca9b8b62648a987acc58594b` promovida como nova identidade oficial da planilha. SHA anterior `7ea22f78b008c236dad7323cefff302f5f4c64aa47ca3f718d12dcc9077b8076` preservada como historica e SHA do backup inicial.
+
+Proxima acao: nao iniciar Etapa 5 nem lote amplo automaticamente; seguir somente com nova autorizacao operacional explicita.
+
+## Execucao 43 - Etapa 5.1 / inventario e diagnostico de manutencao segura
+
+Objetivo: criar e executar um inventario read-only do armazenamento do projeto para classificar arquivos protegidos, ativos, historicos, caches regeneraveis, temporarios, duplicados e itens que exigem revisao manual, sem apagar, mover, compactar, renomear ou modificar arquivos operacionais.
+
+Estado anterior: Etapas 1, 2, 3 e 4 concluidas; planilha oficial `Y:\000\Levantamento de projetos\planilha.xlsx`; baseline oficial `192084b5d780db5ad027aaa640ed418072cfafc4ca9b8b62648a987acc58594b`; certificacao visual hash `b0f9a9cce314df9b4bd2fc403f64ac6627d8dad2d16c2912722cb3cec9b71862`.
+
+Arquitetura: criado componente read-only `automacao_gd/application/project_maintenance_inventory_service.py`, script operacional `scripts/diagnose_project_maintenance.py`, SPEC `specs/SPEC-007-safe-project-maintenance-and-cleanup.md` e testes direcionados `tests/test_project_maintenance_inventory_service.py`.
+
+Diagnostico: a primeira tentativa de execucao revelou divergencia de normalizacao Unicode do caminho retornado por `git rev-parse`, que enumerava apenas um diretorio paralelo com `data/`. O script foi corrigido para usar a raiz canônica derivada do próprio arquivo em `scripts/..`.
+
+Violacao read-only da execucao: antes do inventario valido, foi criado acidentalmente `data/logs/stage5_1_before_snapshot.tmp.json` e uma primeira tentativa invalida gerou 8 relatorios `stage5_1_20260729T135601Z` em um caminho Unicode/mojibake paralelo. Nada foi apagado, movido, renomeado ou compactado para ocultar a falha. A violacao foi registrada nos artefatos finais.
+
+Inventario final: arquivos inventariados 1591; diretorios analisados 514; tamanho total 115754120 bytes; arquivos protegidos 1526; arquivos historicos 31; estados de pipeline 2; autenticacao 1; caches regeneraveis 24; grupos duplicados 28; unknown review 19; candidatos temporarios 0; candidatos de exclusao segura 0.
+
+Planilha oficial: existente, legivel e protegida; SHA atual reproduzida `192084b5d780db5ad027aaa640ed418072cfafc4ca9b8b62648a987acc58594b`; correspondencia com baseline SIM; varredura recursiva de `Y:` NAO executada.
+
+Grafo de referencias: gerado sem leitura de `.env`, cookies, tokens, storage state ou perfis de navegador; raizes externas registradas como protegidas e nao escaneadas recursivamente.
+
+Plano preliminar: todas as entradas possuem `delete_now=false`, `move_now=false`, `archive_now=false` e `compress_now=false`; nenhuma acao automatica foi habilitada; cleanup plan hash registrado no artefato final.
+
+Artefatos finais: `data/logs/project_storage_inventory_stage5_1_20260729T135811Z.json`; `data/logs/project_storage_inventory_stage5_1_20260729T135811Z.md`; `data/logs/project_cleanup_plan_stage5_1_20260729T135811Z.json`; `data/logs/project_cleanup_plan_stage5_1_20260729T135811Z.md`; `data/logs/project_artifact_reference_graph_stage5_1_20260729T135811Z.json`; `data/logs/project_artifact_reference_graph_stage5_1_20260729T135811Z.md`; `data/logs/project_duplicate_and_temporary_analysis_stage5_1_20260729T135811Z.json`; `data/logs/project_duplicate_and_temporary_analysis_stage5_1_20260729T135811Z.md`.
+
+Seguranca: planilha modificada NAO; Portal acessado NAO; PDFs baixados NAO; `workbook.save=0`; `os.replace=0`; arquivos deletados 0; arquivos movidos 0; arquivos compactados 0; permissoes alteradas 0; limpeza aplicada NAO.
+
+Testes: RED direcionado executado antes da implementacao; teste direcionado final `python -m pytest -q tests/test_project_maintenance_inventory_service.py` = 19 passed, 1 skipped por privilegio de symlink indisponivel no Windows.
+
+Quality gates finais: `python -m pytest -q` = 778 passed, 1 skipped por privilegio de symlink indisponivel no Windows; `python -m ruff check automacao_gd apps scripts tests` = passed; `python -m compileall -q automacao_gd apps scripts` = passed; `python -m mypy --follow-imports=skip automacao_gd\application\project_maintenance_inventory_service.py scripts\diagnose_project_maintenance.py` = passed; `git diff --check` = passed, apenas avisos LF/CRLF esperados no Windows.
+
+Revisao: P0=0; P1=1 pela violacao de filesystem durante diagnostico read-only; P2/P3 ligados a itens de revisao manual no inventario, sem autorizacao para limpeza.
+
+Decisao: STAGE5_1_REJECTED - FILESYSTEM_CHANGED_DURING_DIAGNOSTIC.
+
+Proxima acao: nao executar limpeza. Se a Etapa 5.1 for repetida, iniciar em ambiente limpo, sem criar snapshots temporarios, e preservar os artefatos desta execucao como historico de rejeicao.
+
+## Execucao 44 - Etapa 5.1A / correcao da implementacao read-only
+
+Objetivo: corrigir a implementacao do diagnostico de manutencao segura para permitir uma futura execucao 5.1B limpa, sem snapshot fisico, sem raiz paralela/mojibake, sem temporarios de escrita, com hashes consistentes, UTF-8 strict e grafo de referencias tipado.
+
+Execucao rejeitada de origem: Etapa 5.1 `STAGE5_1_REJECTED - FILESYSTEM_CHANGED_DURING_DIAGNOSTIC`.
+
+Arquivo temporario indevido preservado: `data/logs/stage5_1_before_snapshot.tmp.json`; nao excluido, nao movido, nao renomeado.
+
+Raiz mojibake: primeira tentativa invalida gerou 8 relatorios em `<MOJIBAKE_PROJECT_ROOT>/data/logs/*stage5_1_20260729T135601Z.*`; preservados como evidencia historica, sem limpeza.
+
+Divergencia de hashes: corrigido o fluxo para gerar JSON e Markdown do plano a partir do mesmo payload final congelado, com `cleanup_plan_hash` deterministico reproduzivel.
+
+Defeito de UTF-8: adicionada validacao strict e bloqueio de mojibake nos textos institucionais controlados; decisoes preservam o travessao canonico `—`.
+
+Falsos positivos do grafo: substituida a protecao textual ampla por modelo tipado de referencias com `ReferenceKind` e `ReferenceConfidence`; fixtures, exemplos, diretorios, placeholders e caminhos malformados nao protegem alvos nem entram como referencias quebradas autoritativas.
+
+Correcoes realizadas: raiz canonica resolvida por `Path(__file__).resolve().parents[1]` com marcadores obrigatorios; Git usado somente como verificacao; validacao de `data/logs` por containment, symlink e identidade; snapshot exclusivamente em memoria; escritor final com criacao exclusiva `xb`; bundle unico com `execution_id` e `timestamp`; escritor em memoria para testes; preservacao de caches como `REGENERABLE_CACHE` quando citados apenas por testes/SPEC.
+
+Testes Unicode: raiz Unicode com Git mojibake, UTF-8 com acentos, travessao canonico e decisao com `?` indevido bloqueada.
+
+Testes do escritor: oito destinos exatos, bloqueio de destino existente, bloqueio de logs fora da raiz, zero temporarios e zero `os.replace`.
+
+Testes de referencia: referencia autoritativa existente protege; autoritativa quebrada separada; fixture, exemplo, diretorio, placeholder e malformado nao protegem; cache citado por SPEC permanece regeneravel.
+
+Arquivos modificados: `automacao_gd/application/project_maintenance_inventory_service.py`; `scripts/diagnose_project_maintenance.py`; `tests/test_project_maintenance_inventory_service.py`; `specs/SPEC-007-safe-project-maintenance-and-cleanup.md`; `docs/production_runbook.md`; `docs/operator_checklist.md`; `docs/codex_execution_ledger.md`.
+
+Restricoes cumpridas: inventario real NAO executado; novos artefatos `project_*stage5_1_*` NAO gerados; planilha NAO acessada; Portal NAO acessado; PDFs NAO acessados; arquivos da execucao rejeitada NAO excluidos.
+
+Quality gates: testes direcionados `python -m pytest -q tests/test_project_maintenance_inventory_service.py` = 34 passed, 1 skipped por privilegio de symlink indisponivel no Windows; suite completa `python -m pytest -q` = 793 passed, 1 skipped; Ruff `python -m ruff check automacao_gd apps scripts tests` = passed; Compileall `python -m compileall -q automacao_gd apps scripts` = passed; MyPy focal `python -m mypy --follow-imports=skip automacao_gd\application\project_maintenance_inventory_service.py scripts\diagnose_project_maintenance.py` = passed; `git diff --check` = passed, apenas avisos LF/CRLF esperados no Windows.
+
+Revisao: P0=0; P1=0; sem evidencia de snapshot fisico remanescente no caminho de execucao futuro, sem escritor temporario ativo e sem superprotecao textual ampla.
+
+Decisao: STAGE5_1A_COMPLETE - READ_ONLY_DIAGNOSTIC_IMPLEMENTATION_CORRECTED.
+
+Proxima etapa permitida: Etapa 5.1B - novo diagnostico limpo read-only, em execucao separada, sem rodar testes no mesmo processo e permitindo somente os oito relatorios finais.
+
+## Execucao 45 - Etapa 5.1C / disposicao terminal e encerramento da Etapa 5.1
+
+Objetivo: revalidar os artefatos finais congelados da Etapa 5.1B e atribuir disposicao terminal read-only aos achados remanescentes, sem executar novo inventario real, sem acessar planilha, Portal ou PDFs, sem alterar codigo ou testes e sem autorizar qualquer limpeza.
+
+Artefatos-fonte: `data/logs/project_storage_inventory_stage5_1_20260729T153455Z.json`; `data/logs/project_storage_inventory_stage5_1_20260729T153455Z.md`; `data/logs/project_cleanup_plan_stage5_1_20260729T153455Z.json`; `data/logs/project_cleanup_plan_stage5_1_20260729T153455Z.md`; `data/logs/project_artifact_reference_graph_stage5_1_20260729T153455Z.json`; `data/logs/project_artifact_reference_graph_stage5_1_20260729T153455Z.md`; `data/logs/project_duplicate_and_temporary_analysis_stage5_1_20260729T153455Z.json`; `data/logs/project_duplicate_and_temporary_analysis_stage5_1_20260729T153455Z.md`.
+
+Identidade de origem: execution id `2e42348a7221cec8c9075a0a9994e82e1fac3991b251cbc043f18444934c93ae`; timestamp `20260729T153455Z`; cleanup plan hash `bccb5e1b58c8ee892685b7b39040e58bb91fafb44cb6a872b331a88a3290c9f2`; SHA oficial da planilha preservada como referencia documental `192084b5d780db5ad027aaa640ed418072cfafc4ca9b8b62648a987acc58594b`.
+
+Disposicao terminal: 6/6 referencias quebradas autoritativas tratadas; 52/52 arquivos `UNKNOWN_REVIEW_REQUIRED` tratados; 28/28 grupos duplicados tratados; total 86/86 achados reconciliados; achados internos sem disposicao 0.
+
+Politica aplicada: preservacao conservadora; `delete_now=false`, `move_now=false`, `archive_now=false`, `compress_now=false` e `requires_new_stage=false` para todos os achados. Nenhuma exclusao, movimentacao, compactacao, renomeacao, arquivamento ou limpeza foi autorizada.
+
+Metrica corrigida: referencias autoritativas inexistentes foram tratadas por alvo unico; unknowns foram reclassificados para protecao, auditoria historica, build/runtime ou preservacao conservadora; duplicados foram preservados por historico, referencia, estrutura intencional ou insuficiencia de evidencia para limpeza.
+
+Disposition hash: `2cd2e2e0b88cb5db2d2724d03c10fea610e75274e5f150a818e3428dbdae5390`, reproduzido pelo JSON canonico excluindo apenas o proprio campo `disposition_hash`.
+
+Artefatos gerados: `data/logs/stage5_1_terminal_disposition_20260730T120853Z.json`; `data/logs/stage5_1_terminal_disposition_20260730T120853Z.md`.
+
+Documentacao atualizada: `specs/SPEC-007-safe-project-maintenance-and-cleanup.md`; `docs/production_runbook.md`; `docs/operator_checklist.md`; `docs/codex_execution_ledger.md`.
+
+Restricoes cumpridas: inventario real NAO executado; testes de codigo NAO executados; Portal NAO acessado; planilha NAO acessada; PDFs NAO acessados; snapshots fisicos NAO criados; caches NAO limpos; arquivos NAO excluidos, movidos, renomeados ou compactados; Etapa 5.2 NAO iniciada.
+
+Validacao documental: JSON valido; Markdown UTF-8 valido; cleanup plan hash presente em JSON e Markdown; disposition hash reproduzido; contagens reconciliadas; P0=0; P1=0.
+
+Gate permitido: `git diff --check` executado sem erros bloqueantes.
+
+Decisao 5.1C: `STAGE5_1C_COMPLETE — ALL_FINDINGS_DISPOSITIONED_READ_ONLY`.
+
+Decisao 5.1: `STAGE5_1_COMPLETE — INVENTORY_AND_MANUAL_REVIEW_CLOSED_NO_CLEANUP_AUTHORIZED`.
+
+Proxima acao: nao executar Etapa 5.2, limpeza ou pacote `.zip` sem solicitacao operacional independente e explicita.
+
+## Execucao 46 - OP-1 / diagnostico de lacunas para expansao operacional
+
+Objetivo: mapear, exclusivamente em leitura, o que ja esta implementado, testado, certificado e autorizado para ampliar a operacao da Automacao GD Neoenergia alem do lote controlado atual de 5 protocolos.
+
+Restricoes cumpridas: planilha oficial NAO acessada; Portal NAO acessado; Edge/CDP NAO acessado; PDFs NAO acessados; protocolos reais NAO processados; downloads NAO executados; codigo, testes, SPECs, runbook, checklist, configuracoes, tags e releases NAO modificados por esta execucao.
+
+Identidade do repositorio: branch `main`; HEAD `070a4206b017b51f142919e6e98a0b290e0c8953`; tag no HEAD `v2.0.1`; working tree continha alteracoes pre-existentes antes da OP-1.
+
+Fontes analisadas: componentes de configuracao, pipeline CDP, processamento, reconciliacao, Excel, Portal CDP, CLI, saida operacional, bridge desktop, testes direcionados, SPECs, runbook, checklist e logs historicos ja existentes.
+
+Resultado da matriz: 20 capacidades avaliadas; implementadas 19; testadas 16; certificadas 13; autorizadas 13. A producao controlada permanece autorizada somente no limite 5.
+
+Limite 5: `MAX_COMPLETED_TO_PROCESS` e parametrizavel, mas a opcao 5 ainda possui confirmacao forte textual vinculada a `5 PROTOCOLOS`; nao foi localizado teste explicito de lote 10 nem bloqueio do 11o protocolo. A promocao direta para lote 10 nao esta pronta.
+
+Transacoes: backup, temporario no mesmo volume, `os.replace`, rollback, allowlist e idempotencia estao implementados/certificados para o escopo atual. Lote 10, insercao de ausentes e movimentacao entre abas ainda exigem certificacao operacional propria.
+
+Desktop: bridge desktop existe, mas a paridade de confirmacao e limite nao esta certificada para operacao ampliada; foi identificada divergencia entre confirmacao forte da bridge principal e aceitacao de `SIM` em outro caminho web.
+
+Riscos: P0=2; P1=4; P2=1; P3=1. P0 concentrados em insercao de ausentes e movimentacao entre abas sem certificacao de producao; P1 concentrados em lote 10, concorrencia, desktop e transacoes mistas.
+
+Prontidao lote 10: `NOT_READY_FOR_OP2_BATCH_10_CANARY`. Mudancas minimas antes do canario: parametrizar confirmacao forte pela quantidade real autorizada; criar testes limite=10 e bloqueio do 11o; validar retomada, PDFs reutilizados e `PROCESS_EXISTING_AFTER_SKIP` com limite 10; certificar lock global de execucao.
+
+Backlog: GAP-001 confirmacao forte parametrizada; GAP-002 testes 10/11; GAP-003 lock global; GAP-004 plano/canario de insercao de ausentes; GAP-005 plano/canario de movimentacao entre abas; GAP-006 paridade desktop.
+
+Roadmap recomendado: OP2_IMPLEMENTATION_HARDENING; OP3_BATCH_10_PREFLIGHT_AND_CANARY; OP4_INSERT_MISSING_PROTOCOLS_PLAN; OP5_YEAR_TAB_MOVEMENT_PLAN; OP6_DESKTOP_PARITY.
+
+Artefatos gerados: `data/logs/op1_operational_expansion_gap_analysis_20260731T115009Z.json`; `data/logs/op1_operational_expansion_gap_analysis_20260731T115009Z.md`.
+
+Analysis hash: `b2b46a3d1685c87aecf094a8eb9c5065f8b9aa3022652d9962b8b73d19896ecd`.
+
+Decisao: `OP1_OPERATIONAL_EXPANSION_GAP_ANALYSIS_COMPLETE`.
+
+Proxima acao: executar `OP2_IMPLEMENTATION_HARDENING` antes de qualquer canario de lote 10 ou autorizacao ampliada.
+
+## Execucao 47 - Correcao formal da OP-1 / fechamento do contrato dos artefatos
+
+Objetivo: corrigir exclusivamente lacunas formais dos artefatos da OP-1, preservando o diagnostico tecnico, sem repetir auditoria ampla, sem iniciar OP-2 e sem conceder qualquer autorizacao operacional adicional.
+
+Source timestamp: `20260731T115009Z`.
+
+Source analysis hash: `b2b46a3d1685c87aecf094a8eb9c5065f8b9aa3022652d9962b8b73d19896ecd`, reproduzido a partir do JSON original.
+
+Corrected analysis hash: `40253f3b1688d4341bc75eede8e667ee0229ae405db4f677f7b507770a7108d1`.
+
+Identidade dos artefatos originais: JSON original preservado com SHA-256 `76bda931267472c123eceb2d79b5019dcf39689a1fbc62721630655f4b7b161a`; Markdown original preservado com SHA-256 `2df99914767abe04447485e7fe0502f9b6a5ef2f61c0557d401e0fc8b5174b66`.
+
+Proveniencia do gerador: `scripts/_op1_generate_reports.py` classificado terminalmente como `NOT_PRESENT_AT_CORRECTION_TIME`; arquivo nao rastreado pelo Git, sem commits para o caminho e nao presente no filesystem no momento da correcao. Disposicao: `DOCUMENT_ONLY`; nenhuma remocao, movimentacao, renomeacao ou modificacao executada nesta correcao.
+
+Drift das fontes: 24 fontes sem drift desde a OP-1; 1 fonte com drift posterior (`docs/codex_execution_ledger.md`); 1 fonte atualmente ausente; 0 fontes sem hash. Conteudo divergente posterior nao substituiu evidencia congelada da OP-1.
+
+Matriz de capacidades: 20/20 capacidades reconciliadas, `CAP-001` a `CAP-020`; enums oficiais normalizados; legacy status preservado; evidencias de implementacao, teste, certificacao, documentacao e autorizacao separadas.
+
+Riscos: 8/8 riscos reconciliados; P0=2; P1=4; P2=1; P3=1; todos com disposicao terminal (`CARRY_TO_OP2`, `CARRY_TO_LATER_OPERATIONAL_STAGE` ou `DOCUMENT_ONLY`).
+
+Backlog: 6/6 gaps reconciliados; GAP-001, GAP-002 e GAP-003 pertencem a OP2; GAP-006 reservado para paridade desktop; todos com target stage, criterios de aceite e criterios de rejeicao.
+
+Roadmap: 5/5 etapas reconciliadas: `OP2_IMPLEMENTATION_HARDENING`, `OP3_BATCH_10_PREFLIGHT_AND_CANARY`, `OP4_INSERT_MISSING_PROTOCOLS_PLAN`, `OP5_YEAR_TAB_MOVEMENT_PLAN`, `OP6_DESKTOP_PARITY`.
+
+Mojibake: `artifact_mojibake_findings=0`; `legacy_source_mojibake_findings=1`, segregado como fonte legada e nao como defeito dos novos artefatos.
+
+Autorizacao: producao controlada permanece em 5; lote 10 permanece nao autorizado; operacao ampla permanece bloqueada; proxima etapa unica permanece `OP2_IMPLEMENTATION_HARDENING`.
+
+Arquivos gerados: `data/logs/op1_operational_expansion_gap_analysis_corrected_20260731T122547Z.json`; `data/logs/op1_operational_expansion_gap_analysis_corrected_20260731T122547Z.md`.
+
+Filesystem: planilha, Portal, Edge/CDP, PDFs, Y:, Z:, app.py e pipeline real NAO acessados; codigo, testes, SPECs, runbook, checklist, configuracao, limite, confirmacao, desktop, branch, commit e tag NAO alterados; allowlist de escrita respeitada com dois relatorios novos e este ledger.
+
+Decisao formal: `OP1_FORMAL_CORRECTION_COMPLETE - ARTIFACT_CONTRACT_CLOSED`.
+
+Decisao tecnica preservada: `OP1_OPERATIONAL_EXPANSION_GAP_ANALYSIS_COMPLETE`.
+
+Proxima acao unica: `OP2_IMPLEMENTATION_HARDENING`.
+
+## Execucao 48 - Correcao terminal da OP-1 / UTF-8 e reconciliacao CAP-011/CAP-018/CAP-020
+
+Objetivo: corrigir exclusivamente os defeitos formais remanescentes da primeira correcao da OP-1, preservando o diagnostico tecnico, contagens, riscos, backlog, roadmap e recomendacao unica `OP2_IMPLEMENTATION_HARDENING`, sem iniciar OP-2.
+
+Source OP-1 analysis hash: `b2b46a3d1685c87aecf094a8eb9c5065f8b9aa3022652d9962b8b73d19896ecd`, reproduzido.
+
+Rejected correction analysis hash: `40253f3b1688d4341bc75eede8e667ee0229ae405db4f677f7b507770a7108d1`, reproduzido.
+
+Final analysis hash: `cc76232dc72b8a1ae1d711e1462f3ca9595b944dc72836cc1b5cb5596ba636eb`.
+
+Artefatos historicos preservados: OP-1 original JSON SHA-256 `76bda931267472c123eceb2d79b5019dcf39689a1fbc62721630655f4b7b161a`; OP-1 original Markdown SHA-256 `2df99914767abe04447485e7fe0502f9b6a5ef2f61c0557d401e0fc8b5174b66`; primeira correcao rejeitada JSON SHA-256 `4f2552d4d8d7bcec1387fb9cd48acfbeba0527279563f4dba1afdad74a80227a`; primeira correcao rejeitada Markdown SHA-256 `7481c866f0ae96d60d477d8a7db74929b2b5b7ced453f72a74c8ce8b521f0994`.
+
+Motivo da rejeicao anterior: `PRIVACY_OR_ARTIFACT_MOJIBAKE_VIOLATION` e `CAPABILITY_REPRESENTATION_INCONSISTENCY`; motivos formais registrados como `ARTIFACT_MOJIBAKE_IN_MARKDOWN_TITLE`, `NON_CANONICAL_DECISION_SEPARATOR`, `CAPABILITY_REPRESENTATION_DIVERGENCE` e `CAP020_INTERNAL_STATUS_CONFLICT`.
+
+UTF-8: titulo canonico corrigido para `# OP-1 corrigida — fechamento do contrato dos artefatos`; decisao formal usa travessao canonico `OP1_FORMAL_CORRECTION_COMPLETE — ARTIFACT_CONTRACT_CLOSED`; `artifact_mojibake_findings=0`; `artifact_noncanonical_separator_findings=0`; `legacy_source_mojibake_findings=1`.
+
+CAP-011 reconciliada: `implemented=false`; `tested=true`; `certified=false`; `documented=false`; `authorized=false`; `current_status=DIAGNOSTIC_ONLY`; bloqueio primario `sem executor autorizado`; bloqueia lote 10 `false`; bloqueia operacao ampla `true`.
+
+CAP-018 reconciliada: `implemented=true`; `tested=false`; `certified=false`; `documented=false`; `authorized=false`; `current_status=BLOCKED_INSUFFICIENT_EVIDENCE`; `global_lock_available=false`; bloqueio primario `sem evidencia de mutex global de execucao`; bloqueia lote 10 `true`; bloqueia operacao ampla `true`.
+
+CAP-020 reconciliada: `implemented=true`; `tested=true`; `certified=true`; `documented=true`; `authorized=true`; `current_status=AUTHORIZED`; `scope_limit=LIMIT_5`; `current_scope_authorized=true`; `expanded_scope_authorized=false`; bloqueios preservados apenas para expansao.
+
+Conflitos semanticos: `capability_semantic_conflicts=0`; `authorized_status_conflicts=0`; `documentation_evidence_conflicts=0`; `certification_evidence_conflicts=0`; `test_evidence_conflicts=0`; `CAP011_semantic_conflicts=0`; `CAP018_semantic_conflicts=0`; `CAP020_semantic_conflicts=0`.
+
+Reconciliacao: 20/20 capacidades presentes; 17 capacidades inalteradas; 3 capacidades reconciliadas; 8/8 riscos; 6/6 gaps; 5/5 etapas do roadmap; P0=2; P1=4; P2=1; P3=1.
+
+Autorizacao: producao controlada permanece em 5; lote 10 permanece nao autorizado; operacao ampla permanece bloqueada; proxima etapa unica permanece `OP2_IMPLEMENTATION_HARDENING`.
+
+Arquivos gerados: `data/logs/op1_operational_expansion_gap_analysis_corrected_final_20260731T125704Z.json`; `data/logs/op1_operational_expansion_gap_analysis_corrected_final_20260731T125704Z.md`.
+
+Filesystem: Portal, Edge/CDP, planilha, PDFs, unidades Y: e Z:, app.py, desktop_app.py, pipeline real, reconciliacao real, canario, preflight operacional, insercao, movimentacao, arquivamento e processamento de protocolos NAO acessados/executados; codigo, testes, SPECs, runbook, checklist, configuracao, `.env`, confirmacao forte, limite, lock, desktop, release, branch, commit e tag NAO alterados.
+
+Decisao: `OP1_FORMAL_CORRECTION_COMPLETE — ARTIFACT_CONTRACT_CLOSED`.
+
+Decisao tecnica preservada: `OP1_OPERATIONAL_EXPANSION_GAP_ANALYSIS_COMPLETE`.
+
+Proxima etapa unica: `OP2_IMPLEMENTATION_HARDENING`.
+
+## Execucao 49 - OP-2 / hardening de implementacao para lote de 10
+
+Objetivo: implementar exclusivamente os controles minimos de hardening para permitir futuro pre-voo/canario de ate 10 protocolos, sem autorizar lote 10 em producao, sem acessar Portal, planilha oficial, PDFs reais ou unidades de rede, e sem iniciar OP-3.
+
+Escopo tratado: GAP-001, GAP-002, GAP-003, RISK-003, RISK-004 e parte CLI do RISK-006.
+
+Arquitetura: adicionada confirmacao forte parametrizada por limite autorizado; politica fail-closed para `MAX_COMPLETED_TO_PROCESS`; contrato sintetico separado para validacao offline de lote 10; lote operacional congelado apos deduplicacao e limite global; validacao de escopo por fase para impedir protocolos adicionados apos o congelamento; mutex global de execucao da opcao 5 com metadados sanitizados.
+
+Arquivos criados: `specs/SPEC-008-operational-batch-hardening.md`; `automacao_gd/infrastructure/locking/__init__.py`; `automacao_gd/infrastructure/locking/execution_lock.py`; `tests/test_option5_batch_authorization.py`; `tests/test_global_execution_lock.py`; `data/logs/op2_implementation_hardening_20260731T134249Z.json`; `data/logs/op2_implementation_hardening_20260731T134249Z.md`. Artefato anterior da mesma execucao `op2_implementation_hardening_20260731T133949Z.*` foi superseded por ter sido gerado antes do alinhamento final da frase forte acentuada.
+
+Arquivos alterados: `automacao_gd/infrastructure/config.py`; `automacao_gd/application/full_pipeline.py`; `automacao_gd/application/processing_service.py`; `automacao_gd/presentation/cli.py`; `automacao_gd/presentation/controller.py`; `automacao_gd/presentation/operational_output.py`; `docs/production_runbook.md`; `docs/operator_checklist.md`; `docs/codex_execution_ledger.md`.
+
+Validacao sintetica offline: confirmacao forte `APLICAR OPÇÃO 5 COM CONCLUSÃO EM 10 PROTOCOLOS`; limite solicitado 10; limite autorizado sintetico 10; 11 protocolos sinteticos antes do limite; 10 selecionados; 1 excluido pelo limite; 0 protocolos adicionados depois do congelamento; 0 duplicados no lote congelado; 11o protocolo bloqueado por `BATCH_LIMIT_NOT_AUTHORIZED`; lock reentrante bloqueado por `GLOBAL_EXECUTION_LOCK_REENTRANT`; Portal, planilha oficial, unidades de rede e PDFs reais nao acessados.
+
+Testes RED/GREEN direcionados: `python -m pytest -q tests/test_option5_batch_authorization.py tests/test_global_execution_lock.py tests/test_full_cdp_pipeline.py tests/test_processing_service.py tests/test_operational_output.py tests/test_pipeline_state_batch.py` aprovado com `124 passed`.
+
+Quality gates: Ruff aprovado; Compileall aprovado; MyPy dos arquivos Python alterados aprovado; `git diff --check` aprovado.
+
+Suite completa: `python -m pytest -q` executado; resultado `814 passed, 1 skipped, 1 failed`. Falha unica: `tests/test_backfill_apply_operational_safety.py::test_rules7_official_preflight_prepares_all_updates_without_conflicts`, causada por ausencia do artefato historico `data/logs/historical_equipment_backfill_plan_rules7_20260724T141444Z.json`. O arquivo nao existe no workspace e sua recriacao nao pertence a allowlist da OP-2.
+
+Autorizacao: producao controlada permanece autorizada somente no limite 5; lote 10 permanece `NOT_AUTHORIZED`; operacao ampla permanece `BLOCKED`; OP-3 nao iniciada.
+
+Revisao: P0=0; P1=1, restrito ao bloqueio do gate completo por artefato historico rules-7 ausente fora do escopo OP-2; P2=0; P3=0.
+
+Analysis hash: `cc50291ed95c9be70b9cfa40a273f09ad822760f841f9554c34344215207c9e0`.
+
+Decisao: `OP2_IMPLEMENTATION_HARDENING_BLOCKED — FULL_SUITE_REQUIRES_HISTORICAL_RULES7_ARTIFACT`.
+
+Proxima acao: restaurar ou fornecer o artefato historico rules-7 ausente e reexecutar `python -m pytest -q`; somente depois promover para `OP2_IMPLEMENTATION_HARDENING_COMPLETE — READY_FOR_BATCH10_PREFLIGHT`.
+
+## Execucao 50 - OP-2 / revalidacao apos restauracao do artefato rules-7
+
+Objetivo: revalidar exclusivamente o bloqueio remanescente da OP-2 depois da restauracao do artefato historico `data/logs/historical_equipment_backfill_plan_rules7_20260724T141444Z.json`.
+
+Artefato restaurado: `historical_equipment_backfill_plan_rules7_20260724T141444Z.json`; tamanho 331511 bytes; SHA-256 `d72dc3f2b5744c6987e2ab14c0b8b091afc1213c13a070b4efb4aa65f425922f`.
+
+Suite completa: `python -m pytest -q` aprovada com `815 passed, 1 skipped`.
+
+Gates herdados da Execucao 49: direcionados OP-2 `124 passed`; Ruff aprovado; Compileall aprovado; MyPy dos arquivos alterados aprovado; `git diff --check` aprovado.
+
+Autorizacao: producao controlada permanece limitada a 5; lote 10 em producao permanece nao autorizado; operacao ampla permanece bloqueada; OP-3 ainda nao iniciada.
+
+Artefatos finais: `data/logs/op2_implementation_hardening_20260731T135513Z.json`; `data/logs/op2_implementation_hardening_20260731T135513Z.md`.
+
+Analysis hash final: `9bde9a7807c071385584ff9bf6ffde9a17f955be0f992b0a59dd4326ef2b8d0f`.
+
+Revisao: P0=0; P1=0; P2=0; P3=0.
+
+Decisao: `OP2_IMPLEMENTATION_HARDENING_COMPLETE — READY_FOR_BATCH10_PREFLIGHT`.
+
+Proxima acao: `OP3_BATCH_10_PREFLIGHT_AND_CANARY`.
+
+## Execucao 51 - OP-3 Gate 1 / pre-voo read-only para lote 10
+
+Objetivo: executar exclusivamente o Gate 1 read-only da OP-3, validando os criterios de entrada para futuro canario controlado de ate 10 protocolos, sem acessar Portal, planilha oficial, PDFs reais ou unidades de rede, sem criar backup/temporario operacional e sem iniciar canario.
+
+Fontes: `specs/SPEC-008-operational-batch-hardening.md`; `data/logs/op2_implementation_hardening_20260731T135513Z.json`; `data/logs/op2_implementation_hardening_20260731T135513Z.md`; `docs/codex_execution_ledger.md`.
+
+Validacoes tecnicas: politica padrao de producao preservada em 5; lote 10 em producao bloqueado por `BATCH_LIMIT_NOT_AUTHORIZED`; politica sintetica de lote 10 preservada para validacao offline; 11 protocolos sinteticos geram 10 selecionados e 1 descartado; violacao de escopo apos freeze bloqueada por `FROZEN_BATCH_SCOPE_VIOLATION`; lock reentrante sintetico bloqueado por `GLOBAL_EXECUTION_LOCK_REENTRANT`.
+
+Estado do lock operacional: arquivo persistente `data/locks/option5_execution.lock` localizado; PID registrado nao ativo; lock real nao adquirido nem reescrito nesta execucao read-only.
+
+Achado formal: o JSON/Markdown final da OP-2 preserva `analysis_hash` reproduzivel e quality gates aprovados, mas contem `?` no lugar do travessao e dos acentos da decisao/confirmacao forte. Checagens obrigatorias reprovadas: `op2_decision_exact`; `op2_confirmation_exact`.
+
+Seguranca read-only: Portal nao acessado; planilha oficial nao acessada; unidades de rede nao acessadas; PDFs reais nao acessados; backup nao criado; temporario de aplicacao nao criado; workbook nao modificado; codigo nao alterado pelo Gate 1.
+
+Artefatos: `data/logs/op3_batch10_gate1_preflight_20260731T141246Z.json`; `data/logs/op3_batch10_gate1_preflight_20260731T141246Z.md`. O artefato `op3_batch10_gate1_preflight_20260731T141128Z.*` foi superseded por conter decisao generica antes da classificacao terminal do defeito formal.
+
+Preflight hash: `b6ef46d38690d3e607ceec86b5404c7a2b8544f9a92fc672f0d0d35e06ca4698`.
+
+Revisao: P0=0; P1=1; P2=0; P3=0.
+
+Decisao: `OP3_GATE1_PREFLIGHT_READ_ONLY_REJECTED — OP2_ARTIFACT_ENCODING_MISMATCH`.
+
+Proxima acao: corrigir somente o artefato final da OP-2 para preservar Unicode exato da decisao e confirmacao forte, sem alterar implementacao ou executar producao; depois revalidar OP-3 Gate 1.
+
+## Execucao 52 - Correcao formal da OP-2 e revalidacao read-only do OP-3 Gate 1
+
+Objetivo: corrigir exclusivamente a corrupcao Unicode dos artefatos formais da OP-2 e revalidar o OP-3 Gate 1 em modo estritamente read-only, sem alterar implementacao, testes, configuracao, autorizacao operacional, Portal, planilha, PDFs ou unidades de rede.
+
+Hashes dos artefatos historicos preservados: `op2_implementation_hardening_20260731T135513Z.json` SHA-256 `07b334d56e49371fed401781afe361ef8509970ebd41db8238cf27cb7a08467f`; `op2_implementation_hardening_20260731T135513Z.md` SHA-256 `86126e9abf40e0bdabe628c3b06b2a1e03000625da907ea4f15af7e8ee1b8af4`; `op3_batch10_gate1_preflight_20260731T141246Z.json` SHA-256 `92581a791d0f81eed31c4e2047fd5c9759d684c0837bbf2627c28285a163b09a`; `op3_batch10_gate1_preflight_20260731T141246Z.md` SHA-256 `f15f8c8589f63ea5cc8afa7d9c3aea7c6d03a6df664f3ac6e7c5427251a8fc6e`.
+
+Disposicao historica: artefatos OP-2 anteriores registrados como `TECHNICALLY_VALID_FORMALLY_REJECTED_BY_ENCODING`; artefatos OP-3 anteriores registrados como `GATE1_REJECTED_HISTORICAL_EVIDENCE`.
+
+Runtime validado por importacao isolada de funcoes puras em `automacao_gd.application.full_pipeline`: `runtime_confirmation_5_exact=true` para `APLICAR OPÇÃO 5 COM CONCLUSÃO EM 5 PROTOCOLOS`; `runtime_confirmation_10_exact=true` para `APLICAR OPÇÃO 5 COM CONCLUSÃO EM 10 PROTOCOLOS`; limite padrao de producao `5`; lote 10 em producao bloqueado por `BATCH_LIMIT_NOT_AUTHORIZED`; politica sintetica 10 preservada para validacao offline.
+
+Artefato OP-2 corrigido: `data/logs/op2_implementation_hardening_formal_correction_20260731T151149Z.json`; `data/logs/op2_implementation_hardening_formal_correction_20260731T151149Z.md`; novo analysis hash `ee2d4321db3078985be906f97ca02c5a5ff37b61b09773b65c52398d86532476`; hash reproduzido por segunda leitura.
+
+Validacao UTF-8: `utf8_decode_errors=0`; `replacement_character_findings=0`; `question_mark_substitution_findings=0`; `artifact_mojibake_findings=0`; `noncanonical_separator_findings=0`; `json_markdown_semantic_mismatches=0`; `technical_result_changes=0`; `authorization_changes=0`.
+
+Resultados tecnicos reutilizados: `technical_quality_gates_reexecuted=false`; `technical_quality_gates_reused=true`; fonte `data/logs/op2_implementation_hardening_20260731T135513Z.json`; suite completa reutilizada `815 passed, 1 skipped`; testes direcionados reutilizados `124 passed`; Ruff, Compileall, MyPy focal e `git diff --check` preservados como aprovados.
+
+OP-3 Gate 1 revalidado: `data/logs/op3_batch10_gate1_preflight_revalidation_20260731T151149Z.json`; `data/logs/op3_batch10_gate1_preflight_revalidation_20260731T151149Z.md`; analysis hash `4324be711ca5e8854f4efc82b0fdc7fe69c9cecfc0e5bc660ecf6a74629cc537`; `op2_artifact_found=true`; `op2_analysis_hash_reproduced=true`; `op2_decision_exact=true`; `op2_confirmation_exact=true`; `op2_utf8_strict=true`; `synthetic_batch10_supported=true`; `eleventh_protocol_block_preserved=true`; `frozen_batch_scope_guard_preserved=true`; `reentrant_lock_guard_preserved=true`.
+
+Seguranca e filesystem: implementacao alterada `false`; testes alterados `false`; configuracao alterada `false`; autorizacao alterada `false`; Portal acessado `false`; planilha acessada `false`; PDF real acessado `false`; unidades de rede acessadas `false`; Gate 2 iniciado `false`; canario executado `false`; arquivos criados apenas os quatro artefatos permitidos; arquivo modificado apenas `docs/codex_execution_ledger.md`; mudancas fora da allowlist `0`; privacy findings `0`.
+
+Revisao senior: P0=0; P1=0; P2=0; P3=0.
+
+Decisao da correcao OP-2: `OP2_FORMAL_ARTIFACT_CORRECTION_COMPLETE — READY_FOR_OP3_GATE1_REVALIDATION`.
+
+Decisao do Gate 1: `OP3_GATE1_PREFLIGHT_READ_ONLY_APPROVED — AWAITING_EXPLICIT_CANARY_AUTHORIZATION`.
+
+Proxima etapa unica: `OP3_GATE2_EXPLICIT_CANARY_AUTHORIZATION`.

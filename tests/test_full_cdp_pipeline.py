@@ -11,6 +11,7 @@ import src.cdp_portal_service as cdp_portal_service
 from src.cdp_portal_service import (
     _click_next_listing_page_diagnostic,
     _collect_completed_listing_rows_across_pages,
+    _click_numeric_paginator_with_playwright,
     _click_next_listing_page,
     consolidate_listing_page_rows,
     download_connection_budget,
@@ -284,6 +285,53 @@ def test_numeric_pagination_click_reports_target_page() -> None:
     assert diagnostic["numeric_page_links_found"] == ["1", "2", "3"]
 
 
+def test_numeric_pagination_click_uses_exact_visible_locator() -> None:
+    class FakeLink:
+        def __init__(self, text: str, class_name: str = ""):
+            self.text = text
+            self.class_name = class_name
+            self.clicked = False
+
+        def inner_text(self, timeout: int) -> str:
+            return self.text
+
+        def get_attribute(self, name: str, timeout: int) -> str:
+            assert name == "class"
+            return self.class_name
+
+        def click(self, timeout: int) -> None:
+            self.clicked = True
+
+    class FakeLocator:
+        def __init__(self, links: list[FakeLink]):
+            self.links = links
+
+        def count(self) -> int:
+            return len(self.links)
+
+        def nth(self, index: int) -> FakeLink:
+            return self.links[index]
+
+    class FakePage:
+        def __init__(self, links: list[FakeLink]):
+            self.links = links
+
+        def locator(self, selector: str) -> FakeLocator:
+            assert selector == ".ui-paginator a.ui-paginator-page"
+            return FakeLocator(self.links)
+
+    active_one = FakeLink("1", "ui-paginator-page ui-state-active")
+    target_two = FakeLink("2", "ui-paginator-page")
+    page = FakePage([active_one, target_two, FakeLink("3", "ui-paginator-page")])
+
+    result = _click_numeric_paginator_with_playwright(page, target_page_number=2)
+
+    assert result["clicked"] is True
+    assert result["text"] == "2"
+    assert target_two.clicked is True
+    assert active_one.clicked is False
+
+
 def test_download_connection_budget_click_does_not_wait_for_navigation(tmp_path: Path) -> None:
     class FakeDownload:
         suggested_filename = "orcamento.pdf"
@@ -460,9 +508,302 @@ def test_collect_across_pages_attempts_next_when_pagination_enabled(monkeypatch)
     assert summary["pagination_next_found"] is True
     assert summary["pagination_click_attempts"] == 1
     assert summary["pagination_mode"] == "numeric"
-    assert summary["pagination_target_page"] == 2
-    assert summary["pagination_stop_reason"] == "max_portal_pages_reached"
+    assert summary["pagination_target_page"] == 3
+    assert summary["pagination_complete"] is True
+    assert summary["last_page_confirmed"] is True
+    assert summary["pagination_stop_reason"] == "last_page_reached"
     assert len(click_attempts) == 1
+
+
+def test_collect_waits_for_active_page_to_stabilize_after_click(monkeypatch) -> None:
+    class Settings(DummySettings):
+        ENABLE_PORTAL_PAGINATION = True
+        MAX_PORTAL_PAGES = 2
+
+    pages = [_page(0, 2), _page(2, 2)]
+    active_pages = [1, 1, 2]
+
+    def fake_click_next(page, current_page_number: int):
+        return {
+            "found": True,
+            "enabled": True,
+            "clicked": True,
+            "selector": "div.paginator > a",
+            "text": str(current_page_number + 1),
+            "class_name": "",
+            "mode": "numeric",
+            "current_page_number": current_page_number,
+            "target_page_number": current_page_number + 1,
+            "numeric_page_links_found": ["1", "2"],
+            "numeric_page_links_count": 2,
+            "stop_reason": "pagination_numeric_page_clicked",
+        }
+
+    monkeypatch.setattr(
+        cdp_portal_service,
+        "read_current_page_table_with_row_handles",
+        lambda page: pages.pop(0),
+    )
+    monkeypatch.setattr(
+        cdp_portal_service,
+        "get_active_numeric_page",
+        lambda page: active_pages.pop(0),
+    )
+    monkeypatch.setattr(
+        cdp_portal_service,
+        "find_and_click_next_listing_page",
+        fake_click_next,
+        raising=False,
+    )
+    monkeypatch.setattr(cdp_portal_service, "_wait_after_pagination_click", lambda page: None)
+
+    summary = _collect_completed_listing_rows_across_pages(object(), Settings())
+
+    assert summary["pages_read"] == 2
+    assert summary["pagination_stop_reason"] == "last_page_reached"
+    assert summary["pagination_complete"] is True
+
+
+def test_collect_reads_last_page_above_eleven_when_safety_cap_allows(monkeypatch) -> None:
+    class Settings(DummySettings):
+        ENABLE_PORTAL_PAGINATION = True
+        MAX_PORTAL_PAGES = 20
+
+    pages = [_page(index * 2, 2) for index in range(14)]
+    active_pages = list(range(1, 15))
+
+    def fake_click_next(page, current_page_number: int):
+        if current_page_number >= 14:
+            return {
+                "found": False,
+                "enabled": False,
+                "clicked": False,
+                "mode": "numeric",
+                "current_page_number": current_page_number,
+                "target_page_number": current_page_number + 1,
+                "numeric_page_links_found": ["11", "12", "13", "14"],
+                "stop_reason": "last_page_reached",
+            }
+        return {
+            "found": True,
+            "enabled": True,
+            "clicked": True,
+            "mode": "numeric",
+            "current_page_number": current_page_number,
+            "target_page_number": current_page_number + 1,
+            "numeric_page_links_found": [str(current_page_number + 1)],
+            "stop_reason": "pagination_numeric_page_clicked",
+        }
+
+    monkeypatch.setattr(
+        cdp_portal_service,
+        "read_current_page_table_with_row_handles",
+        lambda page: pages.pop(0),
+    )
+    monkeypatch.setattr(
+        cdp_portal_service,
+        "get_active_numeric_page",
+        lambda page: active_pages.pop(0),
+    )
+    monkeypatch.setattr(
+        cdp_portal_service,
+        "find_and_click_next_listing_page",
+        fake_click_next,
+        raising=False,
+    )
+    monkeypatch.setattr(cdp_portal_service, "_wait_after_pagination_click", lambda page: None)
+
+    summary = _collect_completed_listing_rows_across_pages(object(), Settings())
+
+    assert summary["pages_read"] == 14
+    assert summary["pagination_complete"] is True
+    assert summary["last_page_confirmed"] is True
+    assert summary["last_page_number"] == 14
+    assert summary["next_page_available_after_stop"] is False
+    assert summary["pagination_stop_reason"] == "last_page_reached"
+
+
+def test_safety_cap_with_next_page_marks_pagination_incomplete(monkeypatch) -> None:
+    class Settings(DummySettings):
+        ENABLE_PORTAL_PAGINATION = True
+        MAX_PORTAL_PAGES = 11
+
+    pages = [_page(index * 2, 2) for index in range(11)]
+    active_pages = list(range(1, 12))
+
+    def fake_click_next(page, current_page_number: int):
+        return {
+            "found": True,
+            "enabled": True,
+            "clicked": True,
+            "mode": "numeric",
+            "current_page_number": current_page_number,
+            "target_page_number": current_page_number + 1,
+            "numeric_page_links_found": [str(current_page_number + 1)],
+            "stop_reason": "pagination_numeric_page_clicked",
+        }
+
+    monkeypatch.setattr(
+        cdp_portal_service,
+        "read_current_page_table_with_row_handles",
+        lambda page: pages.pop(0),
+    )
+    monkeypatch.setattr(
+        cdp_portal_service,
+        "get_active_numeric_page",
+        lambda page: active_pages.pop(0),
+    )
+    monkeypatch.setattr(
+        cdp_portal_service,
+        "find_and_click_next_listing_page",
+        fake_click_next,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        cdp_portal_service,
+        "inspect_next_page_availability",
+        lambda page, current_page_number: {
+            "next_page_available": True,
+            "target_page_number": current_page_number + 1,
+            "numeric_page_links_found": ["11", "12", "13", "14"],
+        },
+        raising=False,
+    )
+    monkeypatch.setattr(cdp_portal_service, "_wait_after_pagination_click", lambda page: None)
+
+    summary = _collect_completed_listing_rows_across_pages(object(), Settings())
+
+    assert summary["pages_read"] == 11
+    assert summary["pagination_complete"] is False
+    assert summary["last_page_confirmed"] is False
+    assert summary["next_page_available_after_stop"] is True
+    assert summary["pagination_stop_reason"] == "safety_cap_reached_with_next_page"
+
+
+def test_next_button_is_used_when_future_numeric_page_is_not_visible(
+    monkeypatch,
+) -> None:
+    class Settings(DummySettings):
+        ENABLE_PORTAL_PAGINATION = True
+        MAX_PORTAL_PAGES = 2
+
+    pages = [_page(0, 2), _page(2, 2)]
+    active_pages = [1, 2]
+
+    monkeypatch.setattr(
+        cdp_portal_service,
+        "read_current_page_table_with_row_handles",
+        lambda page: pages.pop(0),
+    )
+    monkeypatch.setattr(
+        cdp_portal_service,
+        "get_active_numeric_page",
+        lambda page: active_pages.pop(0),
+    )
+    monkeypatch.setattr(
+        cdp_portal_service,
+        "find_and_click_next_numeric_page",
+        lambda page, current_page_number: {
+            "found": False,
+            "enabled": False,
+            "clicked": False,
+            "mode": "numeric",
+            "current_page_number": current_page_number,
+            "target_page_number": current_page_number + 1,
+            "numeric_page_links_found": ["1", "…", "10", "11"],
+            "stop_reason": "pagination_numeric_target_not_found",
+        },
+    )
+    next_clicks = []
+    monkeypatch.setattr(
+        cdp_portal_service,
+        "_click_next_listing_page_diagnostic",
+        lambda page: next_clicks.append(True)
+        or {
+            "found": True,
+            "enabled": True,
+            "clicked": True,
+            "selector": ".ui-paginator-next",
+            "text": "Próxima",
+            "class_name": "",
+            "stop_reason": None,
+        },
+    )
+    monkeypatch.setattr(cdp_portal_service, "_wait_after_pagination_click", lambda page: None)
+
+    summary = _collect_completed_listing_rows_across_pages(object(), Settings())
+
+    assert summary["pages_read"] == 2
+    assert next_clicks
+    assert summary["pagination_diagnostics"][0]["mode"] == "next_button"
+
+
+def test_download_blocks_operational_lot_when_reconciliation_pagination_incomplete(
+    monkeypatch,
+) -> None:
+    class Settings(DummySettings):
+        ENABLE_PORTAL_PAGINATION = True
+        MAX_PORTAL_PAGES = 11
+
+    records = [PortalSolicitation(protocol="2601", status="CONCLUIDA", page_number=1)]
+    reconciliation_calls = []
+
+    monkeypatch.setattr(cdp_portal_service, "get_settings", lambda: Settings())
+    monkeypatch.setattr(
+        cdp_portal_service,
+        "ensure_listing_starts_on_page_one",
+        lambda page: {
+            "success": True,
+            "status": "already_on_first_page",
+            "initial_active_page": 1,
+            "active_page_after": 1,
+        },
+    )
+    monkeypatch.setattr(
+        cdp_portal_service,
+        "_collect_completed_listing_rows_across_pages",
+        lambda page, settings: {
+            "pages_read": 11,
+            "total_rows": 550,
+            "total_completed": 1,
+            "completed_records": records,
+            "duplicates_skipped": [],
+            "pagination_warnings": ["MAX_PORTAL_PAGES atingido: 11."],
+            "pagination_enabled": True,
+            "pagination_complete": False,
+            "last_page_confirmed": False,
+            "last_page_number": None,
+            "pages_visited": [*range(1, 12)],
+            "next_page_available_after_stop": True,
+            "pagination_stop_reason": "safety_cap_reached_with_next_page",
+            "pagination_next_found": True,
+            "pagination_safety_cap": 11,
+            "pagination_click_attempts": 10,
+            "pagination_mode": "numeric",
+            "pagination_current_page": 11,
+            "pagination_target_page": 12,
+            "pagination_numeric_links_found": ["11", "12", "13", "14"],
+            "pagination_diagnostics": [],
+        },
+    )
+    monkeypatch.setattr(
+        cdp_portal_service,
+        "ensure_request_origin_page",
+        lambda *args, **kwargs: (_ for _ in ()).throw(
+            AssertionError("operational lot should not start")
+        ),
+    )
+
+    summary = download_completed_budgets_from_current_page(
+        FakePage(),
+        reconciliation_callback=lambda *args: reconciliation_calls.append(args) or {},
+    )
+
+    assert summary["aborted"] is True
+    assert summary["abort_reason"] == "PORTAL_PAGINATION_INCOMPLETE"
+    assert summary["total_selected"] == 0
+    assert summary["results"] == []
+    assert reconciliation_calls and reconciliation_calls[0][0] == "before_limit"
 
 
 def test_collect_uses_real_active_page_number(monkeypatch) -> None:
@@ -522,8 +863,9 @@ def test_collect_across_pages_reports_numeric_target_not_found(monkeypatch) -> N
     assert summary["pages_read"] == 1
     assert summary["pagination_next_found"] is False
     assert summary["pagination_click_attempts"] == 0
-    assert summary["pagination_stop_reason"] == "pagination_numeric_target_not_found"
-    assert "pagination_numeric_target_not_found" in summary["pagination_warnings"]
+    assert summary["pagination_complete"] is True
+    assert summary["last_page_confirmed"] is True
+    assert summary["pagination_stop_reason"] == "last_page_reached"
 
 
 def test_origin_navigation_pagination_failure_is_logged_as_warning(monkeypatch) -> None:

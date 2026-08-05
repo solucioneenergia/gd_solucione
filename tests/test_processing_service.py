@@ -1048,6 +1048,99 @@ def test_valid_technical_result_reaches_excel(
     assert result["technical_validation_status"] == "approved"
 
 
+def test_point_of_connection_no_date_metadata_marks_completion_open(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    validation = SimpleNamespace(
+        approved=True,
+        status="approved",
+        errors=[],
+        warnings=[],
+        technical_review_required=False,
+        module_source="parallel_table",
+        inverter_source="parallel_table",
+    )
+    monkeypatch.setattr(
+        processing_service,
+        "_load_or_extract_technical_data",
+        lambda *args: (
+            "2500000190",
+            "CLIENTE SINTETICO",
+            "modulo",
+            "inversor",
+            "5x LEAPTON MODELO",
+            "1x GROWATT MODELO",
+            validation,
+        ),
+    )
+    monkeypatch.setattr(
+        processing_service,
+        "load_portal_metadata",
+        lambda *args: (
+            {
+                "entry_date": "2026-07-01",
+                "status": "Solicitação Concluída",
+                "completion_date": None,
+                "completion_date_raw": None,
+                "completion_source_stage": "PONTO_DE_CONEXAO_APROVADO",
+                "completion_extraction_status": "POINT_OF_CONNECTION_COMPLETION_DATE_NOT_AVAILABLE",
+            },
+            "metadata.json",
+        ),
+    )
+    monkeypatch.setattr(
+        processing_service,
+        "find_client_folder",
+        lambda *args: SimpleNamespace(
+            match_type="protocol",
+            matched_path=str(tmp_path / "cliente"),
+            confidence=1.0,
+            cache_hit=False,
+            cache_key=None,
+            reason=None,
+            found_by="protocol",
+            protocol_search_hit=True,
+            search_elapsed_seconds=0.0,
+        ),
+    )
+    monkeypatch.setattr(
+        processing_service,
+        "resolve_archive_destination_folder",
+        lambda **kwargs: SimpleNamespace(
+            destination_folder=tmp_path / "cliente",
+            match_type="protocol",
+            reason=None,
+            should_create_folder=False,
+            fallback_mode=None,
+            legacy_gd_ignored=False,
+        ),
+    )
+    excel_mock = Mock(
+        return_value={
+            "success": True,
+            "can_write": True,
+            "action": "update_existing",
+            "completion_action": "MARKED_AS_OPEN",
+            "row_found": True,
+            "row_number": 2,
+        }
+    )
+    monkeypatch.setattr(processing_service, "update_excel_from_pdf_data", excel_mock)
+
+    result = processing_service._process_single_pdf(
+        tmp_path / "Orcamento_de_Conexao_2500000190.pdf",
+        tmp_path / "planilha.xlsx",
+        tmp_path / "clientes",
+        dry_run=True,
+        apply_archive=False,
+    )
+
+    assert excel_mock.call_args.kwargs["completion_date"] == "EM ABERTO"
+    assert result["completion_reason"] == "POINT_OF_CONNECTION_COMPLETION_DATE_NOT_AVAILABLE"
+    assert result["completion_action"] == "MARKED_AS_OPEN"
+
+
 def test_valid_v6_cache_is_reused_without_pdf_extraction(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

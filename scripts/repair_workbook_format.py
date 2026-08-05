@@ -10,6 +10,7 @@ from automacao_gd.infrastructure.config import get_settings
 from automacao_gd.infrastructure.files.file_service import ensure_directories
 from automacao_gd.infrastructure.logging import setup_logger
 from automacao_gd.infrastructure.excel.service import repair_workbook_format
+from automacao_gd.infrastructure.persistence.atomic import atomic_write_json, atomic_write_text
 
 
 JSON_REPORT_NAME = "reparo_formatacao_planilha.json"
