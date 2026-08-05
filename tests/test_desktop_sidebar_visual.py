@@ -62,8 +62,8 @@ def test_sidebar_icons_are_real_local_assets_not_empty_placeholders() -> None:
 def test_python_card_contains_required_status_texts() -> None:
     source = _read("static/index.html") + _read("src/components/Sidebar.tsx")
 
-    assert "Python 3.11" in source
-    assert "Ambiente pronto" in source
+    assert "Python 3.12+" in source
+    assert "Ambiente não verificado" in source
     assert "status-dot" in source
 
 

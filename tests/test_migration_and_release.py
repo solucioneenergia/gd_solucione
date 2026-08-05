@@ -9,6 +9,7 @@ import pytest
 from scripts import inspect_portal_table
 from scripts.create_clean_release_zip import create_clean_release_zip
 from scripts.migrate_v1_operational_data import migrate_operational_data
+from scripts.validate_engineering_foundation import REQUIRED_FILES as FOUNDATION_REQUIRED_FILES
 
 
 def _write(path: Path, content: bytes = b"data") -> None:
@@ -85,10 +86,20 @@ def test_migration_apply_copies_only_allowed_data_and_creates_backups(
 
 
 def _prepare_release_project(root: Path) -> None:
+    for relative in FOUNDATION_REQUIRED_FILES:
+        _write(root / relative, b"synthetic")
     _write(root / "README.md", b"readme")
     _write(root / "requirements.txt", b"pytest")
     _write(root / ".env.example", b"DRY_RUN=true")
-    _write(root / "automacao_gd/__init__.py", b"")
+    _write(root / "pyproject.toml", b'[project]\nversion = "2.0.2"\n')
+    _write(root / "desktop_app.py", b"def main(): return 0")
+    _write(root / "automacao_gd/__init__.py", b'__version__ = "2.0.2"\n')
+    _write(root / "apps/__init__.py", b"")
+    _write(root / "apps/desktop/__init__.py", b"")
+    _write(root / "apps/desktop/frontend/package.json", b'{"version":"2.0.2"}')
+    _write(root / "apps/desktop/frontend/pnpm-lock.yaml", b"synthetic")
+    _write(root / "apps/desktop/frontend/dist/index.html", b"synthetic")
+    _write(root / "apps/desktop/frontend/dist/assets/index.js", b"synthetic")
     _write(root / "docs/guide.md", b"docs")
     _write(root / "scripts/tool.py", b"print('ok')")
     _write(root / "tests/test_ok.py", b"def test_ok(): pass")
@@ -143,8 +154,8 @@ def test_clean_release_contains_required_files_and_no_sensitive_data(
     }
     assert names.isdisjoint(forbidden)
     assert report["validation"]["valid"] is True
-    assert (project / "data/logs/release_validation.json").is_file()
-    assert (project / "data/logs/release_validation.md").is_file()
+    assert (tmp_path / "release_reports/release_validation.json").is_file()
+    assert (tmp_path / "release_reports/release_validation.md").is_file()
 
 
 def test_inspect_portal_script_uses_factory_and_disconnects_cdp(

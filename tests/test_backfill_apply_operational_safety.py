@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import json
 from pathlib import Path
@@ -23,12 +23,7 @@ from automacao_gd.domain.equipment_semantics import (
     canonicalize_equipment,
 )
 
-
-RULES7_PLAN_PATH = (
-    Path("data")
-    / "logs"
-    / "historical_equipment_backfill_plan_rules7_20260724T141444Z.json"
-)
+SYNTHETIC_PROTOCOL = "9999999999999"
 
 
 class _ReadyPreflight:
@@ -53,7 +48,7 @@ def _synthetic_workbook(path: Path) -> None:
     sheet.append(("Protocolo", "Placa", "Inversor", "Observação"))
     sheet.append(
         (
-            "2500001001",
+            SYNTHETIC_PROTOCOL,
             "1x LEAPTON LP182",
             "1x HUAWEI SUN2000",
             "PRESERVAR",
@@ -70,7 +65,7 @@ def _feature_rich_workbook(path: Path) -> None:
     sheet = workbook.active
     sheet.title = "2025"
     sheet.append(("Protocolo", "Placa", "Inversor", "Observação", "Status"))
-    sheet.append(("2500001001", 0, 0, "=LEN(A2)", "OK"))
+    sheet.append((SYNTHETIC_PROTOCOL, 0, 0, "=LEN(A2)", "OK"))
     sheet["A1"].font = Font(bold=True)
     sheet["B2"].fill = PatternFill("solid", fgColor="FFFF00")
     warning_fill = PatternFill("solid", fgColor="FFC7CE")
@@ -157,7 +152,7 @@ def _canonical_collection(
 
 def _quality_gate_item(
     *,
-    protocol: str = "2500000000",
+    protocol: str = SYNTHETIC_PROTOCOL,
     proposed_module: str,
     proposed_inverter: str,
     collection: CanonicalEquipmentCollection,
@@ -177,9 +172,6 @@ def _quality_gate_item(
         "blocking_violations": [],
     }
 
-
-def _load_rules7_plan() -> dict:
-    return json.loads(RULES7_PLAN_PATH.read_text(encoding="utf-8"))
 
 
 def test_row_quality_gate_accepts_valid_cross_field_transition() -> None:
@@ -306,50 +298,17 @@ def test_row_quality_gate_accepts_solplanet_alias_cleanup() -> None:
     )
 
 
-def test_rules7_official_preflight_prepares_all_updates_without_conflicts(
-    monkeypatch: pytest.MonkeyPatch,
+def test_synthetic_preflight_prepares_all_updates_without_conflicts(
+    tmp_path: Path,
 ) -> None:
-    monkeypatch.setenv("APP_ENV", "production")
-    monkeypatch.setenv("DRY_RUN", "false")
-    monkeypatch.setenv("APPLY_EXCEL", "true")
-    monkeypatch.setenv("BACKUP_EXCEL", "true")
-    from automacao_gd.infrastructure.config import get_settings
+    workbook = tmp_path / "synthetic.xlsx"
+    plan = _synthetic_plan(workbook)
 
-    settings = get_settings()
-    plan = _load_rules7_plan()
-    current_hash = audit_service.file_sha256(settings.planilha_path)
+    prepared, conflicts = apply_service._load_prepared_updates(workbook, plan)
 
-    if current_hash != plan["workbook_fingerprint"]:
-        prepared, conflicts = apply_service._load_prepared_updates(
-            settings.planilha_path, plan
-        )
-        assert len(prepared) == 0
-        assert len(conflicts) == 30
-        assert {reason for conflict in conflicts for reason in conflict.reasons} == {
-            "ROW_FINGERPRINT_MISMATCH"
-        }
-        return
-
-    prepared, conflicts = apply_service._load_prepared_updates(
-        settings.planilha_path, plan
-    )
-
-    assert len(prepared) == 30
+    assert len(prepared) == 1
     assert conflicts == []
-    assert {item["protocol"] for item in prepared}.issuperset(
-        {
-            "2502104207",
-            "2503118917",
-            "2504165265",
-            "2506043351",
-            "2507119114",
-            "2508155042",
-            "2510074020",
-            "2510236705",
-            "2601204137",
-            "2602027219",
-        }
-    )
+    assert {item["protocol"] for item in prepared} == {SYNTHETIC_PROTOCOL}
 
 
 @pytest.mark.parametrize("environment", [None, "", "development", "test", "local", "other"])

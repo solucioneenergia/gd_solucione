@@ -1,9 +1,22 @@
 # Spec — desktop_production_readiness
 
-- Status: **rascunho para implementação futura**
-- Tipo: auditoria técnica e especificação de prontidão; sem alteração funcional
+- Status: **em homologação final controlada da candidata 2.0.2**
+- Tipo: especificação normativa de hardening e prontidão offline; sem autorização de produção
 - Data da auditoria: 2026-07-19
-- Decisão arquitetural relacionada: `docs/ADR-001_DESKTOP_CANONICAL_PATH.md`
+- Decisão arquitetural relacionada: `docs/adr/0005-canonical-desktop-path.md` (aceita)
+
+## 0. Atualização normativa da candidata 2.0.2
+
+Em 2026-08-03 foi aprovado `apps/desktop` como caminho canônico e
+`apps/desktop/frontend` como frontend canônico. Esta implementação deve preservar
+`automacao_gd/presentation/desktop` e `frontend` como legado congelado, sem removê-los.
+
+O escopo da candidata 2.0.2 cobre empacotamento, build frontend reproduzível, empty state,
+hardening de origem e navegação, proteção da bridge, desativação honesta de placeholders,
+cancelamento cooperativo, confirmação vinculada ao lote, CI e validação de release.
+
+Ficam fora do escopo: produção, canário, publicação, tags, remoção do legado, regras de parser,
+PDF, Excel, arquivamento, limites operacionais e integração real com o Portal.
 
 ## 1. Problema
 
@@ -297,3 +310,163 @@ mudança deve ocorrer em repositório Git válido e em commits pequenos.
 - Git: `fatal: not a git repository`.
 
 Essas evidências descrevem prontidão técnica/offline; não constituem homologação de produção.
+
+## 12. Execução controlada da candidata 2.0.2 (2026-08-03)
+
+A implementação definida nesta SPEC foi executada no repositório Git real e está detalhada
+em `docs/releases/release_2.0.2_audit_ledger.md`. Wheel, instalação isolada, frontend,
+testes, auditoria de dependências, bundle estrutural e ZIP diagnóstico foram aprovados.
+
+A Definition of Done de produção continua aberta: MyPy global reprova com dívida legada,
+o secret scan e o CI remoto não foram executados, o EXE não recebeu smoke com configuração
+sintética e a worktree contém mudanças preexistentes. Nenhuma tag foi criada e nenhuma
+execução de produção foi autorizada.
+
+## 13. Fechamento dos gates locais pré-promoção (2026-08-04)
+
+### 13.1 Escopo
+
+Esta etapa fecha somente os gates locais remanescentes da candidata 2.0.2: MyPy, sanitização
+do frontend legado, Gitleaks, cenário de symlink, smoke offline do bundle, reprodução dos
+comandos do CI e reconstrução em staging persistente. Produção, Portal, planilha oficial,
+histórico Git, commit, tag, remote e CI remoto permanecem fora do escopo.
+
+### 13.2 Baseline comprovada
+
+- HEAD: `070a4206b017b51f142919e6e98a0b290e0c8953`, tag `v2.0.1`, sem `v2.0.2` e sem remote.
+- Pytest: 841 aprovados e um skip por privilégio de symlink no Windows.
+- MyPy do CI: 33 erros em nove arquivos.
+- Frontend canônico: instalação imutável, três testes e build aprovados.
+- Frontend legado: três identificadores longos ambíguos no fallback `sampleProtocols`.
+- Gitleaks: action `v2` sem versão binária fixada; a execução local usará 8.30.1.
+- Árvore destacada equivalente ao workspace por camadas, sem copiar `outputs/`.
+
+### 13.3 Requisitos verificáveis
+
+1. MyPy deve terminar com código zero sem `ignore_errors`, `Any` indiscriminado ou mudança de
+   regra de negócio.
+2. O fallback legado deve iniciar vazio ou usar somente dados explicitamente sintéticos, e a
+   busca automatizada por identificadores operacionais deve retornar zero.
+3. Gitleaks 8.30.1 deve verificar o estado atual e o histórico, com relatórios redigidos que não
+   reproduzam valores encontrados.
+4. A proteção contra symlink externo deve ser executada por equivalente não privilegiado quando
+   o Windows negar a criação de symlink real, sem reduzir a propriedade testada.
+5. O smoke do EXE deve usar somente variáveis e diretórios sintéticos, confirmar janela,
+   frontend canônico, bridge autorizada, empty state, ausência de operação automática e
+   encerramento controlado.
+6. Cada comando dos jobs locais do workflow deve ser executado; CI remoto não pode ser inferido.
+7. Wheel, ZIP e bundle devem ser reconstruídos na árvore isolada e copiados para
+   `artifacts/release-candidate/2.0.2/`, com manifesto, SHA-256 e logs sanitizados.
+
+### 13.4 Mapeamento de testes
+
+- Tipagem: MyPy por arquivo durante GREEN e comando integral no gate final.
+- Legado: teste que reprova identificadores longos e confirma exclusão de wheel/ZIP/bundle.
+- Symlink: teste real quando suportado e teste equivalente por adaptador de filesystem controlado.
+- Smoke: harness dedicado com configuração sintética e relatório estruturado.
+- Artefatos: instalação isolada do wheel, validador do ZIP e inspeção do bundle.
+- Segurança: Gitleaks atual e histórico, sem allowlist ampla.
+
+### 13.5 Critérios desta etapa
+
+- [ ] MyPy integral em código zero.
+- [ ] Literais ambíguos do legado sanitizados e regressão aprovada.
+- [ ] Gitleaks atual e histórico aprovados ou achados tratados explicitamente.
+- [ ] Cenário de escape por symlink efetivamente coberto.
+- [ ] Smoke offline do EXE integralmente aprovado.
+- [ ] Comandos locais do CI aprovados.
+- [ ] Artefatos isolados reconstruídos e manifestados fora de `%TEMP%`.
+- [ ] Nenhum dado operacional acessado, apagado ou distribuído.
+
+### 13.6 Rollback
+
+Preservar o snapshot criado antes desta etapa. O rollback deve restaurar somente os arquivos
+listados no delta incremental desta etapa e nunca usar reset ou limpeza destrutiva. A árvore
+isolada e o staging só podem ser removidos após conferência dos manifestos.
+
+## 14. Fase 6 - Bootstrap manual do EXE
+
+A abertura direta do bundle Windows deve configurar logging antes de carregar a janela mesmo
+quando o executavel estiver em modo frozen/windowed e nao houver console associado. Nesse cenario,
+`sys.stderr` pode ser `None`; portanto, o bootstrap nunca deve chamar `logger.add(None)`.
+
+Quando nao houver diretorio de logs configurado no modo frozen/manual, o fallback deve ser um
+diretorio local do usuario para a aplicacao, nao um caminho operacional do projeto. A correcao nao
+autoriza Portal, planilha oficial, unidade de rede, perfil real de navegador, producao ou canario.
+
+Criterios verificaveis:
+
+- `setup_logger()` nao lanca excecao com `sys.stderr` e `sys.__stderr__` ausentes.
+- `setup_logger()` cria `app.log` em fallback local seguro quando `logs_dir_path` nao existe.
+- O EXE copiado abre com frontend, bridge e empty state, sem iniciar operacao e sem requisicao
+  HTTP(S) externa.
+
+## 15. Homologação final controlada da candidata 2.0.2 (2026-08-05)
+
+### 15.1 Problema e evidências
+
+O ZIP de staging aprovado pelo validador de release não é autocontido para executar o gate de
+engineering foundation que ele próprio distribui. O gerador exclui `AGENTS.md` e `.agents/`,
+enquanto `scripts/validate_engineering_foundation.py` exige esses arquivos. Executado a partir
+do ZIP de staging, o validator reprova pelos dez arquivos de governança ausentes. O mesmo ZIP
+tem 312 entradas no artefato disponível nesta etapa, e não as 314 registradas como evidência
+preliminar.
+
+O staging também contém o EXE anterior à correção da Fase 6. Seu SHA-256 é
+`9BB59CCAD98DDC9251072D3318DD4FA06D9FEA30EBDD1FB02E989FA050EAE75E`, enquanto o bundle
+corrigido em `dist/AutomacaoGDNeoenergia` tem SHA-256
+`91D9B1D1B9650EB381456EFE48D64629A4ED006FB7A8A0CD516EBC01C7BCB467`.
+
+### 15.2 Escopo e contrato
+
+Esta homologação pode somente:
+
+1. incluir no ZIP fonte os `AGENTS.md` e `.agents/skills/**` versionados e exigidos pela
+   foundation;
+2. exigir esses caminhos no release validator, sem relaxar denylist ou controles de dados;
+3. reconstruir o ZIP seguro e seus relatórios;
+4. sincronizar o bundle corrigido completo com o staging e recalcular manifestos e hashes;
+5. executar gates locais e smoke offline exclusivamente com ambiente sintético.
+
+Produção, canário, Portal, planilha oficial, unidade de rede, `.env` real, perfil real de
+navegador, commit, tag, push, release e alteração de regra de negócio permanecem fora do escopo.
+Não há nova decisão arquitetural: o desktop canônico continua definido pela ADR 0005 e o legado
+permanece preservado e congelado.
+
+### 15.3 Requisitos verificáveis
+
+- O ZIP fonte deve ser aprovado por `validate_release_zip.py` e, após extração temporária, por
+  `validate_engineering_foundation.py`.
+- O release validator deve reprovar um pacote sem `AGENTS.md`, `frontend/AGENTS.md` ou qualquer
+  arquivo versionado de `.agents/skills/**` exigido pela foundation.
+- A inclusão da governança não pode permitir `.env`, credenciais, perfis, dados operacionais,
+  documentos reais, artefatos de build ou arquivos temporários.
+- O bundle de staging deve ser uma sincronização completa do bundle corrigido e seu EXE deve ter
+  o mesmo SHA-256 da origem.
+- Manifestos devem descrever o estado final do staging, e o smoke deve executar diretamente o
+  EXE desse staging com diretórios e variáveis sintéticos.
+- Contagens de entradas e hashes são evidências calculadas, não constantes contratuais.
+
+### 15.4 Estratégia de testes e critérios de aceite
+
+- [x] Dado um pacote sintético sem governança, quando validado, então ele é reprovado pelos
+      caminhos de foundation ausentes.
+- [x] Dado o gerador de release, quando avaliados `AGENTS.md` e `.agents/skills/**`, então esses
+      caminhos são incluídos, mantendo as exclusões sensíveis existentes.
+- [x] Dado o ZIP final extraído em diretório temporário, quando o validator de foundation roda,
+      então termina com código zero.
+- [x] Dado o bundle corrigido e o staging, quando a sincronização termina, então contagem,
+      manifesto e hash do EXE correspondem.
+- [x] Dado o EXE oficial do staging, quando o smoke sintético é executado, então abre o frontend
+      canônico, inicializa a bridge, mantém empty state, não inicia operação nem requisição
+      externa e encerra controladamente.
+
+Resultado local desta homologação: **APTA PARA REVISÃO DE DIFF E COMMIT LOCAL**. CI remoto,
+tag `v2.0.2`, canário, release e produção continuam pendentes e não autorizados.
+
+### 15.5 Rollback e riscos
+
+O rollback deve restaurar somente ZIP, bundle e relatórios substituídos nesta etapa a partir de
+cópia temporária controlada, sem `git reset`, limpeza ampla ou remoção de dados do usuário. O
+principal risco é promover manifestos que descrevam o bundle anterior; por isso hashes,
+contagens, validator de release, foundation extraída e smoke do staging são gates obrigatórios.

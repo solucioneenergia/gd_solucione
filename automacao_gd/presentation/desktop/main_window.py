@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+from typing import Any
 from urllib.parse import urlparse
 
 from automacao_gd.presentation.desktop.web_assets import resolve_frontend_source
 from automacao_gd.presentation.desktop.web_bridge import AutomationBridge
 
 
+_PYSIDE_IMPORT_ERROR: ImportError | None
 try:
     from PySide6.QtCore import QUrl
     from PySide6.QtWebChannel import QWebChannel
@@ -30,8 +32,7 @@ if _PYSIDE_IMPORT_ERROR is None:
             )
             return bool(allowed)
 
-
-    class MainWindow(QMainWindow):
+    class _AvailableMainWindow(QMainWindow):
         def __init__(
             self,
             *,
@@ -81,15 +82,17 @@ if _PYSIDE_IMPORT_ERROR is None:
                 return
             super().closeEvent(event)
 
-
+    MainWindow: Any = _AvailableMainWindow
 else:
 
-    class MainWindow:
-        def __init__(self, **_kwargs) -> None:
+    class _UnavailableMainWindow:
+        def __init__(self, **_kwargs: Any) -> None:
             raise RuntimeError(
                 "PySide6 com Qt WebEngine não está instalado. "
                 "Execute: pip install -r requirements.txt"
             ) from _PYSIDE_IMPORT_ERROR
+
+    MainWindow = _UnavailableMainWindow
 
 
 def run_desktop(
@@ -109,4 +112,4 @@ def run_desktop(
         development_url=development_url,
     )
     window.show()
-    return application.exec()
+    return int(application.exec())

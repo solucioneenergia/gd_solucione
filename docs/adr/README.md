@@ -8,9 +8,10 @@
 - [0002 — Persistência local atômica](0002-atomic-local-persistence.md) — aceita (o documento usa "aceito").
 - [0003 — Governança de engenharia do Codex](0003-codex-engineering-governance.md) — aceita.
 - [0004 — Plano versionado para backfill histórico](0004-versioned-historical-backfill-plan.md) — aceita.
+- [0005 — Caminho canônico do desktop](0005-canonical-desktop-path.md) — aceita.
 
 ## Documento legado fora da convenção
 
-- [ADR-001 — Caminho canônico da aplicação desktop](../ADR-001_DESKTOP_CANONICAL_PATH.md) — proposta. Permanece no local e status atuais nesta etapa.
+- [ADR-001 — Caminho canônico da aplicação desktop](../ADR-001_DESKTOP_CANONICAL_PATH.md) — substituída pela ADR 0005; preservada para compatibilidade de referências.
 
-Este índice apenas registra o estado existente; não promove, renomeia, move nem substitui decisões.
+Este índice registra a decisão canônica vigente e preserva referências históricas.

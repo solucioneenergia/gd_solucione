@@ -6,6 +6,7 @@ import queue
 import threading
 import tkinter as tk
 from collections.abc import Callable
+from dataclasses import dataclass
 from tkinter import messagebox, ttk
 
 from automacao_gd.application.contracts import OperationResult
@@ -15,23 +16,38 @@ from automacao_gd.presentation.controller import ApplicationController
 from automacao_gd.presentation.operational_output import format_operation_summary
 
 
+@dataclass(frozen=True)
+class _ResultEvent:
+    result: OperationResult
+
+
+@dataclass(frozen=True)
+class _ConfirmationEvent:
+    message: str
+    completed: threading.Event
+    answer: list[bool]
+
+
+_DesktopEvent = _ResultEvent | _ConfirmationEvent
+
+
 class AutomationDesktopApp(ttk.Frame):
     def __init__(self, master: tk.Tk, controller: ApplicationController | None = None) -> None:
         super().__init__(master, padding=16)
-        self.master = master
+        self.root = master
         self.controller = controller or ApplicationController()
-        self.events: queue.Queue[tuple[str, object]] = queue.Queue()
+        self.events: queue.Queue[_DesktopEvent] = queue.Queue()
         self.buttons: list[ttk.Button] = []
         self._build_ui()
         self.after(150, self._drain_events)
 
     def _build_ui(self) -> None:
-        self.master.title("Automação GD Neoenergia")
-        self.master.geometry("920x650")
-        self.master.minsize(760, 520)
+        self.root.title("Automação GD Neoenergia")
+        self.root.geometry("920x650")
+        self.root.minsize(760, 520)
         self.grid(sticky="nsew")
-        self.master.rowconfigure(0, weight=1)
-        self.master.columnconfigure(0, weight=1)
+        self.root.rowconfigure(0, weight=1)
+        self.root.columnconfigure(0, weight=1)
         self.columnconfigure(0, weight=1)
         self.rowconfigure(4, weight=1)
 
@@ -89,7 +105,7 @@ class AutomationDesktopApp(ttk.Frame):
         def confirm(message: str) -> bool:
             event = threading.Event()
             answer: list[bool] = []
-            self.events.put(("confirm", (message, event, answer)))
+            self.events.put(_ConfirmationEvent(message, event, answer))
             event.wait()
             return bool(answer and answer[0])
         self._run("portal", lambda: self.controller.inspect_portal(confirm))
@@ -122,21 +138,21 @@ class AutomationDesktopApp(ttk.Frame):
         threading.Thread(target=self._worker, args=(operation,), daemon=True).start()
 
     def _worker(self, operation: Callable[[], OperationResult]) -> None:
-        self.events.put(("result", operation()))
+        self.events.put(_ResultEvent(operation()))
 
     def _drain_events(self) -> None:
         try:
             while True:
-                kind, payload = self.events.get_nowait()
-                if kind == "result":
-                    result = payload
-                    assert isinstance(result, OperationResult)
+                event = self.events.get_nowait()
+                if isinstance(event, _ResultEvent):
+                    result = event.result
                     self._append_output(result)
                     self._set_busy(False, "Concluído" if result.success else "Falha")
-                elif kind == "confirm":
-                    message, event, answer = payload
-                    answer.append(messagebox.askokcancel("Login manual", message))
-                    event.set()
+                else:
+                    event.answer.append(
+                        messagebox.askokcancel("Login manual", event.message)
+                    )
+                    event.completed.set()
         except queue.Empty:
             pass
         self.after(150, self._drain_events)

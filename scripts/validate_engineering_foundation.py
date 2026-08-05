@@ -33,6 +33,8 @@ DOCUMENT_FILES = (
     "specs/README.md",
     "specs/SPEC-000-engineering-governance-foundation.md",
     "docs/adr/0003-codex-engineering-governance.md",
+    "docs/adr/0005-canonical-desktop-path.md",
+    "specs/desktop_production_readiness.md",
 )
 
 SKILL_FILES = tuple(
@@ -48,6 +50,12 @@ REQUIRED_FILES = AGENTS_FILES + DOCUMENT_FILES + SKILL_FILES + (
     ".github/workflows/ci.yml",
     "scripts/validate_engineering_foundation.py",
     "tests/test_engineering_foundation.py",
+    "apps/__init__.py",
+    "apps/desktop/frontend/package.json",
+    "apps/desktop/frontend/pnpm-lock.yaml",
+    "apps/desktop/frontend/pnpm-workspace.yaml",
+    "tests/test_release_candidate_202.py",
+    "tests/test_release_validator_hardening.py",
 )
 
 SPEC_TEMPLATE_SECTIONS = (
@@ -215,6 +223,16 @@ def _check_governance_records(root: Path, errors: list[str]) -> None:
             "## Decisão",
             "## Plano de rollback",
         ),
+        "docs/adr/0005-canonical-desktop-path.md": (
+            "Status: aceita",
+            "## Decisão",
+            "## Plano de rollback",
+        ),
+        "specs/desktop_production_readiness.md": (
+            "em homologação final controlada da candidata 2.0.2",
+            "apps/desktop",
+            "## 5. Critérios de aceite",
+        ),
     }
     for relative, tokens in checks.items():
         path = root / relative
@@ -319,6 +337,19 @@ def _check_ci(root: Path, errors: list[str]) -> None:
     tests_step = active.find("- name: Tests")
     if not (0 <= validate_step < validate_run < tests_step):
         errors.append("CI deve validar a fundação antes dos testes")
+    required_tokens = (
+        "python -m mypy automacao_gd",
+        "pnpm install --frozen-lockfile",
+        "pnpm test",
+        "pnpm build",
+        "python -m pip wheel",
+        "import desktop_app; import apps.desktop",
+        "scripts/validate_release_zip.py",
+        "gitleaks/gitleaks-action",
+    )
+    for token in required_tokens:
+        if token not in active:
+            errors.append(f"gate obrigatório ausente no CI: {token}")
 
 
 def validate_foundation(root: Path) -> list[str]:

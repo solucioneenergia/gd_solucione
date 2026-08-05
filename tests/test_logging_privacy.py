@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import sys
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -181,3 +182,50 @@ def test_persistent_sink_sanitizes_message_and_exception(
         "segredo",
     ):
         assert forbidden not in persisted
+
+
+def test_setup_logger_does_not_add_missing_console_sink(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(
+        "automacao_gd.infrastructure.logging.get_settings",
+        lambda: SimpleNamespace(LOG_LEVEL="INFO", logs_dir_path=tmp_path),
+    )
+    monkeypatch.setattr(sys, "stderr", None)
+    monkeypatch.setattr(sys, "__stderr__", None)
+
+    setup_logger()
+    try:
+        logger.info("bootstrap manual sem console")
+        logger.complete()
+    finally:
+        logger.remove()
+
+    assert (tmp_path / "app.log").is_file()
+
+
+def test_setup_logger_uses_safe_frozen_fallback_without_configured_sink(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    local_app_data = tmp_path / "local-app-data"
+    monkeypatch.setenv("LOCALAPPDATA", str(local_app_data))
+    monkeypatch.setattr(sys, "frozen", True, raising=False)
+    monkeypatch.setattr(sys, "stderr", None)
+    monkeypatch.setattr(sys, "__stderr__", None)
+    monkeypatch.setattr(
+        "automacao_gd.infrastructure.logging.get_settings",
+        lambda: SimpleNamespace(
+            LOG_LEVEL="INFO",
+            LOGS_DIR=Path("data/logs"),
+            logs_dir_path=None,
+        ),
+    )
+
+    setup_logger()
+    try:
+        logger.info("bootstrap frozen com log local")
+        logger.complete()
+    finally:
+        logger.remove()
+
+    assert (local_app_data / "AutomacaoGDNeoenergia" / "logs" / "app.log").is_file()

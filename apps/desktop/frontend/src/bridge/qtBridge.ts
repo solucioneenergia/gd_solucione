@@ -1,10 +1,12 @@
-import { PRODUCTION_CONFIRMATION } from "../data/mockDashboard";
+type BackendSignal = { connect?: (callback: (...args: unknown[]) => void) => void };
+type BackendMethod = (...args: unknown[]) => unknown;
+type BackendMember = BackendSignal | BackendMethod;
 
 declare global {
   interface Window {
     qt?: { webChannelTransport?: unknown };
     QWebChannel?: new (transport: unknown, callback: (channel: { objects: Record<string, unknown> }) => void) => void;
-    backend?: Record<string, (...args: unknown[]) => unknown> & Record<string, { connect?: (callback: (...args: unknown[]) => void) => void }>;
+    backend?: Record<string, BackendMember>;
   }
 }
 
@@ -46,12 +48,20 @@ export function runDryRun(): void {
   callBackend("run_dry_run");
 }
 
-export function requestProduction(confirmation: string): void {
-  if (confirmation !== PRODUCTION_CONFIRMATION) {
-    emitLog("Produção bloqueada: confirmação textual inválida.");
-    return;
-  }
-  callBackend("run_production_confirmed", confirmation);
+export function requestProduction(): void {
+  callBackendWithResult("get_production_confirmation", (payload) => {
+    const contract = parsePayload(payload);
+    if (contract.allowed !== true || typeof contract.confirmation !== "string") {
+      emitLog("Produção indisponível no ambiente atual.");
+      return;
+    }
+    const confirmation = window.prompt(
+      "A execução em produção pode alterar a planilha e arquivar PDFs.\n" +
+      `Limite autorizado: ${String(contract.limit ?? "")}.\n` +
+      `Digite exatamente: ${contract.confirmation}`
+    );
+    callBackend("run_production_confirmed", confirmation ?? "");
+  });
 }
 
 export function openReport(name: string): void {
@@ -104,7 +114,7 @@ function connectSignals(): void {
 
 function connect(signalName: string, callback: (...args: unknown[]) => void): void {
   const signal = backend?.[signalName];
-  if (signal && typeof signal === "object" && "connect" in signal && typeof signal.connect === "function") {
+  if (signal && typeof signal !== "function" && typeof signal.connect === "function") {
     signal.connect(callback);
   }
 }
@@ -144,6 +154,11 @@ function createMockBackend(): Window["backend"] {
         callback({ protocols: [] });
       }
     },
+    get_production_confirmation: (callback?: unknown) => {
+      if (typeof callback === "function") {
+        callback({ allowed: false, confirmation: "", limit: 0 });
+      }
+    },
     refresh_dashboard: () => {
       emit("desktop-dashboard", {
         system_status: "Pronto",
@@ -154,9 +169,9 @@ function createMockBackend(): Window["backend"] {
       emit("desktop-protocols", []);
     },
     check_environment: () => emitLog("Ambiente visual pronto."),
-    open_edge_cdp: () => emitLog("Abra o Edge manualmente com CDP e faça login no Portal GD."),
+    open_edge_cdp: () => emitLog("Abrir Edge CDP: indisponível nesta versão."),
     test_cdp_connection: () => emitLog("Teste CDP preparado para QWebChannel."),
-    inspect_portal: () => emitLog("Inspeção visual será conectada em etapa posterior."),
+    inspect_portal: () => emitLog("Inspecionar portal: indisponível nesta versão."),
     run_dry_run: () => emitLog("Simulação preparada para bridge real."),
     run_production_confirmed: () => emitLog("Produção protegida por confirmação."),
     open_pipeline_report: () => emitLog("Abertura do relatório pipeline preparada."),

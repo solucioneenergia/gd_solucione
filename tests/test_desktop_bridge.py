@@ -10,7 +10,7 @@ from automacao_gd.infrastructure.config import Settings
 from apps.desktop.bridge import file_bridge
 from apps.desktop.bridge.automation_bridge import (
     AutomationBridge,
-    PRODUCTION_CONFIRMATION,
+    build_production_confirmation,
     production_confirmation_text,
 )
 from apps.desktop.bridge.progress_bridge import ProgressBridge
@@ -101,7 +101,7 @@ def test_production_without_confirmation_does_not_execute(tmp_path: Path) -> Non
     calls = {"production": 0}
 
     bridge = AutomationBridge(
-        _settings(tmp_path),
+        _settings(tmp_path, APP_ENV="production"),
         runners={"run_production": lambda **_kwargs: calls.__setitem__("production", 1)},
         run_async=False,
     )
@@ -122,14 +122,16 @@ def test_production_with_confirmation_calls_mocked_use_case(tmp_path: Path) -> N
         return {"success": True}
 
     bridge = AutomationBridge(
-        _settings(tmp_path),
+        _settings(tmp_path, APP_ENV="production"),
         runners={"run_production": production_runner},
         run_async=False,
     )
     finished: list[str] = []
     bridge.operationFinished.connect(finished.append)
 
-    bridge.run_production_confirmed(PRODUCTION_CONFIRMATION)
+    bridge.run_production_confirmed(
+        build_production_confirmation(bridge.settings, operation="pipeline")
+    )
 
     assert calls["production"] == 1
     assert finished == ["run_production"]
@@ -177,7 +179,8 @@ def test_check_environment_and_cdp_are_safe_injected_calls(tmp_path: Path) -> No
 def test_production_confirmation_text_contains_operational_warnings(tmp_path: Path) -> None:
     text = production_confirmation_text(_settings(tmp_path))
 
-    assert "SIM, EXECUTAR PRODUÇÃO" in text
+    assert "APLICAR OPÇÃO 5" in text
+    assert "5 PROTOCOLOS" in text
     assert "PLANILHA_PATH" in text
     assert "CLIENTES_ROOT" in text
 

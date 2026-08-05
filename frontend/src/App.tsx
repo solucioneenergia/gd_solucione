@@ -41,32 +41,7 @@ const fallbackState: InitialState = {
   busy: false,
 };
 
-const sampleProtocols: ProtocolResult[] = [
-  {
-    protocol: "2606184625",
-    client: "Jose Fabio Estevao da Silva",
-    pdf_status: "Reutilizado",
-    excel_status: "update_existing",
-    archive_status: "Entrada 18-06-2026",
-    error: "",
-  },
-  {
-    protocol: "2606174347",
-    client: "Monica Araujo da Silva Pereira",
-    pdf_status: "Baixado",
-    excel_status: "skipped_excel_already_updated",
-    archive_status: "ENTRADA 17-06-2026",
-    error: "",
-  },
-  {
-    protocol: "2606123663",
-    client: "Danilo Arruda da Silva",
-    pdf_status: "Baixado",
-    excel_status: "skipped_excel_already_updated",
-    archive_status: "Entrada 12-06-2026",
-    error: "",
-  },
-];
+const sampleProtocols: ProtocolResult[] = [];
 
 const statusLabels: Record<OperationalStatus, string> = {
   idle: "Aguardando início da automação",
@@ -294,7 +269,6 @@ export default function App() {
     </main>
   );
 }
-
 function StatusCard({ icon, label, value, tone }: { icon: IconName; label: string; value: string; tone: string }) {
   return (
     <article className={`status-card ${tone}`}>

@@ -65,7 +65,10 @@ def format_operation_summary(operation_name: str, result: OperationResult) -> st
     }
     builder = builders.get(operation_name, _generic_summary)
     body = builder(result, payload)
-    return f"Status: {result.status.value}\n\n{body}"
+    status = result.status
+    if not isinstance(status, OperationStatus):
+        raise RuntimeError("OperationResult sem status normalizado.")
+    return f"Status: {status.value}\n\n{body}"
 
 
 def print_operation_summary(operation_name: str, result: OperationResult) -> None:

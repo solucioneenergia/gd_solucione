@@ -32,7 +32,7 @@ def test_frontend_required_files_exist() -> None:
         "src/components/TopBar.tsx",
         "src/components/Badge.tsx",
         "src/components/Button.tsx",
-        "src/data/mockDashboard.ts",
+        "src/data/demoDashboard.fixture.ts",
     ]:
         assert (FRONTEND / relative).exists(), relative
 
@@ -122,7 +122,7 @@ def test_reports_panel_contains_expected_actions() -> None:
 
 
 def test_production_requires_exact_confirmation_text() -> None:
-    source = _read("src/data/mockDashboard.ts") + _read("src/components/PortalExecutionPanel.tsx")
+    source = _read("src/bridge/qtBridge.ts") + _read("src/components/PortalExecutionPanel.tsx")
 
-    assert "SIM, EXECUTAR PRODUÇÃO" in source
+    assert "get_production_confirmation" in source
     assert "requestProduction" in source

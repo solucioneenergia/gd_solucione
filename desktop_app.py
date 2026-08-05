@@ -7,10 +7,9 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 
-from apps.desktop.main import main as desktop_main
-
-
 def main(argv: Sequence[str] | None = None) -> int:
+    from apps.desktop.main import main as desktop_main
+
     return desktop_main(argv)
 
 

@@ -4,12 +4,17 @@ import subprocess
 import sys
 from pathlib import Path
 
+from scripts.create_clean_release_zip import should_exclude_from_release
 from scripts.validate_engineering_foundation import (
     REQUIRED_FILES,
     SKILL_NAMES,
     parse_frontmatter,
     parse_invocation_policy,
     validate_foundation,
+)
+from scripts.validate_release_zip import (
+    _REQUIRED_FILES as RELEASE_REQUIRED_FILES,
+    _REQUIRED_PREFIXES as RELEASE_REQUIRED_PREFIXES,
 )
 
 
@@ -20,6 +25,23 @@ def test_required_engineering_foundation_files_exist() -> None:
     assert ".github/workflows/ci.yml" in REQUIRED_FILES
     missing = [relative for relative in REQUIRED_FILES if not (ROOT / relative).is_file()]
     assert not missing, f"Arquivos obrigatórios ausentes: {missing}"
+
+
+def test_release_generator_includes_engineering_foundation_contract() -> None:
+    excluded = [relative for relative in REQUIRED_FILES if should_exclude_from_release(relative)]
+
+    assert not excluded, f"Foundation excluída do pacote de release: {excluded}"
+
+
+def test_release_validator_requires_engineering_foundation_contract() -> None:
+    uncovered = [
+        relative
+        for relative in REQUIRED_FILES
+        if relative not in RELEASE_REQUIRED_FILES
+        and not any(relative.startswith(prefix) for prefix in RELEASE_REQUIRED_PREFIXES)
+    ]
+
+    assert not uncovered, f"Foundation não exigida pelo release validator: {uncovered}"
 
 
 def test_four_skills_have_valid_unique_metadata() -> None:

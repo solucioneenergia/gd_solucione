@@ -34,6 +34,9 @@ dist/
 frontend/dist/
 frontend/node_modules/
 frontend/*.tsbuildinfo
+apps/desktop/frontend/dist/
+apps/desktop/frontend/node_modules/
+apps/desktop/frontend/*.tsbuildinfo
 *.egg-info/
 *.spec
 
@@ -42,3 +45,6 @@ frontend/*.tsbuildinfo
 .idea/
 .DS_Store
 Thumbs.db
+
+# Staging local auditável de candidatas; nunca versionar artefatos.
+/artifacts/release-candidate/

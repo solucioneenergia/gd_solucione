@@ -9,7 +9,10 @@ from automacao_gd.infrastructure.config import Settings
 from automacao_gd.presentation.operational_output import format_operation_error
 
 from apps.desktop.bridge import file_bridge
-from apps.desktop.bridge.automation_bridge import AutomationBridge, PRODUCTION_CONFIRMATION
+from apps.desktop.bridge.automation_bridge import (
+    AutomationBridge,
+    build_production_confirmation,
+)
 
 
 def _settings(tmp_path: Path, **overrides: Any) -> Settings:
@@ -123,7 +126,7 @@ def test_production_confirmation_is_exact(tmp_path: Path) -> None:
         return {"success": True}
 
     bridge = AutomationBridge(
-        _settings(tmp_path),
+        _settings(tmp_path, APP_ENV="production", MAX_COMPLETED_TO_PROCESS=5),
         runners={"run_production": production},
         run_async=False,
     )
@@ -132,7 +135,9 @@ def test_production_confirmation_is_exact(tmp_path: Path) -> None:
         bridge.run_production_confirmed(invalid)
     assert calls == 0
 
-    bridge.run_production_confirmed(PRODUCTION_CONFIRMATION)
+    bridge.run_production_confirmed(
+        build_production_confirmation(bridge.settings, operation="pipeline")
+    )
     assert calls == 1
 
 

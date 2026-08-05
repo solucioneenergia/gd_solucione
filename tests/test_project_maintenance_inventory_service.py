@@ -181,6 +181,25 @@ def test_external_symlink_is_not_followed(tmp_path: Path) -> None:
     assert "linked/secret.txt" not in paths
 
 
+def test_external_symlink_guard_is_covered_without_windows_privilege(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    linked = tmp_path / "linked"
+    linked.mkdir()
+    _write(linked / "synthetic-secret.txt", "synthetic")
+    original_is_symlink = Path.is_symlink
+
+    def simulated_is_symlink(path: Path) -> bool:
+        return path == linked or original_is_symlink(path)
+
+    monkeypatch.setattr(Path, "is_symlink", simulated_is_symlink)
+
+    result = run_project_maintenance_inventory(tmp_path, external_roots=[])
+
+    paths = {item["relative_path"] for item in result["inventory"]["files"]}
+    assert "linked/synthetic-secret.txt" not in paths
+
+
 def test_file_changed_during_hash_is_marked_unstable(tmp_path: Path) -> None:
     changing = _write(tmp_path / "data" / "logs" / "changing.log", b"a")
 

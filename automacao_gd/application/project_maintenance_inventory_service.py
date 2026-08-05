@@ -551,7 +551,9 @@ def _scan_files(root: Path) -> list[Path]:
         dirs[:] = [
             d
             for d in dirs
-            if d not in SKIP_RECURSIVE_DIRS and not _is_external_profile_dir(Path(current) / d)
+            if d not in SKIP_RECURSIVE_DIRS
+            and not (Path(current) / d).is_symlink()
+            and not _is_external_profile_dir(Path(current) / d)
         ]
         for name in files:
             path = current_path / name

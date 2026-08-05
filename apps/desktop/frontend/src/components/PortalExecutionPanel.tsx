@@ -1,30 +1,22 @@
 import { Button } from "./Button";
-import { inspectPortal, openEdgeCdp, requestProduction, runDryRun, testCdpConnection } from "../bridge/qtBridge";
-import { PRODUCTION_CONFIRMATION } from "../data/mockDashboard";
+import { requestProduction, runDryRun, testCdpConnection } from "../bridge/qtBridge";
 
 function iconUrl(fileName: string): string {
   return new URL(`../assets/icons/${fileName}`, import.meta.url).href;
 }
 
 export function PortalExecutionPanel() {
-  function confirmProduction() {
-    const confirmation = window.prompt(
-      "A execução em produção pode alterar a planilha e arquivar PDFs.\nDigite exatamente: SIM, EXECUTAR PRODUÇÃO"
-    );
-    requestProduction(confirmation ?? "");
-  }
-
   return (
     <article className="panel execution-panel">
       <h2>Portal e Execução</h2>
       <div className="button-grid">
-        <Button className="primary" onClick={openEdgeCdp}>
+        <Button className="primary" disabled title="Indisponível nesta versão">
           <img className="btn-svg" src={iconUrl("cdp-link.svg")} alt="" /> Abrir Edge CDP
         </Button>
         <Button onClick={testCdpConnection}>
           <img className="btn-svg" src={iconUrl("cdp-link.svg")} alt="" /> Testar conexão CDP
         </Button>
-        <Button onClick={inspectPortal}>
+        <Button disabled title="Indisponível nesta versão">
           <img className="btn-svg" src={iconUrl("portal.svg")} alt="" /> Inspecionar portal
         </Button>
       </div>
@@ -40,12 +32,11 @@ export function PortalExecutionPanel() {
         <Button className="outline" onClick={runDryRun}>
           <img className="btn-svg" src={iconUrl("simulation-mode.svg")} alt="" /> Rodar simulação
         </Button>
-        <Button className="production" onClick={confirmProduction}>
+        <Button className="production" onClick={requestProduction}>
           <img className="btn-svg" src={iconUrl("pipeline.svg")} alt="" /> Rodar produção
         </Button>
       </div>
       <div className="warning"><span>⚠</span>Produção exige confirmação antes de atualizar planilha e arquivar PDFs.</div>
-      <span hidden>{PRODUCTION_CONFIRMATION}</span>
     </article>
   );
 }
