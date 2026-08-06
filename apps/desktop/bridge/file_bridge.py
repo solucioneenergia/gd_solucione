@@ -59,7 +59,10 @@ class FileBridge(QObject):
 
 def _open_with_platform_default(path: Path) -> None:
     if os.name == "nt":
-        os.startfile(str(path))
+        startfile = getattr(os, "startfile", None)
+        if not callable(startfile):
+            raise RuntimeError("Abertura padrão do Windows indisponível neste ambiente.")
+        startfile(str(path))
         return
     command = ["open", str(path)] if sys.platform == "darwin" else ["xdg-open", str(path)]
     subprocess.Popen(command, close_fds=True)

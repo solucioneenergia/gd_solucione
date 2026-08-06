@@ -110,15 +110,19 @@ if os.name == "nt":
 
     def _try_lock_file(handle: IO[str]) -> None:
         handle.seek(0)
+        locking = getattr(msvcrt, "locking")
+        lock_non_blocking = getattr(msvcrt, "LK_NBLCK")
         try:
-            msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
+            locking(handle.fileno(), lock_non_blocking, 1)
         except OSError as exc:
             raise BlockingIOError(str(exc)) from exc
 
     def _unlock_file(handle: IO[str]) -> None:
         handle.seek(0)
+        locking = getattr(msvcrt, "locking")
+        unlock = getattr(msvcrt, "LK_UNLCK")
         try:
-            msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
+            locking(handle.fileno(), unlock, 1)
         except OSError:
             pass
 
@@ -126,10 +130,15 @@ else:
     import fcntl
 
     def _try_lock_file(handle: IO[str]) -> None:
+        flock = getattr(fcntl, "flock")
+        exclusive_lock = getattr(fcntl, "LOCK_EX")
+        non_blocking = getattr(fcntl, "LOCK_NB")
         try:
-            fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)  # type: ignore[attr-defined]
+            flock(handle.fileno(), exclusive_lock | non_blocking)
         except BlockingIOError:
             raise
 
     def _unlock_file(handle: IO[str]) -> None:
-        fcntl.flock(handle.fileno(), fcntl.LOCK_UN)  # type: ignore[attr-defined]
+        flock = getattr(fcntl, "flock")
+        unlock = getattr(fcntl, "LOCK_UN")
+        flock(handle.fileno(), unlock)

@@ -753,8 +753,9 @@ def _should_skip_dir(path: Path) -> bool:
     if name in SKIP_DIR_NAMES or name.startswith("."):
         return True
     try:
-        return bool(path.stat().st_file_attributes & 0x2)
-    except (AttributeError, OSError):
+        file_attributes = getattr(path.stat(), "st_file_attributes", 0)
+        return bool(file_attributes & 0x2)
+    except OSError:
         return False
 
 

@@ -385,7 +385,12 @@ class AutomationBridge(QObject):
         try:
             resolved = path.resolve(strict=True)
             if os.name == "nt":
-                os.startfile(resolved)
+                startfile = getattr(os, "startfile", None)
+                if not callable(startfile):
+                    raise RuntimeError(
+                        "Abertura padrão do Windows indisponível neste ambiente."
+                    )
+                startfile(str(resolved))
             else:
                 subprocess.Popen(["xdg-open", str(resolved)], close_fds=True)
             self.logMessage.emit(f"Aberto: {resolved.name}")
