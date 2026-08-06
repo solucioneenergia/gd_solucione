@@ -508,24 +508,21 @@ def test_completion_sync_real_write_rejects_plain_sim(
 def test_option5_real_pipeline_rejects_plain_sim(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    calls: list[str] = []
+
     class FakeSettings:
         DRY_RUN = False
+        MAX_COMPLETED_TO_PROCESS = 5
 
     class FakeController:
         settings = FakeSettings()
 
         def preflight(self, require_cdp: bool = False):
-            return OperationResult(
-                False,
-                "confirmacao forte obrigatoria",
-                {
-                    "require_cdp": require_cdp,
-                    "confirmation_required": OPTION5_COMPLETION_STRONG_CONFIRMATION,
-                },
-                status=OperationStatus.BLOQUEADO,
-            )
+            calls.append(f"preflight:{require_cdp}")
+            raise AssertionError("preflight must not run without strong confirmation")
 
         def run_pipeline(self):
+            calls.append("run_pipeline")
             raise AssertionError("pipeline must not run without strong confirmation")
 
     monkeypatch.setattr("builtins.input", lambda _: "SIM")
@@ -533,8 +530,10 @@ def test_option5_real_pipeline_rejects_plain_sim(
     result = _confirmed_pipeline(FakeController())
 
     assert result.status == OperationStatus.BLOQUEADO
-    assert result.payload["require_cdp"] is True
+    assert result.payload["cancelled_by_user"] is True
     assert result.payload["confirmation_required"] == OPTION5_COMPLETION_STRONG_CONFIRMATION
+    assert "confirmação forte inválida ou ausente" in result.message
+    assert calls == []
 
 
 def test_cli_menu_no_longer_exposes_completion_option_7(

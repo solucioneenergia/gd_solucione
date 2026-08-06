@@ -147,9 +147,13 @@ def _preflight_summary(result: OperationResult, payload: dict) -> str:
         f"- Status: {'OK' if result.success else 'FALHA'}",
         f"- Planilha: {_check_label(checks.get('workbook'))}",
         f"- Pasta de clientes: {_check_label(checks.get('clientes_root'))}",
-        f"- CDP: {_check_label(checks.get('cdp_endpoint'), 'acessível', 'não acessível')}",
-        f"- Erros críticos: {len(errors)}",
+        f"- Endpoint CDP: {_check_label(checks.get('cdp_endpoint'), 'local e permitido', 'não permitido')}",
     ]
+    if checks.get("cdp_connection") is not None:
+        lines.append(
+            f"- Conexão CDP: {_check_label(checks.get('cdp_connection'), 'respondendo', 'indisponível')}"
+        )
+    lines.append(f"- Erros críticos: {len(errors)}")
     return _finish_summary(lines, payload)
 
 

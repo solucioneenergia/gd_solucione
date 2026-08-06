@@ -202,6 +202,17 @@ def run_full_cdp_pipeline(
             stage="autorização do lote",
             technical_cause=exc.code,
         ) from exc
+    if not settings.CDP_MODE:
+        raise PreflightBlockedError(
+            code="CDP_MODE_REQUIRED",
+            user_message="O pipeline CDP exige CDP_MODE=true.",
+            stage="pré-voo",
+        )
+    preflight = run_preflight(
+        settings, real_run=not settings.DRY_RUN, require_cdp=True
+    )
+    if not preflight.ready:
+        preflight.raise_if_blocked()
     execution_id = uuid4().hex
     try:
         with ExecutionLock(

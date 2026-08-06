@@ -5,7 +5,9 @@ from __future__ import annotations
 import os
 from dataclasses import asdict, dataclass
 from pathlib import Path
+from urllib.error import URLError
 from urllib.parse import urlparse
+from urllib.request import urlopen
 
 from automacao_gd.domain.errors import PreflightBlockedError
 from automacao_gd.infrastructure.config import Settings, get_settings
@@ -13,6 +15,8 @@ from automacao_gd.infrastructure.excel.availability import (
     validate_workbook_availability,
     windows_drive_root,
 )
+
+_CDP_PROBE_TIMEOUT_SECONDS = 1.0
 
 
 @dataclass(frozen=True, slots=True)
@@ -110,16 +114,19 @@ def run_preflight(
 
     parsed = urlparse(settings.CDP_ENDPOINT)
     local_endpoint = (parsed.hostname or "").lower() in {"127.0.0.1", "localhost", "::1"}
+    endpoint_allowed = (not require_cdp) or local_endpoint or settings.ALLOW_REMOTE_CDP
     checks.append(
         CheckResult(
             "cdp_endpoint",
-            (not require_cdp) or local_endpoint or settings.ALLOW_REMOTE_CDP,
+            endpoint_allowed,
             "Endpoint CDP local e seguro."
             if local_endpoint
             else "Endpoint CDP remoto exige ALLOW_REMOTE_CDP=true.",
             blocking=require_cdp,
         )
     )
+    if require_cdp and endpoint_allowed:
+        checks.append(_cdp_connection_check(settings.CDP_ENDPOINT))
 
     if real_run:
         checks.append(
@@ -144,6 +151,49 @@ def run_preflight(
         )
     )
     return PreflightReport(tuple(checks))
+
+
+def _cdp_connection_check(endpoint: str) -> CheckResult:
+    try:
+        with urlopen(  # noqa: S310 - endpoint is validated by cdp_endpoint preflight check.
+            _cdp_version_url(endpoint),
+            timeout=_CDP_PROBE_TIMEOUT_SECONDS,
+        ) as response:
+            status = response.getcode()
+            body = response.read(4096).decode("utf-8", errors="replace")
+    except (OSError, TimeoutError, URLError, ValueError) as exc:
+        return CheckResult(
+            "cdp_connection",
+            False,
+            "Conexão CDP indisponível. Abra o Edge com CDP e tente novamente.",
+            technical_cause=type(exc).__name__,
+            stage="pré-voo",
+        )
+
+    if status == 200 and ("webSocketDebuggerUrl" in body or '"Browser"' in body):
+        return CheckResult(
+            "cdp_connection",
+            True,
+            "Conexão CDP respondendo.",
+            stage="pré-voo",
+        )
+    return CheckResult(
+        "cdp_connection",
+        False,
+        "Conexão CDP indisponível. Abra o Edge com CDP e tente novamente.",
+        technical_cause=f"HTTP_{status}_INVALID_CDP_VERSION",
+        stage="pré-voo",
+    )
+
+
+def _cdp_version_url(endpoint: str) -> str:
+    parsed = urlparse(endpoint)
+    current_path = parsed.path.rstrip("/")
+    if current_path == "/json/version":
+        probe_path = parsed.path
+    else:
+        probe_path = f"{current_path}/json/version" if current_path else "/json/version"
+    return parsed._replace(path=probe_path, params="", query="", fragment="").geturl()
 
 
 def _workbook_check(path: Path, *, require_writable: bool) -> CheckResult:

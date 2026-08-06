@@ -93,7 +93,12 @@ def main(argv: Sequence[str] | None = None) -> int:
         print("5 - Executar pipeline CDP completo")
         print("6 - Abrir interface desktop visual")
         print("0 - Sair")
-        option = input("Escolha uma opção: ").strip()
+        try:
+            option = input("Escolha uma opção: ").strip()
+        except EOFError:
+            print("\nStatus: BLOQUEADO")
+            print("Entrada padrão indisponível. Execução interativa cancelada.")
+            return exit_code_for_status(OperationStatus.BLOQUEADO)
         if option == "0":
             return last_exit_code
         if option == "6":
@@ -291,7 +296,15 @@ def _run_backfill_apply(plan_path: Path | None) -> int:
 
 def _confirmed_real_processing(controller: ApplicationController):
     if input("Digite SIM para confirmar alterações reais: ").strip().upper() != "SIM":
-        return controller.preflight()
+        return OperationResult(
+            False,
+            "Processamento real cancelado pelo usuário.",
+            {
+                "operation_message": "Processamento real cancelado pelo usuário.",
+                "cancelled_by_user": True,
+            },
+            status=OperationStatus.BLOQUEADO,
+        )
     return controller.process_downloads(dry_run=False)
 
 
@@ -314,7 +327,18 @@ def _confirmed_pipeline(controller: ApplicationController):
         try:
             validate_option5_strong_confirmation(confirmation, authorization)
         except StrongConfirmationError:
-            return controller.preflight(require_cdp=True)
+            return OperationResult(
+                False,
+                "Pipeline CDP cancelado: confirmação forte inválida ou ausente.",
+                {
+                    "operation_message": (
+                        "Pipeline CDP cancelado: confirmação forte inválida ou ausente."
+                    ),
+                    "cancelled_by_user": True,
+                    "confirmation_required": required_confirmation,
+                },
+                status=OperationStatus.BLOQUEADO,
+            )
     return controller.run_pipeline()
 
 

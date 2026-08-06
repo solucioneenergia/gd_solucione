@@ -200,10 +200,19 @@ def test_reentrant_global_lock_blocks_before_external_resources(
     calls: list[str] = []
 
     class Settings:
+        CDP_MODE = True
+        DRY_RUN = True
         MAX_COMPLETED_TO_PROCESS = 5
         option5_execution_lock_path = tmp_path / "option5_execution.lock"
 
-    monkeypatch.setattr(full_pipeline, "run_preflight", lambda *a, **k: calls.append("preflight"))
+    class FakePreflight:
+        ready = True
+
+    def fake_preflight(*_args, **_kwargs):
+        calls.append("preflight")
+        return FakePreflight()
+
+    monkeypatch.setattr(full_pipeline, "run_preflight", fake_preflight)
     monkeypatch.setattr(full_pipeline, "_run_download_step", lambda *a, **k: calls.append("download"))
 
     with full_pipeline.ExecutionLock(
@@ -217,4 +226,4 @@ def test_reentrant_global_lock_blocks_before_external_resources(
             full_pipeline.run_full_cdp_pipeline(Settings())
 
     assert exc.value.code == "GLOBAL_EXECUTION_LOCK_REENTRANT"
-    assert calls == []
+    assert calls == ["preflight"]

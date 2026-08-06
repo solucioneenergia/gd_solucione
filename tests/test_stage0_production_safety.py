@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import errno
+import socket
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock, mock_open
@@ -67,6 +68,12 @@ def _settings(tmp_path: Path, **overrides) -> Settings:
     return Settings(_env_file=None, **values)
 
 
+def _unused_local_endpoint() -> str:
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        sock.bind(("127.0.0.1", 0))
+        return f"http://127.0.0.1:{sock.getsockname()[1]}"
+
+
 @pytest.mark.parametrize("app_env", ["development", "test"])
 def test_real_run_requires_production(tmp_path: Path, app_env: str) -> None:
     report = run_preflight(_settings(tmp_path, APP_ENV=app_env), real_run=True)
@@ -84,6 +91,33 @@ def test_production_real_run_and_test_simulation_are_allowed(tmp_path: Path) -> 
 
     assert production.ready is True
     assert simulation.ready is True
+
+
+def test_preflight_summary_describes_cdp_endpoint_without_claiming_access(
+    tmp_path: Path,
+) -> None:
+    report = run_preflight(
+        _settings(
+            tmp_path,
+            APP_ENV="test",
+            DRY_RUN=True,
+            CDP_ENDPOINT=_unused_local_endpoint(),
+        ),
+        real_run=False,
+        require_cdp=True,
+    )
+    result = OperationResult(
+        success=report.ready,
+        message="Ambiente pronto." if report.ready else "Ambiente não está pronto.",
+        payload=report.to_dict(),
+        status=OperationStatus.SUCESSO if report.ready else OperationStatus.BLOQUEADO,
+    )
+
+    output = format_operation_summary("preflight", result)
+
+    assert "- Endpoint CDP: local e permitido" in output
+    assert "- Conexão CDP: indisponível" in output
+    assert "CDP: acessível" not in output
 
 
 def test_real_excel_application_outside_production_is_blocked(tmp_path: Path) -> None:
@@ -279,6 +313,55 @@ def test_preflight_block_occurs_before_state_and_portal(monkeypatch, tmp_path: P
     state_store.assert_not_called()
     playwright.assert_not_called()
     processing.assert_not_called()
+
+
+def test_cdp_unavailable_blocks_pipeline_before_lock_state_download_and_reports(
+    monkeypatch, tmp_path: Path
+) -> None:
+    settings = _settings(
+        tmp_path,
+        CDP_ENDPOINT=_unused_local_endpoint(),
+        APP_ENV="production",
+        DRY_RUN=False,
+    )
+    calls: list[str] = []
+
+    class ForbiddenLock:
+        def __init__(self, *_args, **_kwargs) -> None:
+            calls.append("lock_init")
+
+        def __enter__(self):
+            calls.append("lock_enter")
+            raise AssertionError("ExecutionLock não deve ser adquirido com CDP indisponível")
+
+        def __exit__(self, *_args) -> None:
+            calls.append("lock_exit")
+
+    def forbidden_state(*_args, **_kwargs):
+        calls.append("state")
+        raise AssertionError("PipelineStateStore não deve ser criado com CDP indisponível")
+
+    def forbidden_download(*_args, **_kwargs):
+        calls.append("download")
+        raise AssertionError("_run_download_step não deve ser chamado com CDP indisponível")
+
+    def forbidden_report(*_args, **_kwargs):
+        calls.append("report")
+        raise AssertionError("Relatórios operacionais não devem ser gerados com CDP indisponível")
+
+    monkeypatch.setattr(full_pipeline, "ExecutionLock", ForbiddenLock)
+    monkeypatch.setattr(full_pipeline, "PipelineStateStore", forbidden_state)
+    monkeypatch.setattr(full_pipeline, "_run_download_step", forbidden_download)
+    monkeypatch.setattr(full_pipeline, "_save_download_summary", forbidden_report)
+    monkeypatch.setattr(full_pipeline, "_save_pipeline_reports", forbidden_report)
+
+    with pytest.raises(PreflightBlockedError) as exc:
+        full_pipeline.run_full_cdp_pipeline(settings)
+
+    assert exc.value.code == "cdp_connection"
+    assert exc.value.stage == "pré-voo"
+    assert "Conexão CDP indisponível" in exc.value.user_message
+    assert calls == []
 
 
 def test_controller_catches_operational_block_without_traceback(
@@ -498,6 +581,122 @@ def test_interactive_cli_returns_last_operation_exit_code(
     monkeypatch.setattr("builtins.input", lambda _prompt="": next(answers))
 
     assert cli.main([]) == expected
+
+
+def test_interactive_cli_handles_missing_stdin_without_traceback(
+    monkeypatch, capsys
+) -> None:
+    calls: list[str] = []
+
+    class FakeController:
+        settings = SimpleNamespace(DRY_RUN=True)
+
+        def preflight(self):
+            calls.append("preflight")
+
+        def inspect_portal(self):
+            calls.append("inspect_portal")
+
+        def process_downloads(self, *, dry_run: bool):
+            calls.append(f"process_downloads:{dry_run}")
+
+        def run_pipeline(self):
+            calls.append("run_pipeline")
+
+    monkeypatch.setattr(cli, "ensure_directories", lambda: None)
+    monkeypatch.setattr(cli, "setup_logger", lambda **_kwargs: None)
+    monkeypatch.setattr(cli, "ApplicationController", FakeController)
+    monkeypatch.setattr(
+        "builtins.input",
+        Mock(side_effect=EOFError("EOF when reading a line")),
+    )
+
+    assert cli.main([]) == 2
+
+    output = capsys.readouterr().out
+    assert "Status: BLOQUEADO" in output
+    assert "Entrada padrão indisponível" in output
+    assert "Traceback" not in output
+    assert "EOFError" not in output
+    assert calls == []
+
+
+def test_option4_cancelled_real_processing_is_blocked_without_real_run(
+    monkeypatch, capsys
+) -> None:
+    answers = iter(["4", "NAO", "0"])
+    calls: list[str] = []
+
+    class FakeController:
+        settings = SimpleNamespace(DRY_RUN=False)
+
+        def preflight(self):
+            calls.append("preflight")
+            return OperationResult(True, "Ambiente pronto.", {}, status=OperationStatus.SUCESSO)
+
+        def inspect_portal(self):
+            calls.append("inspect_portal")
+
+        def process_downloads(self, *, dry_run: bool):
+            calls.append(f"process_downloads:{dry_run}")
+            raise AssertionError("processamento real não deve iniciar no cancelamento")
+
+        def run_pipeline(self):
+            calls.append("run_pipeline")
+
+    monkeypatch.setattr(cli, "ensure_directories", lambda: None)
+    monkeypatch.setattr(cli, "setup_logger", lambda **_kwargs: None)
+    monkeypatch.setattr(cli, "ApplicationController", FakeController)
+    monkeypatch.setattr("builtins.input", lambda _prompt="": next(answers))
+
+    assert cli.main([]) == 2
+
+    output = capsys.readouterr().out
+    assert "Status: BLOQUEADO" in output
+    assert "Processamento real cancelado pelo usuário" in output
+    assert "Processamento real concluído" not in output
+    assert calls == []
+
+
+def test_option5_invalid_confirmation_is_blocked_without_pipeline_or_preflight(
+    monkeypatch, capsys
+) -> None:
+    answers = iter(["5", "NAO", "0"])
+    calls: list[str] = []
+
+    class FakeController:
+        settings = SimpleNamespace(
+            APP_ENV="production",
+            DRY_RUN=False,
+            MAX_COMPLETED_TO_PROCESS=5,
+        )
+
+        def preflight(self, *, require_cdp: bool = False):
+            calls.append(f"preflight:{require_cdp}")
+            return OperationResult(True, "Ambiente pronto.", {}, status=OperationStatus.SUCESSO)
+
+        def inspect_portal(self):
+            calls.append("inspect_portal")
+
+        def process_downloads(self, *, dry_run: bool):
+            calls.append(f"process_downloads:{dry_run}")
+
+        def run_pipeline(self):
+            calls.append("run_pipeline")
+            raise AssertionError("pipeline não deve iniciar com confirmação inválida")
+
+    monkeypatch.setattr(cli, "ensure_directories", lambda: None)
+    monkeypatch.setattr(cli, "setup_logger", lambda **_kwargs: None)
+    monkeypatch.setattr(cli, "ApplicationController", FakeController)
+    monkeypatch.setattr("builtins.input", lambda _prompt="": next(answers))
+
+    assert cli.main([]) == 2
+
+    output = capsys.readouterr().out
+    assert "Status: BLOQUEADO" in output
+    assert "Pipeline CDP cancelado" in output
+    assert "Pipeline CDP concluído" not in output
+    assert calls == []
 
 
 def test_operational_summary_starts_with_explicit_status() -> None:

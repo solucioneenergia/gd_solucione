@@ -1,5 +1,10 @@
 from __future__ import annotations
 
+import socket
+import threading
+from collections.abc import Iterator
+from contextlib import contextmanager
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from unittest.mock import patch
 
@@ -9,6 +14,42 @@ from automacao_gd.application.contracts import OperationResult
 from automacao_gd.application.preflight import run_preflight
 from automacao_gd.infrastructure.config import Settings
 from automacao_gd.presentation.controller import ApplicationController
+
+
+class _CDPVersionHandler(BaseHTTPRequestHandler):
+    def do_GET(self) -> None:
+        if self.path != "/json/version":
+            self.send_response(404)
+            self.end_headers()
+            return
+        body = b'{"Browser":"Synthetic CDP","webSocketDebuggerUrl":"ws://127.0.0.1/devtools/browser/synthetic"}'
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def log_message(self, _format: str, *_args: object) -> None:
+        return
+
+
+@contextmanager
+def _local_cdp_server() -> Iterator[str]:
+    server = ThreadingHTTPServer(("127.0.0.1", 0), _CDPVersionHandler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        yield f"http://127.0.0.1:{server.server_port}"
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
+
+
+def _unused_local_endpoint() -> str:
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        sock.bind(("127.0.0.1", 0))
+        return f"http://127.0.0.1:{sock.getsockname()[1]}"
 
 
 def _ready_settings(tmp_path: Path, **overrides) -> Settings:
@@ -37,10 +78,45 @@ def _ready_settings(tmp_path: Path, **overrides) -> Settings:
 
 
 def test_preflight_ready_for_valid_test_environment(tmp_path: Path) -> None:
-    settings = _ready_settings(tmp_path)
-    report = run_preflight(settings, real_run=False, require_cdp=True)
+    with _local_cdp_server() as endpoint:
+        settings = _ready_settings(tmp_path, CDP_ENDPOINT=endpoint)
+        report = run_preflight(settings, real_run=False, require_cdp=True)
+
+    checks = {check.code: check for check in report.checks}
+
     assert report.ready is True
     assert report.blocking_errors == []
+    assert checks["cdp_endpoint"].ok is True
+    assert checks["cdp_connection"].ok is True
+
+
+def test_preflight_blocks_when_required_local_cdp_is_unavailable(tmp_path: Path) -> None:
+    settings = _ready_settings(tmp_path, CDP_ENDPOINT=_unused_local_endpoint())
+    report = run_preflight(settings, real_run=False, require_cdp=True)
+    checks = {check.code: check for check in report.checks}
+
+    assert checks["cdp_endpoint"].ok is True
+    assert checks["cdp_connection"].ok is False
+    assert checks["cdp_connection"].blocking is True
+    assert report.ready is False
+    assert any("Conexão CDP indisponível" in error for error in report.blocking_errors)
+
+
+def test_preflight_does_not_probe_cdp_when_not_required(
+    tmp_path: Path, monkeypatch
+) -> None:
+    def fail_if_probe_is_called(*_args, **_kwargs):
+        raise AssertionError("CDP probe não deve executar quando require_cdp=False")
+
+    monkeypatch.setattr("automacao_gd.application.preflight.urlopen", fail_if_probe_is_called)
+
+    settings = _ready_settings(tmp_path, CDP_ENDPOINT=_unused_local_endpoint())
+    report = run_preflight(settings, real_run=False, require_cdp=False)
+    checks = {check.code: check for check in report.checks}
+
+    assert report.ready is True
+    assert checks["cdp_endpoint"].ok is True
+    assert "cdp_connection" not in checks
 
 
 def test_preflight_blocks_missing_workbook(tmp_path: Path) -> None:
