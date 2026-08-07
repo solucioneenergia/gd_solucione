@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import gc
 import inspect
 import threading
 import time
 from pathlib import Path
 
+import pytest
 from openpyxl import Workbook
 
 from automacao_gd.application.contracts import OperationResult
@@ -27,6 +29,25 @@ def _ensure_qt_application():
     if QCoreApplication is None:
         return None
     return QCoreApplication.instance() or QCoreApplication([])
+
+
+def _drain_qt_events(iterations: int = 20) -> None:
+    application = _ensure_qt_application()
+    if application is None:
+        return
+    for _ in range(iterations):
+        application.processEvents()
+        time.sleep(0.001)
+    QCoreApplication.sendPostedEvents(None, 0)
+    application.processEvents()
+
+
+@pytest.fixture(autouse=True)
+def _cleanup_qt_lifecycle():
+    yield
+    _drain_qt_events()
+    gc.collect()
+    _drain_qt_events(5)
 
 
 def _settings(tmp_path: Path, **overrides) -> Settings:
@@ -95,6 +116,15 @@ def _wait_until(predicate, timeout: float = 3.0) -> None:
     raise AssertionError("Tempo excedido aguardando operação assíncrona.")
 
 
+def _wait_for_bridge_idle(bridge: AutomationBridge) -> None:
+    _wait_until(
+        lambda: not getattr(bridge, "_busy", False)
+        and getattr(bridge, "_thread", None) is None
+        and getattr(bridge, "_worker", None) is None
+    )
+    _drain_qt_events()
+
+
 def test_automation_bridge_exposes_main_webchannel_methods(tmp_path: Path) -> None:
     bridge = AutomationBridge(FakeController(_settings(tmp_path)))
     expected = {
@@ -124,6 +154,7 @@ def test_run_pipeline_dry_run_calls_existing_controller(tmp_path: Path) -> None:
     bridge.run_pipeline_dry_run()
 
     _wait_until(lambda: bool(finished))
+    _wait_for_bridge_idle(bridge)
     assert controller.pipeline_calls == 1
     assert finished == ["pipeline_dry_run"]
 
@@ -195,6 +226,7 @@ def test_worker_executes_pipeline_outside_calling_thread(tmp_path: Path) -> None
     bridge.run_pipeline_dry_run()
 
     _wait_until(finished.is_set)
+    _wait_for_bridge_idle(bridge)
     assert worker_threads
     assert worker_threads[0] != caller_thread
 

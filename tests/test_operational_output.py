@@ -164,7 +164,7 @@ def test_pipeline_summary_shows_limited_operational_protocol_details() -> None:
     assert "Protocolos:" in output
     assert (
         "260000001 | Cliente 1 | PDF reutilizado | "
-        "Excel: simulação/update_existing | Arquivo: simulação/clientes\\Cliente 1"
+        "Excel: simulação/update_existing | Arquivo: simulação/clientes/Cliente 1"
     ) in output
     assert "260000005" in output
     assert "260000006" not in output

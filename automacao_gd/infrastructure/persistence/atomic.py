@@ -108,7 +108,7 @@ def _replace_with_retry(source: Path, target: Path) -> None:
         os.replace(source, target)
         return
     except PermissionError:
-        if os.name != "nt":
+        if not _is_windows_runtime():
             raise
 
     for delay in _WINDOWS_REPLACE_RETRY_DELAYS:
@@ -119,3 +119,7 @@ def _replace_with_retry(source: Path, target: Path) -> None:
         except PermissionError:
             continue
     os.replace(source, target)
+
+
+def _is_windows_runtime() -> bool:
+    return os.name == "nt"

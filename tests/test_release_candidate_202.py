@@ -274,7 +274,7 @@ def test_bridge_attachment_is_guarded_and_remote_windows_are_blocked() -> None:
 @pytest.fixture(scope="session")
 def candidate_wheel(tmp_path_factory: pytest.TempPathFactory) -> Path:
     wheel_dir = tmp_path_factory.mktemp("candidate-wheel")
-    subprocess.run(
+    result = subprocess.run(
         [
             sys.executable,
             "-m",
@@ -287,10 +287,15 @@ def candidate_wheel(tmp_path_factory: pytest.TempPathFactory) -> Path:
             str(wheel_dir),
         ],
         cwd=ROOT,
-        check=True,
         capture_output=True,
         text=True,
     )
+    if result.returncode != 0:
+        pytest.fail(
+            "pip wheel failed with exit code "
+            f"{result.returncode}\nSTDOUT:\n{result.stdout}\nSTDERR:\n{result.stderr}",
+            pytrace=False,
+        )
     return next(wheel_dir.glob("*.whl"))
 
 

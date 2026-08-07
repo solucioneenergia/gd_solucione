@@ -648,9 +648,9 @@ def _truncate_console_text(value: str) -> str:
 def _display_path(path: Path) -> str:
     try:
         resolved = path.resolve(strict=False)
-        return str(resolved.relative_to(PROJECT_ROOT.resolve(strict=False)))
+        return str(resolved.relative_to(PROJECT_ROOT.resolve(strict=False))).replace("\\", "/")
     except (OSError, ValueError):
-        return path.name or str(path)
+        return (path.name or str(path)).replace("\\", "/")
 
 
 def _format_bytes(size_bytes: int) -> str:
