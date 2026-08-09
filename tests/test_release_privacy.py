@@ -161,6 +161,42 @@ def test_tree_privacy_scan_opens_compressed_artifacts(tmp_path: Path) -> None:
     assert report["findings"][0]["path"] == "package.whl!package/module.py"
 
 
+def test_tree_archive_scan_preserves_inner_synthetic_test_context(
+    tmp_path: Path,
+) -> None:
+    artifact = tmp_path / "package.zip"
+    with zipfile.ZipFile(artifact, "w") as archive:
+        archive.writestr(
+            "tests/test_synthetic_fixture.py",
+            'protocol = "2600001048"',
+        )
+
+    report = scan_paths(tmp_path, [artifact.relative_to(tmp_path)])
+
+    assert report["valid"] is True
+
+
+def test_privacy_scanner_allows_digest_digits_but_not_manifest_protocol() -> None:
+    digest = "a" * 20 + "2600001234" + "b" * 34
+    clean = privacy_scan.scan_entries(
+        {
+            "release-manifest.json": json.dumps(
+                {"files": {"module.py": digest}}
+            ).encode("utf-8")
+        }
+    )
+    contaminated = privacy_scan.scan_entries(
+        {
+            "release-manifest.json": json.dumps(
+                {"files": {"module.py": digest}, "protocol": "2600001234"}
+            ).encode("utf-8")
+        }
+    )
+
+    assert clean["valid"] is True
+    assert contaminated["valid"] is False
+
+
 def test_privacy_scanner_does_not_skip_binary_payload_after_nul(tmp_path: Path) -> None:
     identifier = "260" + "9876543"
     bundle = tmp_path / "bundle.bin"

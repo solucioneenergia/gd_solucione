@@ -124,7 +124,8 @@ def _is_synthetic(match: str, path: str) -> bool:
         for item in identifiers
     ):
         return True
-    parts = tuple(part.casefold() for part in PurePosixPath(path).parts)
+    inner_path = path.rsplit("!", 1)[-1]
+    parts = tuple(part.casefold() for part in PurePosixPath(inner_path).parts)
     synthetic_context = bool(parts and parts[0] in {"specs", "tests"})
     if synthetic_context and identifiers and all(
         re.fullmatch(r"2[2-9]0000\d{4}", item) for item in identifiers
@@ -134,6 +135,17 @@ def _is_synthetic(match: str, path: str) -> bool:
     if synthetic_context and "cliente sintetico" in folded:
         return True
     return any(marker.casefold() in folded for marker in _SYNTHETIC_TEXT_MARKERS)
+
+
+def _is_hex_digest_match(text: str, start: int, end: int) -> bool:
+    left = start
+    while left > 0 and text[left - 1] in "0123456789abcdefABCDEF":
+        left -= 1
+    right = end
+    while right < len(text) and text[right] in "0123456789abcdefABCDEF":
+        right += 1
+    token = text[left:right]
+    return len(token) in {40, 64} and bool(re.fullmatch(r"[0-9a-fA-F]+", token))
 
 
 def _finding(
@@ -202,6 +214,10 @@ def _scan_entry(name: str, payload: bytes) -> list[dict[str, object]]:
     for text in texts:
         for rule, pattern in _TEXT_PATTERNS:
             for match in pattern.finditer(text):
+                if rule == "operational_identifier" and _is_hex_digest_match(
+                    text, match.start(), match.end()
+                ):
+                    continue
                 if _is_synthetic(match.group(0), normalized):
                     continue
                 match_hash = _match_hash(match.group(0))
