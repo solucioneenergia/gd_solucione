@@ -118,3 +118,12 @@ Testes usam mocks para provar ausência/presença de chamada ao Excel, arquivame
 Rollback reverte validação e versão do cache. O risco de falso positivo é mitigado usando
 estrutura extraída e poucos sinais de contaminação; casos ambíguos ficam pendentes em vez de
 serem gravados.
+
+## Adendo 2026-08-09 - totais agregados em celula V2
+
+Em celulas V2 com multiplos modelos, a quantidade valida pode ser o total agregado da categoria
+quando o texto final preserva os modelos separados e inclui `Qtd. total`. Esse contrato e aceito
+para a planilha porque a coluna continua recebendo um campo textual unico com os modelos e o total
+da categoria. A validacao continua bloqueando modelo sem identidade, origem insegura,
+contaminacao entre categorias, ausencia de total agregado positivo ou conflitos entre inversor
+convencional e microinversor.

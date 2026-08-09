@@ -196,11 +196,9 @@ def test_processing_ignores_stale_technical_cache_without_format_version(
         "Qtd. total: 3 inversores"
     )
     assert state_store.updated_payload is not None
-    assert state_store.updated_payload["format_version"] is None
-    assert state_store.updated_payload["technical_review_required"] is True
-    assert "CANONICAL_STRUCTURE_INCOMPLETE" in state_store.updated_payload[
-        "technical_validation_errors"
-    ]
+    assert state_store.updated_payload["format_version"] == 7
+    assert state_store.updated_payload["technical_review_required"] is False
+    assert state_store.updated_payload["technical_validation_errors"] == []
 
 
 def test_processing_ignores_previous_technical_cache_version_for_equipment_fix(
@@ -415,6 +413,111 @@ def test_technical_validation_accepts_microinverter_without_conventional_inverte
 
     assert validation.approved is True
     assert validation.errors == []
+
+
+def test_technical_validation_accepts_multiple_models_with_aggregate_totals() -> None:
+    data = GenerationData(
+        modules=[
+            ModuleEquipment(
+                manufacturer="FABRICA ALFA",
+                model="MA620X-120",
+                source="parallel_table",
+            ),
+            ModuleEquipment(
+                manufacturer="FABRICA BETA",
+                model="MB405X-144",
+                source="parallel_table",
+            ),
+        ],
+        module_total_quantity=180,
+        module_total_kwp="90,1",
+        inverters=[
+            InverterEquipment(
+                manufacturer="INVFAB ALFA",
+                model="IA15K-MB0",
+                source="parallel_table",
+            ),
+            InverterEquipment(
+                manufacturer="INVFAB ALFA",
+                model="IA33K-A",
+                source="parallel_table",
+            ),
+            InverterEquipment(
+                manufacturer="INVFAB ALFA",
+                model="IA12K-MB0",
+                source="parallel_table",
+            ),
+        ],
+        inverter_total_quantity=4,
+        inverter_total_kw="75",
+        module_source="parallel_table",
+        inverter_source="parallel_table",
+    )
+
+    module_excel = data.format_module_for_excel()
+    inverter_excel = data.format_inverter_for_excel()
+    placa_planilha, inversor_planilha = processing_service.format_canonical_collection(
+        data.to_canonical_collection()
+    )
+
+    validation = processing_service.validate_technical_equipment(
+        data,
+        placa_planilha,
+        inversor_planilha,
+    )
+
+    assert validation.status == "approved"
+    assert validation.technical_review_required is False
+    assert validation.errors == []
+    assert "Total: 180" in module_excel
+    assert "Total: 4" in inverter_excel
+    assert "Qtd. total: 180" in placa_planilha
+    assert "Qtd. total: 4" in inversor_planilha
+
+
+def test_technical_validation_rejects_multiple_models_without_aggregate_totals() -> None:
+    data = GenerationData(
+        modules=[
+            ModuleEquipment(
+                manufacturer="FABRICA ALFA",
+                model="MA620X-120",
+                source="parallel_table",
+            ),
+            ModuleEquipment(
+                manufacturer="FABRICA BETA",
+                model="MB405X-144",
+                source="parallel_table",
+            ),
+        ],
+        inverters=[
+            InverterEquipment(
+                manufacturer="INVFAB ALFA",
+                model="IA15K-MB0",
+                source="parallel_table",
+            ),
+            InverterEquipment(
+                manufacturer="INVFAB BETA",
+                model="IB33K-A",
+                source="parallel_table",
+            ),
+        ],
+        module_source="parallel_table",
+        inverter_source="parallel_table",
+    )
+    placa_planilha, inversor_planilha = processing_service.format_canonical_collection(
+        data.to_canonical_collection()
+    )
+
+    validation = processing_service.validate_technical_equipment(
+        data,
+        placa_planilha,
+        inversor_planilha,
+    )
+
+    assert validation.status == "pending_review"
+    assert "CANONICAL_STRUCTURE_INCOMPLETE" in validation.errors
+    assert "MODULE_QUANTITY_MISSING" in validation.errors
+    assert "INVERTER_QUANTITY_MISSING" in validation.errors
 
 
 def test_pending_technical_review_skips_excel_archive_and_completion(

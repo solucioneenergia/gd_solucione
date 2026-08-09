@@ -397,7 +397,12 @@ def _process_downloaded_pdfs_locked(
     finished_at = datetime.now()
 
     total_success = sum(1 for item in results if item["success"])
-    total_errors = sum(1 for item in results if not item["success"])
+    metrics = _processing_metrics(results, dry_run, apply_excel)
+    total_errors = (
+        metrics["total_pending_review"]
+        + metrics["total_real_extraction_errors"]
+        + metrics["total_real_application_errors"]
+    )
     status, operation_message = _classify_processing_result(
         dry_run=dry_run,
         total_pdfs=len(pdfs),
@@ -407,7 +412,6 @@ def _process_downloaded_pdfs_locked(
         systemic_apply_failure=systemic_apply_failure,
         partial_effects_present=any(_has_traceable_effects(item) for item in results),
     )
-    metrics = _processing_metrics(results, dry_run, apply_excel)
     completion_dates_changed = sum(
         1
         for item in results
@@ -1708,6 +1712,9 @@ def _processing_metrics(results: list[dict], dry_run: bool, apply_excel: bool) -
         item for item in results if item.get("technical_validation_status") == "approved"
     ]
     pending = [item for item in results if _is_protocol_pending_review(item)]
+    blocked_by_batch_policy = [
+        item for item in results if _is_protocol_blocked_by_batch_policy(item)
+    ]
     no_change = [item for item in results if _is_protocol_no_change(item)]
     safe = [
         item
@@ -1715,11 +1722,28 @@ def _processing_metrics(results: list[dict], dry_run: bool, apply_excel: bool) -
         if _is_protocol_safe_or_no_change(item, apply_excel)
         and not _is_protocol_no_change(item)
     ]
+    real_application_errors = [
+        item
+        for item in results
+        if item.get("error")
+        and not _is_protocol_pending_review(item)
+        and not _is_protocol_blocked_by_batch_policy(item)
+        and _is_protocol_application_error(item)
+    ]
+    real_extraction_errors = [
+        item
+        for item in results
+        if item.get("error")
+        and not _is_protocol_pending_review(item)
+        and not _is_protocol_blocked_by_batch_policy(item)
+        and not _is_protocol_application_error(item)
+    ]
     failed = [
         item
         for item in results
         if item.get("error")
         and not _is_protocol_pending_review(item)
+        and not _is_protocol_blocked_by_batch_policy(item)
         and not _is_protocol_safe_or_no_change(item, apply_excel)
     ]
     updates_planned = sum(
@@ -1735,11 +1759,37 @@ def _processing_metrics(results: list[dict], dry_run: bool, apply_excel: bool) -
         "total_safe_protocols": len(safe),
         "total_no_change_protocols": len(no_change),
         "total_pending_protocols": len(pending),
+        "total_pending_review": len(pending),
         "total_failed_protocols": len(failed),
+        "total_excel_already_updated": len(no_change),
         "total_updates_planned": updates_planned,
         "total_updates_applied": updates_applied,
+        "total_blocked_by_batch_policy": len(blocked_by_batch_policy),
+        "total_real_extraction_errors": len(real_extraction_errors),
+        "total_real_application_errors": len(real_application_errors),
         "total_pdfs_retained_for_retry": len(pending),
     }
+
+
+def _is_protocol_blocked_by_batch_policy(item: dict) -> bool:
+    if item.get("success") or item.get("technical_validation_status") != "approved":
+        return False
+    marker = " ".join(
+        str(value or "")
+        for value in (
+            item.get("error"),
+            item.get("warning"),
+            item.get("real_run_block_code"),
+            item.get("real_run_skipped_reason"),
+        )
+    )
+    return "FROZEN_BATCH_SCOPE_VIOLATION" in marker or "BATCH_POLICY" in marker
+
+
+def _is_protocol_application_error(item: dict) -> bool:
+    excel_status = item.get("excel_status") or {}
+    archive_status = item.get("archive_status") or {}
+    return bool(excel_status.get("error") or archive_status.get("error"))
 
 
 def _real_run_blocked_from_simulation(item: dict, reason: str) -> dict:
@@ -2046,6 +2096,9 @@ def _build_markdown_report(payload: dict) -> str:
         f"- Protocolos pendentes: {payload.get('total_pending_protocols', 0)}",
         f"- Updates planejados: {payload.get('total_updates_planned', 0)}",
         f"- Updates aplicados: {payload.get('total_updates_applied', 0)}",
+        f"- Bloqueados por politica de lote: {payload.get('total_blocked_by_batch_policy', 0)}",
+        f"- Erros reais de extracao: {payload.get('total_real_extraction_errors', 0)}",
+        f"- Erros reais de aplicacao: {payload.get('total_real_application_errors', 0)}",
         f"- Sucessos: {payload.get('total_success', 0)}",
         f"- Erros: {payload.get('total_errors', 0)}",
         f"- Pendências técnicas: {payload.get('total_technical_pending_review', 0)}",

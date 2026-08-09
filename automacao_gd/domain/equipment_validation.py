@@ -242,7 +242,10 @@ def _is_positive_integer(value: object) -> bool:
 def _category_quantity_valid(items: Sequence[CanonicalEquipment], total: object) -> bool:
     if len(items) == 1:
         return _is_positive_integer(items[0].quantity) or _is_positive_integer(total)
-    return bool(items) and all(_is_positive_integer(item.quantity) for item in items)
+    return bool(items) and (
+        _is_positive_integer(total)
+        or all(_is_positive_integer(item.quantity) for item in items)
+    )
 
 
 def _has_module_contamination(

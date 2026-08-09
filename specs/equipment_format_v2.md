@@ -181,6 +181,19 @@ Extração técnica inconclusiva: os dados de Placa e Inversor não puderam ser 
 - `failed`: falha inesperada; não se confunde com pendência esperada.
 - Exceção inesperada continua `FALHOU`; mistura de aprovados e pendentes resulta `PARCIAL`.
 
+## Adendo 2026-08-09 - totais agregados em multiplos modelos
+
+Quando houver multiplos modelos em uma categoria e a planilha V2 representar os modelos
+separados de um total agregado (`Qtd. total: N modulos` ou `Qtd. total: N inversores`),
+a quantidade agregada positiva da categoria e evidencia suficiente para validacao tecnica.
+A validacao nao deve exigir quantidade individual por modelo quando todos os pares
+fabricante/modelo forem canonicos, a origem for tipada e nao houver conflito ou contaminacao
+entre modulo, inversor convencional e microinversor.
+
+Totais agregados confiaveis aprovam somente a categoria correspondente. Total agregado de
+modulos nao valida inversores; total agregado de inversores nao valida microinversores.
+Multiplos modelos sem total agregado positivo continuam `pending_review`.
+
 Transições permitidas: `extracted → validated → excel_updated → success` e qualquer
 estado anterior a `success` pode seguir para a pendência correspondente. É proibido
 `validated → success` sem confirmação do Excel, e falha de arquivamento impede conclusão

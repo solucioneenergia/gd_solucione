@@ -1655,6 +1655,121 @@ def test_global_limit_metrics_close_with_processing_categories(tmp_path: Path) -
     ) == payload["total_protocols_selected_by_global_limit"]
 
 
+def test_pipeline_metrics_separate_batch_policy_and_real_errors(tmp_path: Path) -> None:
+    pdfs = []
+    download_results = []
+    for index in range(5):
+        protocol = f"26000010{index}"
+        pdf = tmp_path / f"Orcamento_de_Conexao_{protocol}.pdf"
+        pdf.write_bytes(b"%PDF-1.4\n")
+        pdfs.append(pdf)
+        download_results.append(
+            {
+                "protocol": protocol,
+                "download_status": "existing_pdf_after_skip",
+                "process_pdf_path": str(pdf),
+            }
+        )
+    download_summary = _apply_global_protocol_limit(
+        {
+            "total_rows": 5,
+            "total_completed": 5,
+            "total_selected": 5,
+            "results": download_results,
+            "selected_protocols": [
+                {"protocol": item["protocol"]} for item in download_results
+            ],
+        },
+        5,
+    )
+    processing_summary = {
+        "blocked_real_run": True,
+        "real_run_block_code": "FROZEN_BATCH_SCOPE_VIOLATION",
+        "total_success": 3,
+        "total_errors": 2,
+        "total_pdfs_analyzed": 5,
+        "total_technically_approved": 4,
+        "total_safe_protocols": 1,
+        "total_no_change_protocols": 3,
+        "total_pending_protocols": 1,
+        "total_failed_protocols": 0,
+        "total_excel_already_updated": 3,
+        "total_updates_planned": 1,
+        "total_updates_applied": 0,
+        "results": [
+            {
+                "protocol": "260000100",
+                "success": True,
+                "technical_validation_status": "approved",
+                "action": "skipped_excel_already_updated",
+                "excel_status": {
+                    "success": True,
+                    "skipped": True,
+                    "action": "skipped_excel_already_updated",
+                },
+            },
+            {
+                "protocol": "260000101",
+                "success": True,
+                "technical_validation_status": "approved",
+                "action": "skipped_excel_already_updated",
+                "excel_status": {
+                    "success": True,
+                    "skipped": True,
+                    "action": "skipped_excel_already_updated",
+                },
+            },
+            {
+                "protocol": "260000102",
+                "success": True,
+                "technical_validation_status": "approved",
+                "action": "skipped_excel_already_updated",
+                "excel_status": {
+                    "success": True,
+                    "skipped": True,
+                    "action": "skipped_excel_already_updated",
+                },
+            },
+            {
+                "protocol": "260000103",
+                "success": False,
+                "technical_validation_status": "approved",
+                "error": "FROZEN_BATCH_SCOPE_VIOLATION",
+                "excel_status": {"success": False, "can_write": False},
+            },
+            {
+                "protocol": "260000104",
+                "success": False,
+                "technical_validation_status": "pending_review",
+                "technical_review_required": True,
+                "action": "pending_technical_review",
+                "excel_status": {"success": False, "skipped": True},
+            },
+        ],
+    }
+
+    payload = build_pipeline_payload(
+        settings=DummySettings(),
+        started_at=datetime(2026, 1, 1, 10, 0, 0),
+        finished_at=datetime(2026, 1, 1, 10, 1, 0),
+        download_summary=download_summary,
+        processing_summary=processing_summary,
+        download_report_path=tmp_path / "download.json",
+        pdf_paths=pdfs,
+    )
+
+    assert payload["total_pdfs_analyzed"] == 5
+    assert payload["total_technically_approved"] == 4
+    assert payload["total_pending_review"] == 1
+    assert payload["total_excel_already_updated"] == 3
+    assert payload["total_updates_planned"] == 1
+    assert payload["total_updates_applied"] == 0
+    assert payload["total_blocked_by_batch_policy"] == 1
+    assert payload["total_real_extraction_errors"] == 0
+    assert payload["total_real_application_errors"] == 0
+    assert payload["total_errors"] == 1
+
+
 def test_consolidated_report_counts_skipped_completed_and_resumed(
     tmp_path: Path,
 ) -> None:

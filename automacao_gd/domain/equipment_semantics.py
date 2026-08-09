@@ -1079,7 +1079,7 @@ def canonical_structure_violations(
     if any(
         _canonical_item_incomplete(
             item,
-            total_quantity=total if len(items) == 1 else None,
+            total_quantity=total,
         )
         for items, total in (
             (collection.modules, collection.module_total_quantity),

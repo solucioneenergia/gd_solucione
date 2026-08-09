@@ -223,7 +223,40 @@ def test_reformat_without_metadata_or_pdf_goes_to_pending_review(tmp_path: Path)
     assert result["equipment_format_version"] is None
 
 
-def test_reformat_blocks_excel_when_canonical_quantities_are_not_per_item(
+def test_reformat_accepts_canonical_aggregate_quantities_without_per_item_quantities(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    captured_excel: dict[str, Any] = {}
+
+    def fake_excel(**kwargs: Any) -> dict[str, Any]:
+        captured_excel.update(kwargs)
+        return {
+            "success": True,
+            "worksheet": "2026",
+            "row_number": 2,
+            "updated_columns": ["Placa", "Inversor"],
+        }
+
+    monkeypatch.setattr(
+        "automacao_gd.application.equipment_reformatting.update_excel_equipment_columns",
+        fake_excel,
+    )
+    result = reformat_completed_protocol_if_needed(
+        protocol=PROTOCOL,
+        state_entry=_completed_entry(1),
+        workbook_path=tmp_path / "planilha.xlsx",
+        metadata={"raw_text": _budget_text(module_quantity="218")},
+        dry_run=False,
+        backup_excel=False,
+    )
+
+    assert result["action"] == "reformat_existing_excel_row"
+    assert result["reformat_status"] == "success"
+    assert "Qtd. total: 218 módulos" in captured_excel["module_text"]
+    assert "Qtd. total: 3 inversores" in captured_excel["inverter_text"]
+
+
+def test_reformat_blocks_excel_when_canonical_quantities_are_missing(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     excel_called = False
@@ -237,17 +270,30 @@ def test_reformat_blocks_excel_when_canonical_quantities_are_not_per_item(
         "automacao_gd.application.equipment_reformatting.update_excel_equipment_columns",
         forbidden_excel,
     )
+    raw_text = "\n".join(
+        [
+            "Fabricante(s) do(s) módulos(s): BYD | TRINA",
+            "Modelo(s) do(s) módulos(s): P6C-30 260 | TSM-NEG21C 695",
+            "Pot. total da(s) placa(s): 99,31 kWp",
+            "Fabricante(s) do(s) inversor(es): SOLIS | INTELBRAS",
+            "Modelo(s) do(s) inversor(es): S5-GC25K | EGT 25000 MAX",
+            "Pot. total do(s) inversor(es): 75 kW",
+        ]
+    )
+
     result = reformat_completed_protocol_if_needed(
         protocol=PROTOCOL,
         state_entry=_completed_entry(1),
         workbook_path=tmp_path / "planilha.xlsx",
-        metadata={"raw_text": _budget_text(module_quantity="218")},
+        metadata={"raw_text": raw_text},
         dry_run=False,
         backup_excel=False,
     )
 
     assert result["action"] == "pending_manual_review"
     assert result["reformat_status"] == "pending_review"
+    assert "MODULE_QUANTITY_MISSING" in result["warning"]
+    assert "INVERTER_QUANTITY_MISSING" in result["warning"]
     assert not excel_called
 
 

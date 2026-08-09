@@ -120,6 +120,17 @@ O pipeline CDP completo bloqueou a gravacao de todo o lote quando a simulacao de
 
 ## Adendo 2026-07-26 - hotfix v2.0.1 / limite global do lote
 
+### Adendo 2026-08-09 - metricas consolidadas do canario
+
+Os totais consolidados devem separar: `total_pdfs_analyzed`,
+`total_technically_approved`, `total_pending_review`, `total_excel_already_updated`,
+`total_updates_planned`, `total_updates_applied`, `total_blocked_by_batch_policy`,
+`total_real_extraction_errors`, `total_real_application_errors` e `total_errors`.
+Protocolos `skipped_excel_already_updated` nao sao erro real. Protocolos tecnicamente aprovados,
+mas nao aplicados por politica de lote, contam em `total_blocked_by_batch_policy`, nao em erro de
+extracao. `total_errors` agrega somente pendencias tecnicas e erros reais de extracao/aplicacao
+para fins de status operacional; bloqueio de politica de lote permanece contado separadamente.
+
 ### Problema
 
 Uma execucao de producao controlada com reutilizacao de PDFs existentes analisou

@@ -1261,14 +1261,85 @@ def _first_non_empty(*values) -> str | None:
     return None
 
 
+def _processing_item_is_pending_review(item: dict) -> bool:
+    return (
+        bool(item.get("technical_review_required"))
+        or item.get("action") == "pending_technical_review"
+        or item.get("technical_validation_status") == "pending_review"
+    )
+
+
+def _processing_item_is_batch_policy_block(item: dict) -> bool:
+    if item.get("success") or item.get("technical_validation_status") != "approved":
+        return False
+    marker = " ".join(
+        str(value or "")
+        for value in (
+            item.get("error"),
+            item.get("warning"),
+            item.get("real_run_block_code"),
+            item.get("real_run_skipped_reason"),
+        )
+    )
+    return "FROZEN_BATCH_SCOPE_VIOLATION" in marker or "BATCH_POLICY" in marker
+
+
+def _processing_item_is_application_error(item: dict) -> bool:
+    excel_status = item.get("excel_status") or {}
+    archive_status = item.get("archive_status") or {}
+    return bool(excel_status.get("error") or archive_status.get("error"))
+
+
 def _build_pipeline_totals(
     download_summary: dict, processing_summary: dict, protocol_rows: list[dict]
 ) -> dict:
-    total_errors = sum(
-        1 for row in protocol_rows if str(row.get("outcome", "")).startswith("failed")
+    processing_results = list(processing_summary.get("results", []))
+    total_pending_review = int(
+        processing_summary.get(
+            "total_pending_review",
+            processing_summary.get("total_pending_protocols", 0),
+        )
+        or 0
+    )
+    total_blocked_by_batch_policy = int(
+        processing_summary.get("total_blocked_by_batch_policy", 0) or 0
+    ) or sum(
+        1 for item in processing_results if _processing_item_is_batch_policy_block(item)
+    )
+    total_real_application_errors = int(
+        processing_summary.get("total_real_application_errors", 0) or 0
+    ) or sum(
+        1
+        for item in processing_results
+        if item.get("error")
+        and not _processing_item_is_pending_review(item)
+        and not _processing_item_is_batch_policy_block(item)
+        and _processing_item_is_application_error(item)
+    )
+    total_real_extraction_errors = int(
+        processing_summary.get("total_real_extraction_errors", 0) or 0
+    ) or (
+        sum(
+            1
+            for row in protocol_rows
+            if row.get("outcome") in {"failed_cdp_navigation", "failed_download"}
+        )
+        + sum(
+            1
+            for item in processing_results
+            if item.get("error")
+            and not _processing_item_is_pending_review(item)
+            and not _processing_item_is_batch_policy_block(item)
+            and not _processing_item_is_application_error(item)
+        )
     )
     if download_summary.get("run_error"):
-        total_errors += 1
+        total_real_extraction_errors += 1
+    total_errors = (
+        total_pending_review
+        + total_real_extraction_errors
+        + total_real_application_errors
+    )
 
     return {
         "total_rows": download_summary.get("total_rows", 0),
@@ -1379,12 +1450,15 @@ def _build_pipeline_totals(
         "total_failed_protocols": processing_summary.get("total_failed_protocols", 0),
         "total_updates_planned": processing_summary.get("total_updates_planned", 0),
         "total_updates_applied": processing_summary.get("total_updates_applied", 0),
+        "total_blocked_by_batch_policy": total_blocked_by_batch_policy,
+        "total_real_extraction_errors": total_real_extraction_errors,
+        "total_real_application_errors": total_real_application_errors,
         "total_pdfs_retained_for_retry": processing_summary.get(
             "total_pdfs_retained_for_retry", 0
         ),
         "total_excel_updated": processing_summary.get("total_excel_updated", 0),
         "total_archived": processing_summary.get("total_archived", 0),
-        "total_pending_review": processing_summary.get("total_pending_review", 0),
+        "total_pending_review": total_pending_review,
         "total_client_folder_cache_hits": processing_summary.get(
             "total_client_folder_cache_hits", 0
         ),
@@ -1588,6 +1662,9 @@ def _build_markdown_report(payload: dict) -> str:
         f"- Total protocolos falhos: {payload.get('total_failed_protocols', 0)}",
         f"- Total updates planejados: {payload.get('total_updates_planned', 0)}",
         f"- Total updates aplicados: {payload.get('total_updates_applied', 0)}",
+        f"- Total bloqueados por politica de lote: {payload.get('total_blocked_by_batch_policy', 0)}",
+        f"- Total erros reais de extracao: {payload.get('total_real_extraction_errors', 0)}",
+        f"- Total erros reais de aplicacao: {payload.get('total_real_application_errors', 0)}",
         f"- Total PDFs mantidos para retomada: {payload.get('total_pdfs_retained_for_retry', 0)}",
         f"- Total sucesso processamento: {payload['total_processed_success']}",
         f"- Total erros processamento: {payload['total_processed_errors']}",

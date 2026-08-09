@@ -458,7 +458,7 @@ def test_v7_cache_rejects_unknown_source_even_when_text_is_complete() -> None:
     assert load_validated_equipment_cache(technical) is None
 
 
-def test_v7_cache_rejects_aggregate_quantity_for_multiple_unquantified_items() -> None:
+def test_v7_cache_accepts_aggregate_quantity_for_multiple_unquantified_items() -> None:
     collection = CanonicalEquipmentCollection(
         modules=(
             _item("module", "ACME", "MODEL-A 500W", None),
@@ -481,7 +481,9 @@ def test_v7_cache_rejects_aggregate_quantity_for_multiple_unquantified_items() -
         "inversor_planilha": inverter_text,
         "equipment": canonical_collection_to_dict(collection),
     }
-    assert load_validated_equipment_cache(technical) is None
+    cache = load_validated_equipment_cache(technical)
+    assert cache is not None
+    assert cache.placa_planilha.endswith("Qtd. total: 5 módulos")
 
 
 def test_rejects_unpaired_current_identity_even_without_quantity() -> None:
