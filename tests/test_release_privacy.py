@@ -427,6 +427,9 @@ def test_ci_keeps_build_artifacts_outside_workspace_and_scans_all_packages() -> 
     assert "os: [ubuntu-latest, windows-latest]" in workflow
     assert 'python-version: ["3.12", "3.13"]' in workflow
     assert "runs-on: ${{ matrix.os }}" in workflow
+    assert "fail-fast: false" in workflow
+    assert "QT_QPA_PLATFORM: offscreen" in workflow
+    assert "QTWEBENGINE_DISABLE_SANDBOX: \"1\"" in workflow
     assert (
         "python scripts/privacy_scan.py . automacao_gd apps tests scripts src "
         "frontend specs docs .agents .github AGENTS.md README.md CHANGELOG.md "
