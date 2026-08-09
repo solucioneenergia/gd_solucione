@@ -8,6 +8,7 @@ sys.path.insert(0, str(PROJECT_ROOT))
 
 from automacao_gd.infrastructure.files.file_service import ensure_directories
 from automacao_gd.infrastructure.logging import logger, setup_logger
+from automacao_gd.infrastructure.persistence.atomic import atomic_write_json
 from automacao_gd.infrastructure.pdf.service import (
     extract_client_from_pdf_text,
     extract_generation_data,

@@ -10,11 +10,14 @@ from src.cdp_portal_service import (
 )
 from src.models import PortalSolicitation
 
+from automacao_gd.infrastructure.portal import cdp_service
+from automacao_gd.infrastructure.portal.browser import PersistentBrowserPortalGDAutomation
+
 
 def _record(protocol: str = "2601") -> PortalSolicitation:
     return PortalSolicitation(
         protocol=protocol,
-        client_name="Cliente Teste",
+        client_name="CLIENTE SINTETICO LTDA",
         status="CONCLUIDA",
         consumer_unit_code="12345",
         address="Rua Teste",
@@ -80,12 +83,12 @@ def test_missing_pdf_requires_opening_detail(tmp_path: Path) -> None:
     assert should_open_detail_for_budget("2601", tmp_path, False) is True
 
 
-def test_existing_pdf_does_not_require_opening_detail(tmp_path: Path) -> None:
+def test_existing_pdf_still_requires_opening_detail_for_completion(tmp_path: Path) -> None:
     protocol_dir = tmp_path / "2601"
     protocol_dir.mkdir()
     (protocol_dir / "Orcamento_de_Conexao_2601.pdf").write_bytes(b"%PDF-1.4\n")
 
-    assert should_open_detail_for_budget("2601", tmp_path, False) is False
+    assert should_open_detail_for_budget("2601", tmp_path, False) is True
 
 
 def test_unsafe_navigation_urls_are_rejected_for_history() -> None:
@@ -96,3 +99,17 @@ def test_unsafe_navigation_urls_are_rejected_for_history() -> None:
     assert _is_unsafe_navigation_url("about:blank", listing_url) is True
     assert _is_unsafe_navigation_url("https://example.com/home", listing_url) is True
     assert _is_unsafe_navigation_url(listing_url, listing_url) is False
+
+
+def test_portal_listing_reader_accepts_identification_code_header() -> None:
+    source = cdp_service.read_current_page_table_with_row_handles.__code__.co_consts
+    script = next(item for item in source if isinstance(item, str) and "mapHeader" in item)
+
+    assert "IDENTIFICACAO" in script
+
+
+def test_persistent_portal_reader_accepts_identification_code_header() -> None:
+    source = PersistentBrowserPortalGDAutomation.read_current_page_table.__code__.co_consts
+    script = next(item for item in source if isinstance(item, str) and "mapHeader" in item)
+
+    assert "IDENTIFICACAO" in script

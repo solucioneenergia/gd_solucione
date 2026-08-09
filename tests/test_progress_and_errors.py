@@ -202,14 +202,14 @@ def test_operational_error_output_sanitizes_sensitive_data() -> None:
         code="CLIENT_FOLDER_AMBIGUOUS",
         user_message="Contato telefone: 81999999999 e email pessoa@example.com",
         action_taken="Ação interrompida.",
-        suggested_action="Conferir CPF 123.456.789-09 manualmente.",
+        suggested_action="Conferir CPF 000.000.000-00 manualmente.",
     )
 
     output = format_operation_error(error)
 
     assert "81999999999" not in output
     assert "pessoa@example.com" not in output
-    assert "123.456.789-09" not in output
+    assert "000.000.000-00" not in output
     assert "[TELEFONE REMOVIDO]" in output
     assert "[E-MAIL REMOVIDO]" in output
     assert "[CPF/CNPJ REMOVIDO]" in output
@@ -222,13 +222,13 @@ def test_format_progress_event_is_compact_and_preserves_protocol() -> None:
             stage_percent=100,
             protocol_percent=10,
             stage="protocol_processing",
-            protocol="2606184625",
+            protocol="2600001104",
             message="Baixando orçamento.",
         )
     )
 
     assert "30%" in output
-    assert "2606184625" in output
+    assert "2600001104" in output
     assert "protocol_processing" in output
 
 
@@ -240,6 +240,7 @@ def test_pipeline_accepts_progress_callback_none(monkeypatch: pytest.MonkeyPatch
     payload = full_pipeline.run_full_cdp_pipeline(
         _synthetic_settings(tmp_path),
         progress_callback=None,
+        confirmation=full_pipeline.build_option5_strong_confirmation(1),
     )
 
     assert payload["total_errors"] == 0
@@ -257,6 +258,7 @@ def test_pipeline_accepts_progress_callback_and_emits_events(
     full_pipeline.run_full_cdp_pipeline(
         _synthetic_settings(tmp_path),
         progress_callback=events.append,
+        confirmation=full_pipeline.build_option5_strong_confirmation(1),
     )
 
     assert events[0].overall_percent == 0

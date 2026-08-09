@@ -7,56 +7,64 @@ apresentação importável em ambientes de CLI e testes sem dependências gráfi
 from __future__ import annotations
 
 from collections.abc import Callable
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 
-try:
+if TYPE_CHECKING:
     from PySide6.QtCore import QObject, QThread, Signal, Slot
 
-    QT_AVAILABLE = True
-except ImportError:
-    QT_AVAILABLE = False
-    QThread = None
+    QT_AVAILABLE: bool
+else:
+    try:
+        from PySide6.QtCore import QObject, QThread, Signal, Slot
 
-    class _BoundSignal:
-        def __init__(self) -> None:
-            self._callbacks: list[Callable[..., Any]] = []
+        QT_AVAILABLE = True
+    except ImportError:
+        QT_AVAILABLE = False
+        QThread = None
 
-        def connect(self, callback: Callable[..., Any]) -> None:
-            self._callbacks.append(callback)
+        class _BoundSignal:
+            def __init__(self) -> None:
+                self._callbacks: list[Callable[..., Any]] = []
 
-        def emit(self, *args: Any) -> None:
-            for callback in tuple(self._callbacks):
-                callback(*args)
+            def connect(self, callback: Callable[..., Any]) -> None:
+                self._callbacks.append(callback)
 
-    class Signal:
-        def __init__(self, *_args: Any, **_kwargs: Any) -> None:
-            self._name = ""
+            def emit(self, *args: Any) -> None:
+                for callback in tuple(self._callbacks):
+                    callback(*args)
 
-        def __set_name__(self, _owner: type, name: str) -> None:
-            self._name = f"__signal_{name}"
+        class Signal:
+            def __init__(self, *_args: Any, **_kwargs: Any) -> None:
+                self._name = ""
 
-        def __get__(self, instance: Any, _owner: type | None = None) -> Any:
-            if instance is None:
-                return self
-            signal = instance.__dict__.get(self._name)
-            if signal is None:
-                signal = _BoundSignal()
-                instance.__dict__[self._name] = signal
-            return signal
+            def __set_name__(self, _owner: type, name: str) -> None:
+                self._name = f"__signal_{name}"
 
-    class QObject:
-        def __init__(self, _parent: Any = None) -> None:
-            pass
+            def __get__(self, instance: Any, _owner: type | None = None) -> Any:
+                if instance is None:
+                    return self
+                signal = instance.__dict__.get(self._name)
+                if signal is None:
+                    signal = _BoundSignal()
+                    instance.__dict__[self._name] = signal
+                return signal
 
-        def moveToThread(self, _thread: Any) -> None:
-            pass
+        class QObject:
+            def __init__(self, _parent: Any = None) -> None:
+                pass
 
-        def deleteLater(self) -> None:
-            pass
+            def moveToThread(self, _thread: Any) -> None:
+                pass
 
-    def Slot(*_types: Any, **_kwargs: Any):
-        def decorator(function: Callable[..., Any]) -> Callable[..., Any]:
-            return function
+            def deleteLater(self) -> None:
+                pass
 
-        return decorator
+        def Slot(*_types: Any, **_kwargs: Any):
+            def decorator(function: Callable[..., Any]) -> Callable[..., Any]:
+                return function
+
+            return decorator
+
+
+__all__ = ["QObject", "QThread", "QT_AVAILABLE", "Signal", "Slot"]

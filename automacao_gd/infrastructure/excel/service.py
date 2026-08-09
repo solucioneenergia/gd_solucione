@@ -37,6 +37,7 @@ REQUIRED_COLUMNS = [
 MAIN_WORKSHEET_NAMES = ["2022 - 2023", "2024", "2025", "2026"]
 DATE_NUMBER_FORMAT = "dd/mm/yyyy"
 TEXT_NUMBER_FORMAT = "@"
+OPEN_COMPLETION_TEXT = "EM ABERTO"
 TOP_LAYOUT_SCAN_ROWS = 5
 SAFE_LOGO_TEXT = "SOLUCIONE NORDESTE ENERGIA ELÉTRICA"
 SAFE_COLUMN_WIDTHS = {
@@ -48,6 +49,12 @@ SAFE_COLUMN_WIDTHS = {
     "F": 42,
     "G": 38,
 }
+
+
+class WorkbookAtomicReplaceError(PermissionError):
+    """Falha fechada quando o arquivo oficial nao pode ser substituido atomicamente."""
+
+    code = "WORKBOOK_ATOMIC_REPLACE_DENIED"
 
 
 def load_workbook_safe(path: Path):
@@ -67,7 +74,7 @@ def validate_workbook_for_pdf_updates(
     workbook_path: Path, require_writable: bool = False
 ) -> dict:
     workbook_path = Path(workbook_path)
-    result = {
+    result: dict[str, Any] = {
         "success": False,
         "worksheet": None,
         "header_row": None,
@@ -133,11 +140,12 @@ def validate_excel_protocol_updated(
     workbook_path: Path,
     protocol: str,
     entry_date: Any = None,
+    completion_date: Any = None,
     module_text: str | None = None,
     inverter_text: str | None = None,
 ) -> dict:
     workbook_path = Path(workbook_path)
-    result = {
+    result: dict[str, Any] = {
         "success": False,
         "already_updated": False,
         "protocol": protocol,
@@ -186,6 +194,7 @@ def validate_excel_protocol_updated(
             row,
             info["columns"],
             entry_dt,
+            completion_date,
             module_text,
             inverter_text,
         )
@@ -467,14 +476,17 @@ def _handle_existing_row(
         )
 
     ws_info = sheet_map[existing_sheet]
-    if not dry_run and _row_has_required_update_values(
+    update_state = _row_required_update_state(
         ws_info["worksheet"],
         existing_row,
         ws_info["columns"],
         entry_dt,
+        completion_date,
         module_text,
         inverter_text,
-    ):
+    )
+    result.update(update_state)
+    if update_state["all_no_change"]:
         result.update(
             {
                 "success": True,
@@ -502,18 +514,14 @@ def _handle_existing_row(
     )
     if not dry_run and apply_changes:
         result["backup_path"] = str(backup_path) if backup_path else None
-        _write_excel_row(
+        _write_existing_excel_row_updates(
             ws_info["worksheet"],
             occurrence["row"],
             ws_info["columns"],
-            protocol,
-            client_name,
-            entry_dt,
             completion_date,
             module_text,
             inverter_text,
-            parecer,
-            ws_info.get("parecer_boolean"),
+            update_state,
         )
         _save_workbook_atomically(wb, workbook_path)
     return result
@@ -713,7 +721,13 @@ def _save_workbook_atomically(wb: Workbook, workbook_path: Path) -> None:
         ok, errors = _validate_xlsx_zip_xml_only(temp_path)
         if not ok:
             raise ValueError("XLSX temporário inválido: " + "; ".join(errors))
-        os.replace(temp_path, workbook_path)
+        try:
+            os.replace(temp_path, workbook_path)
+        except PermissionError as exc:
+            raise WorkbookAtomicReplaceError(
+                "A substituicao atomica do workbook foi negada. "
+                "O arquivo original foi preservado; verifique bloqueio, permissao ou sincronizacao."
+            ) from exc
     except Exception:
         temp_path.unlink(missing_ok=True)
         raise
@@ -811,7 +825,7 @@ def _validate_xlsx_zip_xml_only(path: Path) -> tuple[bool, list[str]]:
 
 def _save_repaired_workbook_safely(wb: Workbook, workbook_path: Path) -> dict:
     temp_path = workbook_path.with_name(f"{workbook_path.stem}.tmp{workbook_path.suffix}")
-    result = {
+    result: dict[str, Any] = {
         "temp_path": str(temp_path),
         "xlsx_integrity_ok": False,
         "official_file_replaced": False,
@@ -849,7 +863,7 @@ def repair_workbook_format(
     template_sheet_name = template_sheet_name or settings.EXCEL_DEFAULT_TEMPLATE_SHEET
     sheet_names = sheet_names or MAIN_WORKSHEET_NAMES
     mode = (mode or settings.WORKBOOK_REPAIR_MODE or "visual_only").strip().lower()
-    result = {
+    result: dict[str, Any] = {
         "success": False,
         "dry_run": dry_run,
         "mode": mode,
@@ -956,7 +970,7 @@ def validate_workbook_format(
     sheet_names = sheet_names or MAIN_WORKSHEET_NAMES
     settings = get_settings()
     strict = settings.STRICT_WORKBOOK_VALIDATION if strict is None else strict
-    result = {
+    result: dict[str, Any] = {
         "success": False,
         "strict": strict,
         "workbook_path": str(workbook_path) if workbook_path else None,
@@ -1255,6 +1269,12 @@ def _base_excel_result(protocol: str, dry_run: bool) -> dict:
         "moved_from": None,
         "moved_to": None,
         "entry_date": None,
+        "ingress_no_change": None,
+        "module_no_change": None,
+        "inverter_no_change": None,
+        "equipment_no_change": None,
+        "completion_no_change": None,
+        "completion_action": None,
         "action": None,
         "warning": None,
         "error": None,
@@ -1317,8 +1337,8 @@ def _apply_safe_workbook_sheet_layout(ws: Worksheet) -> None:
         cell.border = _thin_border()
     ws.row_dimensions[2].height = 24
 
-    for column, width in SAFE_COLUMN_WIDTHS.items():
-        ws.column_dimensions[column].width = width
+    for column_letter, width in SAFE_COLUMN_WIDTHS.items():
+        ws.column_dimensions[column_letter].width = width
 
     ws.auto_filter.ref = "A2:G2"
     ws.freeze_panes = "A3"
@@ -1588,6 +1608,8 @@ def _validate_sheet_format(ws: Worksheet, info: dict | None) -> dict:
             )
             if cell.value in (None, ""):
                 continue
+            if normalized_column == "CONCLUSAO" and _is_open_completion_value(cell.value):
+                continue
             if not isinstance(cell.value, (date, datetime)):
                 _add_data_pending(
                     report,
@@ -1631,7 +1653,7 @@ def _validate_sheet_format(ws: Worksheet, info: dict | None) -> dict:
     return report
 
 
-def _validate_chronological_order(ws: Worksheet, info: dict) -> list[str]:
+def _validate_chronological_order(ws: Worksheet, info: dict) -> list[dict[str, Any]]:
     pending: list[dict] = []
     previous_date: date | None = None
     date_col = info["columns"]["Data de ingresso"]
@@ -1917,11 +1939,16 @@ def _write_excel_row(
     entry_cell = ws.cell(row=row, column=columns["Data de ingresso"])
     entry_cell.value = date_to_excel_datetime(entry_dt)
     entry_cell.number_format = DATE_NUMBER_FORMAT
-    completion_dt = date_to_excel_datetime(completion_date)
     completion_col = _column_by_normalized_name(columns, "CONCLUSAO")
     completion_cell = ws.cell(row=row, column=completion_col)
-    completion_cell.value = completion_dt if completion_dt else None
-    completion_cell.number_format = DATE_NUMBER_FORMAT
+    if _is_open_completion_value(completion_date):
+        completion_cell.value = OPEN_COMPLETION_TEXT
+        completion_cell.number_format = TEXT_NUMBER_FORMAT
+    else:
+        completion_dt = date_to_excel_datetime(completion_date)
+        if completion_dt:
+            completion_cell.value = completion_dt
+            completion_cell.number_format = DATE_NUMBER_FORMAT
     ws.cell(row=row, column=columns["Parecer"]).value = _parecer_value(
         ws, columns["Parecer"], parecer, parecer_boolean
     )
@@ -1932,28 +1959,115 @@ def _write_excel_row(
     _adjust_equipment_row_layout(ws, row, columns, cleaned_module, cleaned_inverter)
 
 
+def _write_existing_excel_row_updates(
+    ws: Worksheet,
+    row: int,
+    columns: dict[str, int],
+    completion_date: Any,
+    module_text: str,
+    inverter_text: str,
+    update_state: dict[str, Any],
+) -> None:
+    completion_col = _column_by_normalized_name(columns, "CONCLUSAO")
+    completion_cell = ws.cell(row=row, column=completion_col)
+    if completion_date is not None and not update_state.get("completion_no_change"):
+        if _is_open_completion_value(completion_date):
+            completion_cell.value = OPEN_COMPLETION_TEXT
+            completion_cell.number_format = TEXT_NUMBER_FORMAT
+        else:
+            completion_dt = date_to_excel_datetime(completion_date)
+            if completion_dt:
+                completion_cell.value = completion_dt
+                completion_cell.number_format = DATE_NUMBER_FORMAT
+
+    module_changed = not update_state.get("module_no_change")
+    inverter_changed = not update_state.get("inverter_no_change")
+    cleaned_module = _clean_equipment_text(module_text)
+    cleaned_inverter = _clean_equipment_text(inverter_text)
+    if module_changed:
+        _set_cell_if_value(ws, row, columns["Placa"], cleaned_module)
+    if inverter_changed:
+        _set_cell_if_value(ws, row, columns["Inversor"], cleaned_inverter)
+    if module_changed or inverter_changed:
+        _adjust_equipment_row_layout(ws, row, columns, cleaned_module, cleaned_inverter)
+
+
 def _row_has_required_update_values(
     ws: Worksheet,
     row: int,
     columns: dict[str, int],
     entry_dt: date | None,
-    module_text: str | None,
-    inverter_text: str | None,
+    completion_date: Any = None,
+    module_text: str | None = None,
+    inverter_text: str | None = None,
 ) -> bool:
+    return _row_required_update_state(
+        ws,
+        row,
+        columns,
+        entry_dt,
+        completion_date,
+        module_text,
+        inverter_text,
+    )["all_no_change"]
+
+
+def _row_required_update_state(
+    ws: Worksheet,
+    row: int,
+    columns: dict[str, int],
+    entry_dt: date | None,
+    completion_date: Any = None,
+    module_text: str | None = None,
+    inverter_text: str | None = None,
+) -> dict[str, Any]:
     row_entry_dt = parse_date(ws.cell(row=row, column=columns["Data de ingresso"]).value)
-    if entry_dt is not None and row_entry_dt != entry_dt:
-        return False
-    if row_entry_dt is None:
-        return False
+    ingress_no_change = bool(
+        row_entry_dt is not None and (entry_dt is None or row_entry_dt == entry_dt)
+    )
 
     current_module = ws.cell(row=row, column=columns["Placa"]).value
     current_inverter = ws.cell(row=row, column=columns["Inversor"]).value
-    if not _equipment_text_matches(current_module, module_text):
-        return False
-    if not _equipment_text_matches(current_inverter, inverter_text):
-        return False
+    module_no_change = _equipment_text_matches(current_module, module_text)
+    inverter_no_change = _equipment_text_matches(current_inverter, inverter_text)
+    equipment_no_change = module_no_change and inverter_no_change
 
-    return True
+    completion_col = _column_by_normalized_name(columns, "CONCLUSAO")
+    current_completion = ws.cell(row=row, column=completion_col).value
+    completion_no_change = _completion_value_matches(current_completion, completion_date)
+    completion_action = None
+    if completion_date is not None:
+        if completion_no_change:
+            completion_action = "NO_CHANGE"
+        elif _is_open_completion_value(completion_date):
+            completion_action = "MARKED_AS_OPEN"
+        else:
+            completion_action = "COMPLETION_DATE_UPDATED"
+
+    return {
+        "ingress_no_change": ingress_no_change,
+        "module_no_change": module_no_change,
+        "inverter_no_change": inverter_no_change,
+        "equipment_no_change": equipment_no_change,
+        "completion_no_change": completion_no_change,
+        "completion_action": completion_action,
+        "all_no_change": ingress_no_change and equipment_no_change and completion_no_change,
+    }
+
+
+def _completion_value_matches(current: Any, expected: Any) -> bool:
+    if expected is None:
+        return True
+    if _is_open_completion_value(expected):
+        return _normalize_cell(current) == OPEN_COMPLETION_TEXT
+    expected_date = parse_date(expected)
+    if expected_date is None:
+        return False
+    return parse_date(current) == expected_date
+
+
+def _is_open_completion_value(value: Any) -> bool:
+    return _normalize_cell(value) == _normalize_cell(OPEN_COMPLETION_TEXT)
 
 
 def _equipment_text_matches(current: Any, expected: str | None) -> bool:

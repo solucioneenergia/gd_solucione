@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 from collections.abc import Sequence
 from pathlib import Path
+from typing import Any
 
 from automacao_gd.application.historical_backfill.apply_service import (
     BackfillApplyError,
@@ -24,7 +25,20 @@ from automacao_gd.application.historical_backfill.report import (
     write_apply_reports,
     write_audit_reports,
 )
-from automacao_gd.application.contracts import OperationStatus
+from automacao_gd.application.contracts import OperationResult, OperationStatus
+from automacao_gd.application.operational_guard import (
+    authorize_offline_batch,
+    build_option4_strong_confirmation,
+    prepare_offline_batch,
+)
+from automacao_gd.application.full_pipeline import (
+    BatchAuthorizationError,
+    StrongConfirmationError,
+    build_option5_strong_confirmation,
+    default_batch_authorization_policy,
+    validate_option5_strong_confirmation,
+    validate_requested_batch_limit,
+)
 from automacao_gd.infrastructure.config import get_settings
 from automacao_gd.infrastructure.excel.availability import validate_workbook_availability
 from automacao_gd.infrastructure.files.file_service import ensure_directories
@@ -33,6 +47,7 @@ from automacao_gd.infrastructure.log_privacy import (
     audit_log_files,
     sanitize_log_with_backup,
 )
+from automacao_gd.domain.errors import OperationalBlockError
 from automacao_gd.presentation.controller import ApplicationController
 from automacao_gd.presentation.operational_output import print_operation_summary
 
@@ -43,6 +58,8 @@ _EXIT_CODES = {
     OperationStatus.BLOQUEADO: 2,
     OperationStatus.PARCIAL: 3,
 }
+COMPLETION_SYNC_STRONG_CONFIRMATION = "APLICAR CONCLUSÃO 5 PROTOCOLOS"
+OPTION5_COMPLETION_STRONG_CONFIRMATION = build_option5_strong_confirmation(5)
 
 
 def exit_code_for_status(status: OperationStatus | str) -> int:
@@ -280,16 +297,126 @@ def _run_backfill_apply(plan_path: Path | None) -> int:
 
 
 def _confirmed_real_processing(controller: ApplicationController):
-    if input("Digite SIM para confirmar alterações reais: ").strip().upper() != "SIM":
-        return controller.preflight()
-    return controller.process_downloads(dry_run=False)
+    requested_limit = int(
+        getattr(controller.settings, "MAX_COMPLETED_TO_PROCESS", 0) or 0
+    )
+    try:
+        required_confirmation = build_option4_strong_confirmation(requested_limit)
+        raw_selection = input(
+            "Informe exatamente os PDFs autorizados no formato "
+            "arquivo_relativo.pdf|protocolo, separados por ponto e vírgula: "
+        ).strip()
+        selections = _parse_offline_selections(raw_selection)
+        batch = prepare_offline_batch(
+            controller.settings.downloads_dir_path,
+            requested_limit=requested_limit,
+            selections=selections,
+        )
+    except OperationalBlockError as exc:
+        return _cancelled_operation_result(exc.code)
+    print(f"Modo: REAL | Operação: opção 4 | Limite: {requested_limit}")
+    print(f"PDFs congelados: {len(batch.items)} | Digest: {batch.digest[:12]}...")
+    confirmation = input(
+        f"Digite {required_confirmation} para confirmar alterações reais: "
+    ).strip()
+    try:
+        authorization = authorize_offline_batch(batch, confirmation)
+    except OperationalBlockError as exc:
+        return _cancelled_operation_result(exc.code)
+    return controller.process_downloads(
+        dry_run=False,
+        authorization=authorization,
+    )
+
+
+def _parse_offline_selections(value: str) -> tuple[tuple[str, str], ...]:
+    selections: list[tuple[str, str]] = []
+    for raw_item in value.split(";"):
+        item = raw_item.strip()
+        if not item:
+            continue
+        raw_path, separator, raw_protocol = item.partition("|")
+        if not separator or not raw_path.strip() or not raw_protocol.strip():
+            raise OperationalBlockError(
+                code="FROZEN_BATCH_SCOPE_VIOLATION",
+                user_message="Seleção offline explícita inválida.",
+                stage="lote congelado",
+                technical_cause="FROZEN_BATCH_SCOPE_VIOLATION",
+            )
+        selections.append((raw_path.strip(), raw_protocol.strip()))
+    if not selections:
+        raise OperationalBlockError(
+            code="FROZEN_BATCH_SCOPE_VIOLATION",
+            user_message="Seleção offline explícita obrigatória.",
+            stage="lote congelado",
+            technical_cause="FROZEN_BATCH_SCOPE_VIOLATION",
+        )
+    return tuple(selections)
 
 
 def _confirmed_pipeline(controller: ApplicationController):
-    if not controller.settings.DRY_RUN:
-        if input("DRY_RUN=false. Digite SIM para confirmar: ").strip().upper() != "SIM":
-            return controller.preflight(require_cdp=True)
-    return controller.run_pipeline()
+    try:
+        authorization = validate_requested_batch_limit(
+            getattr(controller.settings, "MAX_COMPLETED_TO_PROCESS", 5),
+            default_batch_authorization_policy(),
+        )
+    except BatchAuthorizationError as exc:
+        return _cancelled_operation_result(exc.code, require_cdp=True)
+    required_confirmation = build_option5_strong_confirmation(
+        authorization.requested_batch_limit
+    )
+    mode = "simulacao com acesso ao Portal/CDP" if controller.settings.DRY_RUN else "execucao real"
+    confirmation = input(
+        f"Confirme {mode}. Digite {required_confirmation}: "
+    ).strip()
+    try:
+        validate_option5_strong_confirmation(confirmation, authorization)
+    except StrongConfirmationError as exc:
+        return _cancelled_operation_result(
+            exc.code,
+            require_cdp=True,
+            confirmation_required=required_confirmation,
+        )
+    return controller.run_pipeline(confirmation=confirmation)
+
+
+def _cancelled_operation_result(code: str, **details: object) -> OperationResult:
+    payload: dict[str, Any] = {
+        "code": code,
+        "stage": "confirmação operacional",
+    }
+    payload.update(details)
+    return OperationResult(
+        False,
+        "Operação cancelada ou confirmação forte inválida.",
+        payload,
+        status=OperationStatus.BLOQUEADO,
+    )
+
+
+def _confirmed_completion_sync(controller: ApplicationController):
+    real_completion_write = (
+        not controller.settings.DRY_RUN
+        and controller.settings.APPLY_COMPLETION_STATUS
+    )
+    if real_completion_write:
+        confirmation = input(
+            f"Digite {COMPLETION_SYNC_STRONG_CONFIRMATION} para confirmar: "
+        ).strip()
+        if confirmation != COMPLETION_SYNC_STRONG_CONFIRMATION:
+            return OperationResult(
+                False,
+                "Confirmação forte da sincronização de conclusão não recebida.",
+                {
+                    "code": "STRONG_CONFIRMATION_REQUIRED",
+                    "operation_message": (
+                        "Confirmação forte da sincronização de conclusão não recebida."
+                    ),
+                    "confirmation_required": COMPLETION_SYNC_STRONG_CONFIRMATION,
+                },
+                status=OperationStatus.BLOQUEADO,
+            )
+    return controller.sync_completion_status()
 
 
 def _open_desktop_visual() -> None:

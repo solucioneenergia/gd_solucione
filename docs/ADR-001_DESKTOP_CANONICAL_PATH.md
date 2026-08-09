@@ -1,6 +1,6 @@
 # ADR-001 — Caminho canônico da aplicação desktop
 
-- Status: **proposto**
+- Status: **substituída** por `docs/adr/0005-canonical-desktop-path.md`
 - Data: 2026-07-19
 - Escopo: apresentação desktop e frontend
 - Spec relacionada: `specs/desktop_production_readiness.md`
@@ -17,7 +17,7 @@ contém uma bridge mais antiga, uma política WebEngine mais restritiva e um bui
 Contratos, confirmação produtiva, workers, documentação e scripts de build não estão alinhados.
 Remover qualquer lado agora criaria risco de regressão.
 
-## Decisão proposta
+## Decisão histórica proposta
 
 Adotar como caminho canônico futuro:
 

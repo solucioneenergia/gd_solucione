@@ -61,10 +61,14 @@ def format_operation_summary(operation_name: str, result: OperationResult) -> st
         "process_dry_run": _processing_summary,
         "process_real": _processing_summary,
         "pipeline": _pipeline_summary,
+        "completion_sync": _completion_sync_summary,
     }
     builder = builders.get(operation_name, _generic_summary)
     body = builder(result, payload)
-    return f"Status: {result.status.value}\n\n{body}"
+    status = result.status
+    if not isinstance(status, OperationStatus):
+        raise RuntimeError("OperationResult sem status normalizado.")
+    return f"Status: {status.value}\n\n{body}"
 
 
 def print_operation_summary(operation_name: str, result: OperationResult) -> None:
@@ -216,6 +220,8 @@ def _pipeline_summary(result: OperationResult, payload: dict) -> str:
             f"- PDFs baixados: {payload.get('total_downloaded', 0)}",
             f"- Planilha atualizada: {payload.get('total_excel_updated', 0)}",
             "",
+            *_pipeline_completion_lines(payload, dry_run=dry_run),
+            "",
             "Ação recomendada:",
             _recommended_action_for_block(str(payload.get("code") or "")),
         ]
@@ -231,6 +237,10 @@ def _pipeline_summary(result: OperationResult, payload: dict) -> str:
             f"- PDFs analisados: {payload.get('total_pdfs_analyzed', 0)}",
             f"- PDFs aprovados tecnicamente: {payload.get('total_processed_success', 0)}",
             f"- Planilha atualizada: {payload.get('total_excel_updated', 0)}",
+            "",
+            *_pipeline_completion_lines(payload, dry_run=dry_run),
+            "",
+            *_pipeline_reconciliation_lines(payload),
         ]
         if processing.get("blocked_real_run"):
             lines.extend(["", "Os PDFs permanecem disponíveis para retomada."])
@@ -251,6 +261,10 @@ def _pipeline_summary(result: OperationResult, payload: dict) -> str:
         f"- Solicitações concluídas: {payload.get('total_completed', 0)}",
         f"- Protocolos elegíveis: {payload.get('total_eligible_after_skip', 0)}",
         f"- Protocolos selecionados: {payload.get('total_selected', 0)}",
+        f"- Limite solicitado: {payload.get('requested_batch_limit', '-')}",
+        f"- Limite autorizado: {payload.get('authorized_batch_limit', '-')}",
+        f"- Escopo de autorização: {payload.get('authorization_scope', '-')}",
+        f"- Lock global: {payload.get('global_lock_status', '-')}",
         "- Selecionados pelo limite global: "
         f"{payload.get('total_protocols_selected_by_global_limit', 0)}",
         f"- PDFs baixados: {payload.get('total_downloaded', 0)}",
@@ -259,6 +273,10 @@ def _pipeline_summary(result: OperationResult, payload: dict) -> str:
         f"- PDFs aprovados tecnicamente: {payload.get('total_processed_success', 0)}",
         f"- Erros: {payload.get('total_errors', 0)}",
         f"- Planilha atualizada: {payload.get('total_excel_updated', 0)}",
+        "",
+        *_pipeline_completion_lines(payload, dry_run=dry_run),
+        "",
+        *_pipeline_reconciliation_lines(payload),
         f"- PDFs arquivados: {payload.get('total_archived', 0)}",
         f"- Pendentes de conferência: {payload.get('total_pending_review', 0)}",
     ]
@@ -280,6 +298,113 @@ def _pipeline_summary(result: OperationResult, payload: dict) -> str:
     if attention:
         lines.extend(["", "Atenção:", *attention, "- Consulte o relatório detalhado."])
     return _finish_summary(lines, payload)
+
+
+def _pipeline_completion_lines(payload: dict, *, dry_run: bool) -> list[str]:
+    dates_proposed = payload.get(
+        "completion_dates_proposed",
+        payload.get("total_completion_dates_updated", 0),
+    )
+    dates_applied = payload.get(
+        "completion_dates_applied",
+        0 if dry_run else payload.get("total_completion_dates_updated", 0),
+    )
+    open_values_proposed = payload.get(
+        "open_values_proposed",
+        payload.get("total_completion_marked_open", 0),
+    )
+    open_values_applied = payload.get(
+        "open_values_applied",
+        0 if dry_run else payload.get("total_completion_marked_open", 0),
+    )
+    if dry_run:
+        return [
+            "Conclusao:",
+            f"- Datas encontradas: {payload.get('total_completion_dates_found', 0)}",
+            f"- Datas propostas: {dates_proposed}",
+            f"- EM ABERTO propostos: {open_values_proposed}",
+            f"- Sem alteracao: {payload.get('total_completion_no_change', 0)}",
+            f"- Pendentes: {payload.get('total_completion_pending_review', 0)}",
+        ]
+    return [
+        "Conclusao:",
+        f"- Datas encontradas: {payload.get('total_completion_dates_found', 0)}",
+        f"- Datas atualizadas: {dates_applied}",
+        f"- EM ABERTO aplicados: {open_values_applied}",
+        f"- Sem alteracao: {payload.get('total_completion_no_change', 0)}",
+        f"- Pendentes: {payload.get('total_completion_pending_review', 0)}",
+    ]
+
+
+def _pipeline_reconciliation_lines(payload: dict) -> list[str]:
+    reconciliation = payload.get("reconciliation")
+    if not isinstance(reconciliation, dict) or not reconciliation:
+        return []
+    report_path = reconciliation.get("markdown_report_path") or reconciliation.get(
+        "report_path"
+    )
+    if report_path:
+        report_path = _display_path(Path(str(report_path)))
+    scope = str(reconciliation.get("metrics_scope") or "").upper()
+    if not scope:
+        scope = "GLOBAL" if reconciliation.get("set_reconciliation_authoritative") else "PARCIAL"
+    if scope == "PARTIAL":
+        scope_text = "PARCIAL — páginas restantes detectadas"
+    else:
+        scope_text = "GLOBAL"
+    return [
+        "Reconciliação Portal × planilha:",
+        f"- Escopo: {scope_text}",
+        f"- Páginas lidas: {reconciliation.get('pages_read', 0)}",
+        f"- Última página confirmada: {reconciliation.get('last_page_confirmed')}",
+        f"- Concluídos únicos no Portal: {reconciliation.get('portal_concluded_unique', 0)}",
+        f"- Protocolos únicos na planilha: {reconciliation.get('workbook_unique_protocols', 0)}",
+        f"- Encontrados nas duas fontes: {reconciliation.get('matched_unique', 0)}",
+        f"- Ausentes na planilha: {reconciliation.get('missing_in_workbook_unique', 0)}",
+        f"- Somente na planilha: {reconciliation.get('workbook_only_unique', 0)}",
+        f"- Duplicados na planilha: {reconciliation.get('duplicate_workbook_protocols', 0)}",
+        f"- Em aba anual incorreta: {reconciliation.get('wrong_year_sheet', 0)}",
+        f"- Conclusões vazias: {reconciliation.get('completion_empty', 0)}",
+        "- Equipamentos vazios para revisão: "
+        f"{reconciliation.get('equipment_empty_requires_review', 0)}",
+        f"- Registros incompletos: {reconciliation.get('incomplete_records', 0)}",
+        f"- Relatório: {report_path or '-'}",
+    ]
+
+
+def _completion_sync_summary(result: OperationResult, payload: dict) -> str:
+    if result.status is OperationStatus.BLOQUEADO:
+        lines = [
+            "Sincronização de conclusão não iniciada.",
+            f"- Motivo: {sanitize_for_console(result.message)}",
+            f"- Protocolos analisados: {payload.get('total_protocols_analyzed', 0)}",
+        ]
+        return _finish_summary(lines, payload, result=result)
+    title = (
+        "Sincronização de conclusão concluída."
+        if result.success
+        else "Falha na sincronização de conclusão."
+    )
+    mode = (
+        "Simulação"
+        if bool(payload.get("dry_run", True)) or not bool(payload.get("apply_completion_status"))
+        else "Produção"
+    )
+    lines = [
+        title,
+        "",
+        "Resumo:",
+        f"- Modo: {mode}",
+        f"- Protocolos disponíveis: {payload.get('total_protocols_available', 0)}",
+        f"- Protocolos analisados: {payload.get('total_protocols_analyzed', 0)}",
+        f"- Datas preenchidas: {payload.get('total_updated_dates', 0)}",
+        f"- Marcados EM ABERTO: {payload.get('total_marked_open', 0)}",
+        f"- Sem alteração: {payload.get('total_no_change', 0)}",
+        f"- Pendentes de revisão: {payload.get('total_pending_review', 0)}",
+        f"- Protocolos não localizados: {payload.get('total_not_found', 0)}",
+        f"- Mudanças fora da allowlist: {payload.get('unexpected_changes', 0)}",
+    ]
+    return _finish_summary(lines, payload, result=result)
 
 
 def _recommended_action_for_block(code: str) -> str:

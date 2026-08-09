@@ -14,7 +14,7 @@ npm run dev
 Depois abra:
 
 ```powershell
-cd "C:\Users\Solucione\Projetos_Desktop\Automação de projetos\gd_neoenergia"
+cd "C:\CAMINHO\SINTETICO de projetos\gd_neoenergia"
 python desktop_app.py --dev
 ```
 

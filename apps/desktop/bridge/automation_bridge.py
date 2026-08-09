@@ -27,7 +27,7 @@ from apps.desktop.bridge.progress_bridge import ProgressBridge
 from apps.desktop.workers.automation_worker import AutomationWorker
 
 
-PRODUCTION_CONFIRMATION = "SIM, EXECUTAR PRODUÇÃO"
+PRODUCTION_OPERATION = "pipeline"
 
 
 class AutomationBridge(QObject):
@@ -36,6 +36,7 @@ class AutomationBridge(QObject):
     operationStarted = Signal(str)
     operationFinished = Signal(str)
     operationFailed = Signal(str)
+    operationCancelled = Signal(str)
     logMessage = Signal(str)
     summaryChanged = Signal(dict)
     dashboardChanged = Signal(dict)
@@ -86,9 +87,7 @@ class AutomationBridge(QObject):
 
     @Slot()
     def open_edge_cdp(self) -> None:
-        self._emit_placeholder(
-            "Abra o Edge com CDP pela rotina operacional validada e faça login manual no Portal GD."
-        )
+        self._emit_unavailable("Abrir Edge CDP")
 
     @Slot()
     def test_cdp_connection(self) -> None:
@@ -96,7 +95,7 @@ class AutomationBridge(QObject):
 
     @Slot()
     def inspect_portal(self) -> None:
-        self._emit_placeholder("Inspeção visual do portal será conectada em etapa posterior.")
+        self._emit_unavailable("Inspecionar portal")
 
     @Slot()
     def run_dry_run(self) -> None:
@@ -104,16 +103,43 @@ class AutomationBridge(QObject):
 
     @Slot(str)
     def run_production_confirmed(self, confirmation: str = "") -> None:
-        if str(confirmation) != PRODUCTION_CONFIRMATION:
-            self.operationFailed.emit(
-                "Produção bloqueada. Confirme com: SIM, EXECUTAR PRODUÇÃO"
-            )
+        if not validate_production_confirmation(
+            self.settings,
+            confirmation,
+            operation=PRODUCTION_OPERATION,
+        ):
+            self.operationFailed.emit("Produção bloqueada: confirmação incompatível com o lote.")
             return
-        self._run_operation("run_production", self._run_production)
+        self._run_operation(
+            "run_production",
+            lambda progress_callback=None: self._run_production(
+                progress_callback,
+                confirmation=confirmation,
+            ),
+        )
+
+    @Slot(result=str)
+    def get_production_confirmation(self) -> str:
+        try:
+            confirmation = build_production_confirmation(
+                self.settings,
+                operation=PRODUCTION_OPERATION,
+            )
+        except (TypeError, ValueError):
+            confirmation = ""
+        return json.dumps(
+            {
+                "allowed": self.settings.APP_ENV == "production" and bool(confirmation),
+                "operation": PRODUCTION_OPERATION,
+                "limit": self.settings.MAX_COMPLETED_TO_PROCESS,
+                "confirmation": confirmation,
+            },
+            ensure_ascii=False,
+        )
 
     @Slot()
     def run_equipment_reformat_dry_run(self) -> None:
-        self._emit_placeholder("Reformatação dry-run será exposta como manutenção dedicada.")
+        self._emit_unavailable("Reformatação de equipamentos")
 
     @Slot()
     def run_cleanup_dry_run(self) -> None:
@@ -165,6 +191,9 @@ class AutomationBridge(QObject):
         worker.progress.connect(self.progress_bridge.callback)
         worker.finished.connect(lambda result, operation_name=name: self._finish(operation_name, result))
         worker.failed.connect(lambda error, operation_name=name: self._fail(operation_name, error))
+        worker.cancelled.connect(
+            lambda message, operation_name=name: self._cancel(operation_name, message)
+        )
         worker.start()
 
     def _finish(self, operation_name: str, result: Any) -> None:
@@ -187,6 +216,11 @@ class AutomationBridge(QObject):
             self.cdp_status = "Erro"
             self.dashboardChanged.emit(self._dashboard_payload())
 
+    def _cancel(self, operation_name: str, message: str) -> None:
+        self.current_worker = None
+        self.operationCancelled.emit(operation_name)
+        self.statusChanged.emit(str(sanitize_for_console(message)))
+
     def _check_environment(self) -> dict[str, Any]:
         runner = self.runners.get("check_environment")
         if runner:
@@ -205,7 +239,12 @@ class AutomationBridge(QObject):
             return _as_payload(_call_runner(runner, progress_callback=progress_callback))
         return ProcessDownloadedPdfsUseCase(self.settings).execute(dry_run=True)
 
-    def _run_production(self, progress_callback: ProgressCallback | None = None) -> dict[str, Any]:
+    def _run_production(
+        self,
+        progress_callback: ProgressCallback | None = None,
+        *,
+        confirmation: str | None = None,
+    ) -> dict[str, Any]:
         runner = self.runners.get("run_production")
         if runner:
             return _as_payload(_call_runner(runner, progress_callback=progress_callback))
@@ -215,6 +254,7 @@ class AutomationBridge(QObject):
         return run_full_cdp_pipeline(
             production_settings,
             progress_callback=progress_callback,
+            confirmation=confirmation,
         )
 
     def _run_cleanup_dry_run(self) -> dict[str, Any]:
@@ -242,10 +282,8 @@ class AutomationBridge(QObject):
         self.logMessage.emit(format_cleanup_summary(report))
         return report
 
-    def _emit_placeholder(self, message: str) -> None:
-        safe_message = str(sanitize_for_console(message))
-        self.logMessage.emit(safe_message)
-        self.operationFinished.emit("placeholder")
+    def _emit_unavailable(self, operation_label: str) -> None:
+        self.operationFailed.emit(f"{operation_label}: indisponível nesta versão.")
 
     def _dashboard_payload(self) -> dict[str, Any]:
         return sanitize_for_console(
@@ -284,6 +322,7 @@ class AutomationBridge(QObject):
 
 
 def production_confirmation_text(settings: Settings) -> str:
+    confirmation = build_production_confirmation(settings, operation=PRODUCTION_OPERATION)
     return "\n".join(
         [
             "A execução em produção pode alterar a planilha e arquivar documentos.",
@@ -294,9 +333,47 @@ def production_confirmation_text(settings: Settings) -> str:
             f"- PLANILHA_PATH={settings.planilha_path};",
             f"- CLIENTES_ROOT={settings.clientes_root_path};",
             "",
-            f"Digite exatamente: {PRODUCTION_CONFIRMATION}",
+            f"- limite autorizado: {settings.MAX_COMPLETED_TO_PROCESS};",
+            "",
+            f"Digite exatamente: {confirmation}",
         ]
     )
+
+
+def build_production_confirmation(settings: Settings, *, operation: str) -> str:
+    if str(operation).strip().casefold() != PRODUCTION_OPERATION:
+        raise ValueError("Operação não autorizada para confirmação produtiva.")
+    from automacao_gd.application.full_pipeline import (
+        build_option5_strong_confirmation,
+        validate_requested_batch_limit,
+    )
+
+    authorization = validate_requested_batch_limit(settings.MAX_COMPLETED_TO_PROCESS)
+    return build_option5_strong_confirmation(authorization.requested_batch_limit)
+
+
+def validate_production_confirmation(
+    settings: Settings,
+    confirmation: str,
+    *,
+    operation: str,
+) -> bool:
+    if settings.APP_ENV != "production":
+        return False
+    if str(operation).strip().casefold() != PRODUCTION_OPERATION:
+        return False
+    from automacao_gd.application.full_pipeline import (
+        BatchAuthorizationError,
+        StrongConfirmationError,
+        validate_option5_strong_confirmation,
+        validate_requested_batch_limit,
+    )
+
+    try:
+        authorization = validate_requested_batch_limit(settings.MAX_COMPLETED_TO_PROCESS)
+        return validate_option5_strong_confirmation(str(confirmation), authorization)
+    except (BatchAuthorizationError, StrongConfirmationError, TypeError, ValueError):
+        return False
 
 
 def _safe_payload(result: Any) -> dict[str, Any]:

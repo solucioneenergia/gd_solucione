@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
 
-from automacao_gd.application.contracts import OperationResult
+from automacao_gd.application.contracts import OperationResult, OperationStatus
 from automacao_gd.infrastructure.config import PROJECT_ROOT, Settings, get_settings
 from automacao_gd.infrastructure.portal.factory import create_portal_automation
 from automacao_gd.presentation.controller import ApplicationController
@@ -291,25 +291,25 @@ class AutomationBridge(QObject):
         worker.errorOccurred.connect(self._handle_error)
 
         if QT_AVAILABLE:
-            thread = QThread(self)
-            self._thread = thread
-            worker.moveToThread(thread)
-            thread.started.connect(worker.run)
-            worker.finished.connect(thread.quit)
+            qt_thread = QThread(self)
+            self._thread = qt_thread
+            worker.moveToThread(qt_thread)
+            qt_thread.started.connect(worker.run)
+            worker.finished.connect(qt_thread.quit)
             worker.finished.connect(worker.deleteLater)
-            thread.finished.connect(thread.deleteLater)
-            thread.finished.connect(self._clear_thread)
-            thread.start()
+            qt_thread.finished.connect(qt_thread.deleteLater)
+            qt_thread.finished.connect(self._clear_thread)
+            qt_thread.start()
             return
 
-        thread = threading.Thread(
+        background_thread = threading.Thread(
             target=worker.run,
             name=f"automation-{name}",
             daemon=True,
         )
-        self._thread = thread
+        self._thread = background_thread
         worker.finished.connect(self._clear_thread)
-        thread.start()
+        background_thread.start()
 
     @Slot(object)
     def _handle_result(self, result: object) -> None:
@@ -350,12 +350,12 @@ class AutomationBridge(QObject):
     def _effective_settings(self) -> Settings:
         values = self._base_settings.model_dump()
         values.update(self._temporary_settings)
-        return Settings(_env_file=None, **values)
+        return Settings.model_validate(values)
 
     def _settings_for_run(self, *, dry_run: bool) -> Settings:
         values = self._effective_settings().model_dump()
         values["DRY_RUN"] = dry_run
-        return Settings(_env_file=None, **values)
+        return Settings.model_validate(values)
 
     def _controller_for(self, settings: Settings) -> ApplicationController:
         if settings == self.controller.settings:
@@ -385,7 +385,7 @@ class AutomationBridge(QObject):
         try:
             resolved = path.resolve(strict=True)
             if os.name == "nt":
-                os.startfile(resolved)  # type: ignore[attr-defined]
+                os.startfile(resolved)
             else:
                 subprocess.Popen(["xdg-open", str(resolved)], close_fds=True)
             self.logMessage.emit(f"Aberto: {resolved.name}")
@@ -395,10 +395,13 @@ class AutomationBridge(QObject):
 
 def build_frontend_summary(operation_name: str, result: OperationResult) -> dict[str, Any]:
     payload = result.payload if isinstance(result.payload, dict) else {}
+    status = result.status
+    if not isinstance(status, OperationStatus):
+        raise RuntimeError("OperationResult sem status normalizado.")
     summary: dict[str, Any] = {
         "operation": operation_name,
         "success": bool(result.success),
-        "status": result.status.value,
+        "status": status.value,
         "message": sanitize_for_console(result.message),
         "dry_run": bool(payload.get("dry_run", True)),
     }

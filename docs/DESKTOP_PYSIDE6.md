@@ -59,7 +59,7 @@ npm run dev
 Em outro terminal, na raiz do projeto:
 
 ```powershell
-cd "C:\Users\Solucione\Projetos_Desktop\Automação de projetos\gd_neoenergia"
+cd "C:\CAMINHO\SINTETICO de projetos\gd_neoenergia"
 python desktop_app.py --dev
 ```
 

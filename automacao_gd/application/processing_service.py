@@ -1,3 +1,4 @@
+import hashlib
 import json
 import re
 from collections.abc import Iterable
@@ -6,6 +7,17 @@ from pathlib import Path
 from typing import Any
 
 from automacao_gd.application.contracts import OperationStatus
+from automacao_gd.application.operational_guard import (
+    OPTION4_AUTHORIZATION_SCOPE,
+    OPTION4_OPERATION,
+    OfflineOperationAuthorization,
+    OperationalLockProof,
+    guard_offline_operation,
+    validate_offline_authorization,
+    validate_operational_lock_proof,
+)
+from automacao_gd.application.shareable_reports import build_shareable_report
+from automacao_gd.domain.errors import OperationalBlockError
 from automacao_gd.infrastructure.files.client_folder_service import (
     archive_pdf_to_client_folder,
     build_destination_pdf_path,
@@ -31,6 +43,7 @@ from automacao_gd.infrastructure.excel.service import (
     create_workbook_backup,
     project_dry_run_target_rows,
     update_excel_from_pdf_data,
+    validate_xlsx_integrity,
     validate_workbook_for_pdf_updates,
 )
 from automacao_gd.infrastructure.files.file_service import ensure_directories
@@ -51,6 +64,20 @@ from automacao_gd.infrastructure.pdf.service import (
 
 JSON_REPORT_NAME = "processamento_pdfs_planilha_clientes.json"
 MARKDOWN_REPORT_NAME = "processamento_pdfs_planilha_clientes.md"
+SHAREABLE_JSON_REPORT_NAME = "processamento_pdfs_shareable.json"
+SHAREABLE_MARKDOWN_REPORT_NAME = "processamento_pdfs_shareable.md"
+OPEN_COMPLETION_TEXT = "EM ABERTO"
+POINT_OF_CONNECTION_NO_DATE_STATUSES = {
+    "POINT_OF_CONNECTION_COMPLETION_DATE_NOT_AVAILABLE",
+    "POINT_OF_CONNECTION_STAGE_NOT_FOUND",
+}
+POINT_OF_CONNECTION_PENDING_STATUSES = {
+    "AMBIGUOUS_POINT_OF_CONNECTION_COMPLETION_DATE",
+    "AMBIGUOUS_POINT_OF_CONNECTION_STAGE",
+    "INVALID_POINT_OF_CONNECTION_COMPLETION_DATE",
+}
+
+
 def process_downloaded_pdfs(
     downloads_root: Path,
     workbook_path: Path,
@@ -60,15 +87,134 @@ def process_downloaded_pdfs(
     apply_excel: bool = True,
     apply_archive: bool = True,
     state_store=None,
+    allowed_protocols: set[str] | None = None,
+    authorization: OfflineOperationAuthorization | None = None,
+    lock_proof: OperationalLockProof | None = None,
+) -> dict:
+    if dry_run:
+        return _process_downloaded_pdfs_locked(
+            downloads_root=downloads_root,
+            workbook_path=workbook_path,
+            clientes_root=clientes_root,
+            dry_run=True,
+            pdf_paths=pdf_paths,
+            apply_excel=apply_excel,
+            apply_archive=apply_archive,
+            state_store=state_store,
+            allowed_protocols=allowed_protocols,
+            settings=get_settings(),
+        )
+
+    if authorization is None and lock_proof is None:
+        raise OperationalBlockError(
+            code="DIRECT_ROUTE_AUTHORIZATION_REQUIRED",
+            user_message="Processamento real exige autorização operacional tipada.",
+            stage="autorização operacional",
+            technical_cause="DIRECT_ROUTE_AUTHORIZATION_REQUIRED",
+        )
+
+    settings = get_settings()
+    if lock_proof is not None:
+        proof = validate_operational_lock_proof(
+            lock_proof,
+            settings,
+            allowed_operations={OPTION4_OPERATION, "option5"},
+        )
+        if proof.operation == OPTION4_OPERATION:
+            batch = validate_offline_authorization(authorization)
+            assert authorization is not None
+            if (
+                proof.execution_id != authorization.execution_id
+                or proof.requested_limit != batch.requested_limit
+                or proof.authorization_scope != OPTION4_AUTHORIZATION_SCOPE
+            ):
+                raise _processing_scope_mismatch()
+            _validate_authorized_processing_scope(batch, pdf_paths, allowed_protocols)
+        return _process_downloaded_pdfs_locked(
+            downloads_root=downloads_root,
+            workbook_path=workbook_path,
+            clientes_root=clientes_root,
+            dry_run=False,
+            pdf_paths=pdf_paths,
+            apply_excel=apply_excel,
+            apply_archive=apply_archive,
+            state_store=state_store,
+            allowed_protocols=allowed_protocols,
+            settings=settings,
+        )
+
+    with guard_offline_operation(settings, authorization) as (batch, proof):
+        validate_operational_lock_proof(
+            proof,
+            settings,
+            allowed_operations={OPTION4_OPERATION},
+        )
+        _validate_authorized_processing_scope(batch, pdf_paths, allowed_protocols)
+        return _process_downloaded_pdfs_locked(
+            downloads_root=downloads_root,
+            workbook_path=workbook_path,
+            clientes_root=clientes_root,
+            dry_run=False,
+            pdf_paths=pdf_paths,
+            apply_excel=apply_excel,
+            apply_archive=apply_archive,
+            state_store=state_store,
+            allowed_protocols=allowed_protocols,
+            settings=settings,
+        )
+
+
+def _validate_authorized_processing_scope(
+    batch,
+    pdf_paths: Iterable[Path] | None,
+    allowed_protocols: set[str] | None,
+) -> None:
+    if pdf_paths is None or allowed_protocols is None:
+        raise _processing_scope_mismatch()
+    resolved_paths = tuple(Path(path).resolve(strict=False) for path in pdf_paths)
+    if resolved_paths != batch.pdf_paths or allowed_protocols != set(batch.protocols):
+        raise _processing_scope_mismatch()
+
+
+def _processing_scope_mismatch() -> OperationalBlockError:
+    return OperationalBlockError(
+        code="DIRECT_ROUTE_SCOPE_MISMATCH",
+        user_message="A autorização tipada diverge do escopo real solicitado.",
+        stage="autorização operacional",
+        technical_cause="DIRECT_ROUTE_SCOPE_MISMATCH",
+    )
+
+
+def _process_downloaded_pdfs_locked(
+    downloads_root: Path,
+    workbook_path: Path,
+    clientes_root: Path,
+    dry_run: bool = True,
+    pdf_paths: Iterable[Path] | None = None,
+    apply_excel: bool = True,
+    apply_archive: bool = True,
+    state_store=None,
+    allowed_protocols: set[str] | None = None,
+    *,
+    settings,
 ) -> dict:
     ensure_directories()
-    settings = get_settings()
     clear_folder_cache()
     downloads_root = Path(downloads_root)
     workbook_path = Path(workbook_path)
     clientes_root = Path(clientes_root)
     logs_dir = settings.logs_dir_path
     logs_dir.mkdir(parents=True, exist_ok=True)
+
+    if not dry_run and (pdf_paths is None or allowed_protocols is None):
+        return _scope_violation_summary(
+            [],
+            ["explicit_scope_missing"],
+            logs_dir=logs_dir,
+            dry_run=False,
+            apply_excel=apply_excel,
+            apply_archive=apply_archive,
+        )
 
     started_at = datetime.now()
     logger.info(
@@ -79,6 +225,23 @@ def process_downloaded_pdfs(
     )
 
     pdfs = _resolve_pdf_paths(downloads_root, pdf_paths)
+    if allowed_protocols is not None:
+        unknown_protocols = sorted(
+            {
+                protocol
+                for protocol in (_protocol_from_filename(path) for path in pdfs)
+                if protocol and protocol not in allowed_protocols
+            }
+        )
+        if unknown_protocols:
+            return _scope_violation_summary(
+                pdfs,
+                unknown_protocols,
+                logs_dir=logs_dir,
+                dry_run=dry_run,
+                apply_excel=apply_excel,
+                apply_archive=apply_archive,
+            )
     initial_validation = _real_run_preflight_result(
         workbook_path,
         dry_run,
@@ -113,6 +276,20 @@ def process_downloaded_pdfs(
             )
             for pdf_path in pdfs
         ]
+        extracted_scope_violations = _extracted_scope_violations(
+            pdfs,
+            simulation_results,
+            allowed_protocols,
+        )
+        if extracted_scope_violations:
+            return _scope_violation_summary(
+                pdfs,
+                extracted_scope_violations,
+                logs_dir=logs_dir,
+                dry_run=dry_run,
+                apply_excel=apply_excel,
+                apply_archive=apply_archive,
+            )
         critical_issues = _critical_simulation_issues(simulation_results, apply_excel)
         if critical_issues:
             blocked_real_run = True
@@ -185,8 +362,10 @@ def process_downloaded_pdfs(
                         rollback_executed = True
                         try:
                             atomic_copy_file(backup_path, workbook_path, private=True)
+                            if not _verify_restored_workbook(backup_path, workbook_path):
+                                raise ValueError("Workbook restaurado nao corresponde ao backup validado.")
                             rollback_status = "CONFIRMED"
-                        except Exception as exc:  # pragma: no cover - defensive branch
+                        except (OSError, ValueError) as exc:
                             rollback_status = "FAILED"
                             rollback_error = str(exc)
                             logger.exception(
@@ -226,8 +405,17 @@ def process_downloaded_pdfs(
         total_errors=total_errors,
         blocked_real_run=blocked_real_run,
         systemic_apply_failure=systemic_apply_failure,
+        partial_effects_present=any(_has_traceable_effects(item) for item in results),
     )
     metrics = _processing_metrics(results, dry_run, apply_excel)
+    completion_dates_changed = sum(
+        1
+        for item in results
+        if item.get("completion_action") == "COMPLETION_DATE_UPDATED"
+    )
+    completion_open_changed = sum(
+        1 for item in results if item.get("completion_action") == "MARKED_AS_OPEN"
+    )
     payload = {
         "started_at": started_at.isoformat(timespec="seconds"),
         "finished_at": finished_at.isoformat(timespec="seconds"),
@@ -271,6 +459,21 @@ def process_downloaded_pdfs(
             for item in results
             if item.get("archive_status", {}).get("reason") == "archive_already_done"
         ),
+        "total_completion_dates_found": sum(
+            1 for item in results if item.get("completion_normalized")
+        ),
+        "total_completion_dates_updated": completion_dates_changed,
+        "total_completion_marked_open": completion_open_changed,
+        "completion_dates_proposed": completion_dates_changed if dry_run else 0,
+        "completion_dates_applied": 0 if dry_run else completion_dates_changed,
+        "open_values_proposed": completion_open_changed if dry_run else 0,
+        "open_values_applied": 0 if dry_run else completion_open_changed,
+        "total_completion_no_change": sum(
+            1 for item in results if item.get("completion_action") == "NO_CHANGE"
+        ),
+        "total_completion_pending_review": sum(
+            1 for item in results if item.get("completion_pending_review")
+        ),
         "blocked_real_run": blocked_real_run,
         "real_run_block_reason": real_run_block_reason,
         "real_run_block_code": real_run_block_code,
@@ -292,21 +495,196 @@ def process_downloaded_pdfs(
         "results": results,
     }
 
-    json_path = logs_dir / JSON_REPORT_NAME
-    markdown_path = logs_dir / MARKDOWN_REPORT_NAME
-    report_payload = _privacy_safe_report_payload(payload)
-    atomic_write_json(json_path, report_payload, private=True)
-    atomic_write_text(
-        markdown_path,
-        _build_markdown_report(report_payload),
-        private=True,
-    )
+    return _persist_processing_reports(logs_dir, payload, state_store=state_store)
+
+
+def _persist_processing_reports(
+    logs_dir: Path,
+    payload: dict[str, Any],
+    *,
+    state_store=None,
+) -> dict[str, Any]:
+    json_path = Path(logs_dir) / JSON_REPORT_NAME
+    markdown_path = Path(logs_dir) / MARKDOWN_REPORT_NAME
+    shareable_json_path = Path(logs_dir) / SHAREABLE_JSON_REPORT_NAME
+    shareable_markdown_path = Path(logs_dir) / SHAREABLE_MARKDOWN_REPORT_NAME
+    for item in payload.get("results", []):
+        item["report_effect"] = "persisted"
+    payload["report_effect"] = "persisted"
+    private_payload = _privacy_safe_report_payload(payload)
+    shareable_payload = build_shareable_report(payload, report_type="processing")
+    try:
+        atomic_write_json(json_path, private_payload, private=True)
+        atomic_write_text(markdown_path, _build_markdown_report(private_payload), private=True)
+        atomic_write_json(shareable_json_path, shareable_payload, private=True)
+        atomic_write_text(
+            shareable_markdown_path,
+            _build_shareable_markdown(shareable_payload),
+            private=True,
+        )
+        _record_report_state(
+            state_store,
+            payload.get("results", []),
+            report_effect="persisted",
+            status=None,
+        )
+    except (OSError, TypeError, ValueError):
+        partial_effects_present = any(
+            _has_traceable_effects(item) for item in payload.get("results", [])
+        )
+        payload["status"] = (
+            OperationStatus.PARCIAL.value
+            if partial_effects_present
+            else OperationStatus.FALHOU.value
+        )
+        payload["operation_message"] = (
+            "Os efeitos foram processados, mas a evidencia minima nao pode ser persistida."
+        )
+        payload["report_effect"] = "failed"
+        payload["report_error_code"] = "REPORT_PERSISTENCE_FAILED"
+        for item in payload.get("results", []):
+            item["report_effect"] = "failed"
+            item["manual_action_required"] = True
+            item["success"] = False
+        payload["total_success"] = 0
+        payload["total_errors"] = len(payload.get("results", []))
+        _record_report_state(
+            state_store,
+            payload.get("results", []),
+            report_effect="failed",
+            status="operational_pending",
+        )
+        payload["json_report_path"] = None
+        payload["markdown_report_path"] = None
+        payload["shareable_json_report_path"] = None
+        payload["shareable_markdown_report_path"] = None
+        logger.error("Falha ao persistir relatorios operacionais; retomada manual necessaria.")
+        return payload
 
     payload["json_report_path"] = str(json_path)
     payload["markdown_report_path"] = str(markdown_path)
-    logger.info(f"Relatório JSON salvo em: {json_path}")
-    logger.info(f"Relatório Markdown salvo em: {markdown_path}")
+    payload["shareable_json_report_path"] = str(shareable_json_path)
+    payload["shareable_markdown_report_path"] = str(shareable_markdown_path)
+    logger.info("Relatorios privados e compartilhiveis persistidos com sucesso.")
     return payload
+
+
+def _record_report_state(
+    state_store,
+    results: list[dict[str, Any]],
+    *,
+    report_effect: str,
+    status: str | None,
+) -> None:
+    if state_store is None:
+        return
+    for item in results:
+        protocol = str(item.get("protocol") or "").strip()
+        if not protocol:
+            continue
+        try:
+            state_store.update_section(
+                protocol,
+                "report",
+                {
+                    "status": report_effect,
+                    "error_code": (
+                        "REPORT_PERSISTENCE_FAILED"
+                        if report_effect == "failed"
+                        else None
+                    ),
+                },
+                last_step=(
+                    "report_failed" if report_effect == "failed" else "report_persisted"
+                ),
+                status=status,
+            )
+        except (OSError, TypeError, ValueError):
+            logger.error("Falha ao registrar efeito do relatorio no state privado.")
+
+
+def _build_shareable_markdown(payload: dict[str, Any]) -> str:
+    lines = [
+        "# Relatorio compartilhavel de processamento",
+        "",
+        f"- Classificacao: {payload['classification']}",
+        f"- Status: {payload['status']}",
+        f"- Modo: {payload['mode']}",
+        f"- Bloqueado: {payload['blocked']}",
+        "",
+        "## Totais",
+    ]
+    lines.extend(f"- {key}: {value}" for key, value in payload["totals"].items())
+    return "\n".join(lines) + "\n"
+
+
+def _completion_value_from_metadata(portal_metadata: dict | None) -> dict[str, Any]:
+    if not portal_metadata:
+        return {
+            "value": None,
+            "raw": None,
+            "normalized": None,
+            "source_stage": None,
+            "extraction_status": None,
+            "reason": None,
+            "pending_review": False,
+        }
+    status = str(portal_metadata.get("completion_extraction_status") or "")
+    normalized = portal_metadata.get("completion_date") or portal_metadata.get(
+        "completion_date_normalized"
+    )
+    raw = portal_metadata.get("completion_date_raw")
+    completed_status = _is_completed_status(portal_metadata.get("status"))
+    if normalized:
+        return {
+            "value": normalized,
+            "raw": raw,
+            "normalized": normalized,
+            "source_stage": portal_metadata.get("completion_source_stage"),
+            "extraction_status": status or "FOUND",
+            "reason": "POINT_OF_CONNECTION_COMPLETION_DATE_FOUND",
+            "pending_review": False,
+        }
+    if completed_status and status in POINT_OF_CONNECTION_NO_DATE_STATUSES:
+        return {
+            "value": OPEN_COMPLETION_TEXT,
+            "raw": raw,
+            "normalized": None,
+            "source_stage": portal_metadata.get("completion_source_stage"),
+            "extraction_status": status,
+            "reason": "POINT_OF_CONNECTION_COMPLETION_DATE_NOT_AVAILABLE",
+            "pending_review": False,
+        }
+    if status in POINT_OF_CONNECTION_PENDING_STATUSES:
+        return {
+            "value": None,
+            "raw": raw,
+            "normalized": None,
+            "source_stage": portal_metadata.get("completion_source_stage"),
+            "extraction_status": status,
+            "reason": status,
+            "pending_review": True,
+        }
+    return {
+        "value": None,
+        "raw": raw,
+        "normalized": normalized,
+        "source_stage": portal_metadata.get("completion_source_stage"),
+        "extraction_status": status or None,
+        "reason": None,
+        "pending_review": False,
+    }
+
+
+def _is_completed_status(status: Any) -> bool:
+    normalized = str(status or "").upper()
+    normalized = (
+        normalized.replace("Ç", "C")
+        .replace("Ã‡", "C")
+        .replace("Í", "I")
+        .replace("Ã", "A")
+    )
+    return "CONCLUID" in normalized
 
 
 def _process_single_pdf(
@@ -321,6 +699,7 @@ def _process_single_pdf(
 ) -> dict:
     logger.info(f"Processando PDF baixado: {pdf_path}")
     result = _empty_result(pdf_path)
+    current_effect_stage = "extraction"
 
     try:
         (
@@ -334,6 +713,18 @@ def _process_single_pdf(
         ) = _load_or_extract_technical_data(pdf_path, state_store)
         if not protocol:
             raise ValueError(f"Não foi possível identificar o protocolo do PDF: {pdf_path}")
+        result["protocol"] = protocol
+        expected_protocol = _protocol_from_filename(pdf_path)
+        if expected_protocol is None or protocol != expected_protocol:
+            result.update(
+                {
+                    "success": False,
+                    "status": OperationStatus.BLOQUEADO.value,
+                    "error": "Protocolo extraído diverge do escopo congelado.",
+                    "error_code": "FROZEN_BATCH_SCOPE_VIOLATION",
+                }
+            )
+            return result
         if not technical_validation.approved:
             return _pending_technical_review_result(
                 result=result,
@@ -354,9 +745,8 @@ def _process_single_pdf(
             protocol,
         )
         entry_date = portal_metadata.get("entry_date") if portal_metadata else None
-        completion_date = (
-            portal_metadata.get("completion_date") if portal_metadata else None
-        )
+        completion_decision = _completion_value_from_metadata(portal_metadata)
+        completion_date = completion_decision["value"]
 
         match = find_client_folder(clientes_root, protocol, client_name)
         if state_store:
@@ -388,6 +778,7 @@ def _process_single_pdf(
             else None
         )
 
+        current_effect_stage = "excel"
         if apply_excel:
             excel_status = update_excel_from_pdf_data(
                 workbook_path=workbook_path,
@@ -403,8 +794,11 @@ def _process_single_pdf(
             )
         else:
             excel_status = _skipped_excel_status(protocol, dry_run)
+        result["excel_effect"] = _excel_effect(excel_status, dry_run, apply_excel)
+        result["rollback_possible"] = result["excel_effect"] == "applied"
 
         if state_store:
+            current_effect_stage = "state"
             state_store.update_section(
                 protocol,
                 "excel",
@@ -442,6 +836,7 @@ def _process_single_pdf(
                         status="operational_pending",
                         last_step="pending_excel_retry",
                     )
+            result["state_effect"] = "persisted"
 
         archive_status = {
             "success": True,
@@ -455,6 +850,7 @@ def _process_single_pdf(
             "legacy_gd_ignored": archive_destination.legacy_gd_ignored,
         }
         archived_pdf_path = str(target_pdf_path) if target_pdf_path else None
+        current_effect_stage = "archive"
         if apply_archive and target_folder is None:
             archive_status = {
                 "success": False,
@@ -531,8 +927,14 @@ def _process_single_pdf(
                 archived_pdf_path = archive_result.archived_pdf_path
                 if archive_result.destination_folder:
                     target_folder = Path(archive_result.destination_folder)
+        result["archive_effect"] = _archive_effect(
+            archive_status,
+            dry_run,
+            apply_archive,
+        )
 
         if state_store:
+            current_effect_stage = "state"
             state_store.update_section(
                 protocol,
                 "archive",
@@ -547,6 +949,7 @@ def _process_single_pdf(
                     archive_status, dry_run, apply_archive
                 ),
             )
+            result["state_effect"] = "persisted"
 
         result.update(
             {
@@ -555,6 +958,13 @@ def _process_single_pdf(
                 "client_name": client_name,
                 "entry_date": entry_date,
                 "completion_date": completion_date,
+                "completion_raw": completion_decision["raw"],
+                "completion_normalized": completion_decision["normalized"],
+                "completion_source_stage": completion_decision["source_stage"],
+                "completion_extraction_status": completion_decision["extraction_status"],
+                "completion_action": excel_status.get("completion_action"),
+                "completion_reason": completion_decision["reason"],
+                "completion_pending_review": completion_decision["pending_review"],
                 "metadata_source": metadata_source,
                 "target_sheet": excel_status.get("target_sheet"),
                 "source_sheet": excel_status.get("source_sheet"),
@@ -613,21 +1023,72 @@ def _process_single_pdf(
                 apply_excel and not dry_run and not excel_status.get("success")
             )
             if state_store and result["error"] and not operational_excel_pending:
-                state_store.add_error(protocol, "processing", result["error"])
+                _add_state_error_best_effort(
+                    state_store,
+                    protocol,
+                    "processing",
+                    result["error"],
+                )
             logger.warning(
                 f"PDF processado com pendências: protocolo={protocol}, "
                 f"erro={result['error']}"
             )
         elif state_store:
+            current_effect_stage = "state"
             state_store.mark_completed(protocol)
+            result["state_effect"] = "persisted"
         return result
     except Exception as exc:
-        logger.exception(f"Falha ao processar PDF {pdf_path}: {exc}")
-        result["error"] = str(exc)
+        state_persistence_failed = current_effect_stage == "state"
+        if state_persistence_failed:
+            logger.error("Falha ao persistir state; efeitos mantidos para retomada.")
+        else:
+            logger.exception(f"Falha ao processar PDF {pdf_path}: {exc}")
+        result["success"] = False
+        result["error"] = (
+            "Falha ao persistir o estado operacional. Retomada manual necessária."
+            if state_persistence_failed
+            else str(exc)
+        )
+        if current_effect_stage == "excel":
+            result["excel_effect"] = "failed"
+        elif current_effect_stage == "archive":
+            result["archive_effect"] = "failed"
+        elif current_effect_stage == "state":
+            result["state_effect"] = "failed"
+            result["error_code"] = "STATE_PERSISTENCE_FAILED"
+        result["status"] = (
+            OperationStatus.PARCIAL.value
+            if _has_traceable_effects(result)
+            else OperationStatus.FALHOU.value
+        )
+        if not dry_run and (
+            result.get("excel_effect") == "applied"
+            or result.get("archive_effect") in {"archived", "already_present"}
+            or result.get("state_effect") == "failed"
+        ):
+            result["manual_action_required"] = True
         protocol = result.get("protocol") or _protocol_from_filename(pdf_path)
         if state_store and protocol:
-            state_store.add_error(protocol, "processing", result["error"])
+            _add_state_error_best_effort(
+                state_store,
+                protocol,
+                "processing",
+                result["error"],
+            )
         return result
+
+
+def _add_state_error_best_effort(
+    state_store,
+    protocol: str,
+    step: str,
+    message: str,
+) -> None:
+    try:
+        state_store.add_error(protocol, step, message)
+    except (OSError, TypeError, ValueError):
+        logger.error("Falha ao persistir erro secundário no state privado.")
 
 
 def _load_or_extract_technical_data(pdf_path: Path, state_store=None) -> tuple:
@@ -643,6 +1104,7 @@ def _load_or_extract_technical_data(pdf_path: Path, state_store=None) -> tuple:
         if protocol_hint
         and state_store
         and not state_store.is_force_reprocess(protocol_hint)
+        and _technical_cache_matches_pdf(technical, pdf_path, protocol_hint)
         else None
     )
     if cached is not None and protocol_hint:
@@ -672,6 +1134,20 @@ def _load_or_extract_technical_data(pdf_path: Path, state_store=None) -> tuple:
                 status="pending_review",
                 errors=["PROTOCOL_MISSING"],
                 user_message="Protocolo não identificado no PDF.",
+            ),
+        )
+    if protocol_hint is None or protocol != protocol_hint:
+        return (
+            protocol,
+            client_name,
+            "",
+            "",
+            "",
+            "",
+            TechnicalValidationResult(
+                status="pending_review",
+                errors=["FROZEN_BATCH_SCOPE_VIOLATION"],
+                user_message="Protocolo extraído diverge do escopo congelado.",
             ),
         )
 
@@ -724,6 +1200,10 @@ def _load_or_extract_technical_data(pdf_path: Path, state_store=None) -> tuple:
                     EQUIPMENT_RULES_VERSION if technical_validation.approved else None
                 ),
                 "equipment": serialize_equipment_cache(canonical_collection),
+                "source_protocol": protocol,
+                "source_pdf_sha256": (
+                    _sha256(pdf_path) if Path(pdf_path).is_file() else None
+                ),
                 "format_version": (
                     TECHNICAL_PROCESSING_FORMAT_VERSION
                     if technical_validation.approved
@@ -759,6 +1239,19 @@ def _validated_technical_cache(
         cached.placa_planilha,
         cached.inversor_planilha,
         cached.validation,
+    )
+
+
+def _technical_cache_matches_pdf(
+    technical: object,
+    pdf_path: Path,
+    protocol_hint: str,
+) -> bool:
+    if not isinstance(technical, dict) or not Path(pdf_path).is_file():
+        return False
+    return (
+        technical.get("source_protocol") == protocol_hint
+        and technical.get("source_pdf_sha256") == _sha256(pdf_path)
     )
 
 
@@ -953,6 +1446,12 @@ def _empty_result(pdf_path: Path) -> dict:
             "error": None,
         },
         "error": None,
+        "excel_effect": "not_applied",
+        "archive_effect": "not_applied",
+        "state_effect": "not_applied",
+        "report_effect": "not_applied",
+        "manual_action_required": False,
+        "rollback_possible": False,
     }
 
 
@@ -962,6 +1461,57 @@ def _blocked_result(pdf_path: Path, error: str) -> dict:
     result["excel_status"]["error"] = error
     result["archive_status"]["error"] = "Arquivamento não executado por falha na planilha."
     return result
+
+
+def _scope_violation_summary(
+    pdfs: list[Path],
+    unknown_protocols: list[str],
+    *,
+    logs_dir: Path,
+    dry_run: bool,
+    apply_excel: bool,
+    apply_archive: bool,
+) -> dict:
+    message = "FROZEN_BATCH_SCOPE_VIOLATION"
+    now = datetime.now().isoformat(timespec="seconds")
+    payload = {
+        "started_at": now,
+        "finished_at": now,
+        "dry_run": dry_run,
+        "apply_excel": apply_excel,
+        "apply_archive": apply_archive,
+        "status": "BLOQUEADO",
+        "operation_message": "Processamento bloqueado por protocolo fora do lote congelado.",
+        "real_run_block_code": message,
+        "real_run_block_reason": message,
+        "blocked_real_run": True,
+        "blocked_pending_protocols": 0,
+        "scope_violation_count": len(unknown_protocols),
+        "protocols_added_after_freeze": len(unknown_protocols),
+        "total_pdfs": len(pdfs),
+        "total_success": 0,
+        "total_errors": len(pdfs),
+        "total_excel_updated": 0,
+        "total_archived": 0,
+        "results": [],
+    }
+    return _persist_processing_reports(logs_dir, payload)
+
+
+def _extracted_scope_violations(
+    pdfs: list[Path],
+    simulation_results: list[dict],
+    allowed_protocols: set[str] | None,
+) -> list[str]:
+    if allowed_protocols is None:
+        return []
+    violations: set[str] = set()
+    for pdf_path, item in zip(pdfs, simulation_results, strict=False):
+        expected = _protocol_from_filename(pdf_path)
+        extracted = str(item.get("protocol") or "").strip()
+        if not expected or not extracted or extracted != expected or extracted not in allowed_protocols:
+            violations.add(extracted or expected or "PROTOCOL_NOT_IDENTIFIED")
+    return sorted(violations)
 
 
 def _critical_simulation_issues(results: list[dict], apply_excel: bool) -> list[dict]:
@@ -1102,8 +1652,55 @@ def _mark_results_after_rollback(results: list[dict], *, reason: str) -> list[di
             result["success"] = False
             result["error"] = reason
             result["excel_status"] = excel_status
+            result["excel_effect"] = "rolled_back"
+            result["manual_action_required"] = result.get("archive_effect") in {
+                "archived",
+                "already_present",
+            }
+            result["rollback_possible"] = False
         marked.append(result)
     return marked
+
+
+def _verify_restored_workbook(backup_path: Path, workbook_path: Path) -> bool:
+    backup = Path(backup_path)
+    restored = Path(workbook_path)
+    backup_ok, _backup_errors = validate_xlsx_integrity(backup)
+    restored_ok, _restored_errors = validate_xlsx_integrity(restored)
+    if not backup_ok or not restored_ok:
+        return False
+    return _sha256(backup) == _sha256(restored)
+
+
+def _sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with Path(path).open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _excel_effect(status: dict[str, Any], dry_run: bool, apply_excel: bool) -> str:
+    if dry_run or not apply_excel:
+        return "not_applied"
+    if not status.get("success"):
+        return "failed"
+    if status.get("skipped") or status.get("action") in {
+        "no_change",
+        "skipped_excel_already_updated",
+    }:
+        return "no_change"
+    return "applied"
+
+
+def _archive_effect(status: dict[str, Any], dry_run: bool, apply_archive: bool) -> str:
+    if dry_run or not apply_archive:
+        return "not_applied"
+    if status.get("reason") == "archive_already_done":
+        return "already_present"
+    if status.get("success") and not status.get("skipped"):
+        return "archived"
+    return "failed"
 
 
 def _processing_metrics(results: list[dict], dry_run: bool, apply_excel: bool) -> dict:
@@ -1215,6 +1812,7 @@ def _classify_processing_result(
     total_errors: int,
     blocked_real_run: bool,
     systemic_apply_failure: bool = False,
+    partial_effects_present: bool = False,
 ) -> tuple[OperationStatus, str]:
     if systemic_apply_failure:
         return (
@@ -1225,6 +1823,11 @@ def _classify_processing_result(
         return OperationStatus.BLOQUEADO, "A gravação real foi bloqueada com segurança."
     if total_errors and total_success:
         return OperationStatus.PARCIAL, "O processamento terminou com resultados parciais."
+    if total_errors and partial_effects_present:
+        return (
+            OperationStatus.PARCIAL,
+            "O processamento aplicou efeitos parciais e requer retomada.",
+        )
     if total_errors:
         return OperationStatus.FALHOU, "Nenhum PDF foi processado com sucesso."
     if total_pdfs == 0:
@@ -1233,6 +1836,14 @@ def _classify_processing_result(
         "Simulação concluída com sucesso."
         if dry_run
         else "Processamento concluído com sucesso."
+    )
+
+
+def _has_traceable_effects(item: dict[str, Any]) -> bool:
+    return (
+        item.get("excel_effect") in {"applied", "rolled_back"}
+        or item.get("archive_effect") in {"archived", "already_present"}
+        or item.get("state_effect") == "persisted"
     )
 
 
@@ -1260,6 +1871,10 @@ def _compact_excel_status(status: dict[str, Any]) -> dict:
         "moved_from": status.get("moved_from"),
         "moved_to": status.get("moved_to"),
         "entry_date": status.get("entry_date"),
+        "ingress_no_change": status.get("ingress_no_change"),
+        "equipment_no_change": status.get("equipment_no_change"),
+        "completion_no_change": status.get("completion_no_change"),
+        "completion_action": status.get("completion_action"),
     }
 
 
@@ -1482,11 +2097,22 @@ def _privacy_safe_report_payload(payload: dict) -> dict:
         "total_archived",
         "total_pending_review",
         "total_technical_pending_review",
+        "total_completion_dates_found",
+        "total_completion_dates_updated",
+        "total_completion_marked_open",
+        "completion_dates_proposed",
+        "completion_dates_applied",
+        "open_values_proposed",
+        "open_values_applied",
+        "total_completion_no_change",
+        "total_completion_pending_review",
         "blocked_real_run",
         "real_run_block_code",
         "block_stage",
         "rollback_executed",
         "rollback_status",
+        "report_effect",
+        "report_error_code",
     }
     result_allowlist = {
         "protocol",
@@ -1498,13 +2124,29 @@ def _privacy_safe_report_payload(payload: dict) -> dict:
         "module_source",
         "inverter_source",
         "recommended_action",
+        "completion_date",
+        "completion_raw",
+        "completion_normalized",
+        "completion_source_stage",
+        "completion_extraction_status",
+        "completion_action",
+        "completion_reason",
+        "completion_pending_review",
         "client_folder_match_type",
+        "excel_effect",
+        "archive_effect",
+        "state_effect",
+        "report_effect",
+        "manual_action_required",
+        "rollback_possible",
     }
     report = {
         key: payload[key]
         for key in top_level_allowlist
         if key in payload
     }
+    report["classification"] = "PRIVATE_OPERATIONAL"
+    report["schema_version"] = 1
     report["results"] = []
     for item in payload.get("results", []):
         safe_item = {

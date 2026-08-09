@@ -1,5 +1,12 @@
 # Changelog
 
+## 2.0.2 — candidata não publicada
+
+- Consolidação de `apps/desktop` como caminho canônico, mantendo o legado preservado.
+- Correções de empacotamento, frontend reproduzível, hardening do WebEngine e release limpa.
+- Empty state seguro, placeholders desabilitados, cancelamento cooperativo e confirmação por lote.
+- Esta entrada não representa publicação, tag, canário ou autorização de produção.
+
 ## 2.0.0 — 2026-07-15
 
 - Nova arquitetura em camadas: domínio, aplicação, infraestrutura e apresentação.

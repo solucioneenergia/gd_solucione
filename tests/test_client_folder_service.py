@@ -83,15 +83,15 @@ class TestFindClientFolder:
     def test_fuzzy_name_match(self, tmp_path: Path):
         root = tmp_path / "clientes"
         root.mkdir()
-        (root / "João Silva Souza").mkdir()
-        match = find_client_folder(root, "999999", "João Silva Souza")
+        (root / "CLIENTE SINTETICO 008 LTDA Souza").mkdir()
+        match = find_client_folder(root, "999999", "CLIENTE SINTETICO 008 LTDA Souza")
         assert match.match_type == "fuzzy_name"
         assert match.confidence >= 90.0
 
     def test_protocol_match_in_folder_name(self, tmp_path: Path):
         root = tmp_path / "clientes"
         root.mkdir()
-        protocol = "2606021741"
+        protocol = "2600001097"
         (root / f"Cliente X {protocol}").mkdir()
         match = find_client_folder(root, protocol, "Cliente Desconhecido")
         assert match.match_type == "protocol"
@@ -100,7 +100,7 @@ class TestFindClientFolder:
     def test_protocol_match_in_file_name(self, tmp_path: Path):
         root = tmp_path / "clientes"
         root.mkdir()
-        protocol = "2606021741"
+        protocol = "2600001097"
         # Usar um nome que não faz fuzzy match com o cliente buscado
         client_dir = root / "Pasta Sem Nome Relacionado"
         client_dir.mkdir()
@@ -194,7 +194,7 @@ class TestBuildDestinationFolder:
     def test_protocol_match_uses_pending_by_default_without_safe_destination(self, tmp_path: Path):
         match = ClientFolderMatch(
             protocol="123",
-            client_name="Teste",
+            client_name="CLIENTE SINTETICO LTDA",
             matched_path=str(tmp_path),
             match_type="protocol",
             confidence=100.0,
@@ -206,7 +206,7 @@ class TestBuildDestinationFolder:
     def test_pending_review(self, tmp_path: Path):
         match = ClientFolderMatch(
             protocol="123",
-            client_name="Teste",
+            client_name="CLIENTE SINTETICO LTDA",
             matched_path=str(tmp_path / "_PENDENTES_CONFERENCIA_GD" / "123 - Teste"),
             match_type="pending_review",
             confidence=50.0,
@@ -221,7 +221,7 @@ class TestResolveArchiveDestinationFolder:
         client = tmp_path / "Cliente"
         entry = client / "Entrada 14-07-2026"
         entry.mkdir(parents=True)
-        result = resolve_archive_destination_folder(client, "2606184625", "2026-07-14", "Cliente", tmp_path)
+        result = resolve_archive_destination_folder(client, "2600001104", "2026-07-14", "Cliente", tmp_path)
         assert result.destination_folder == entry
         assert result.match_type == "entrada_date_folder"
         assert result.should_create_folder is False
@@ -230,28 +230,28 @@ class TestResolveArchiveDestinationFolder:
         client = tmp_path / "Cliente"
         entry = client / "entrada 14-07-2026"
         entry.mkdir(parents=True)
-        result = resolve_archive_destination_folder(client, "2606184625", "2026-07-14", "Cliente", tmp_path)
+        result = resolve_archive_destination_folder(client, "2600001104", "2026-07-14", "Cliente", tmp_path)
         assert result.destination_folder == entry
 
     def test_uses_underscore_entry_date_folder(self, tmp_path: Path):
         client = tmp_path / "Cliente"
         entry = client / "Entrada 14_07_2026"
         entry.mkdir(parents=True)
-        result = resolve_archive_destination_folder(client, "2606184625", "2026-07-14", "Cliente", tmp_path)
+        result = resolve_archive_destination_folder(client, "2600001104", "2026-07-14", "Cliente", tmp_path)
         assert result.destination_folder == entry
 
     def test_uses_protocol_folder_when_no_entry(self, tmp_path: Path):
         client = tmp_path / "Cliente"
-        folder = client / "list_2606184625"
+        folder = client / "list_2600001104"
         folder.mkdir(parents=True)
-        result = resolve_archive_destination_folder(client, "2606184625", "2026-07-14", "Cliente", tmp_path)
+        result = resolve_archive_destination_folder(client, "2600001104", "2026-07-14", "Cliente", tmp_path)
         assert result.destination_folder == folder
         assert result.match_type == "protocol_folder"
 
     def test_uses_client_folder_itself_when_it_contains_protocol(self, tmp_path: Path):
-        folder = tmp_path / "Cliente 2606184625"
+        folder = tmp_path / "Cliente 2600001104"
         folder.mkdir()
-        result = resolve_archive_destination_folder(folder, "2606184625", "2026-07-14", "Cliente", tmp_path)
+        result = resolve_archive_destination_folder(folder, "2600001104", "2026-07-14", "Cliente", tmp_path)
         assert result.destination_folder == folder
         assert result.match_type == "protocol_folder"
 
@@ -259,8 +259,8 @@ class TestResolveArchiveDestinationFolder:
         client = tmp_path / "Cliente"
         parent = client / "Documentos"
         parent.mkdir(parents=True)
-        (parent / "list_2606184625.pdf").touch()
-        result = resolve_archive_destination_folder(client, "2606184625", "2026-07-14", "Cliente", tmp_path)
+        (parent / "list_2600001104.pdf").touch()
+        result = resolve_archive_destination_folder(client, "2600001104", "2026-07-14", "Cliente", tmp_path)
         assert result.destination_folder == parent
         assert result.match_type == "protocol_file_parent"
 
@@ -270,7 +270,7 @@ class TestResolveArchiveDestinationFolder:
         latest = client / "Entrada 14-07-2026"
         old.mkdir(parents=True)
         latest.mkdir()
-        result = resolve_archive_destination_folder(client, "2606184625", None, "Cliente", tmp_path)
+        result = resolve_archive_destination_folder(client, "2600001104", None, "Cliente", tmp_path)
         assert result.destination_folder == latest
         assert result.match_type == "entrada_date_folder"
 
@@ -289,14 +289,14 @@ class TestResolveArchiveDestinationFolder:
         client = tmp_path / "Cliente"
         (client / "Entrada 01-01-2026").mkdir(parents=True)
         (client / "Entrada 14-07-2026").mkdir()
-        result = resolve_archive_destination_folder(client, "2606184625", None, "Cliente", tmp_path)
+        result = resolve_archive_destination_folder(client, "2600001104", None, "Cliente", tmp_path)
         assert result.match_type == "pending_manual_review"
         assert "_PENDENTES_CONFERENCIA_GD" in str(result.destination_folder)
 
     def test_fallback_pending(self, tmp_path: Path):
         client = tmp_path / "Cliente"
         client.mkdir()
-        result = resolve_archive_destination_folder(client, "2606184625", "2026-07-14", "Cliente", tmp_path)
+        result = resolve_archive_destination_folder(client, "2600001104", "2026-07-14", "Cliente", tmp_path)
         assert result.match_type == "pending_manual_review"
         assert result.should_create_folder is True
         assert "_PENDENTES_CONFERENCIA_GD" in str(result.destination_folder)
@@ -315,44 +315,44 @@ class TestResolveArchiveDestinationFolder:
         monkeypatch.setattr("src.client_folder_service.get_settings", lambda: settings)
         client = tmp_path / "Cliente"
         client.mkdir()
-        result = resolve_archive_destination_folder(client, "2606184625", "2026-07-14", "Cliente", tmp_path)
-        assert result.destination_folder == client / "GD Neoenergia" / "2606184625"
+        result = resolve_archive_destination_folder(client, "2600001104", "2026-07-14", "Cliente", tmp_path)
+        assert result.destination_folder == client / "GD Neoenergia" / "2600001104"
         assert result.match_type == "legacy_gd_folder"
         assert result.should_create_folder is True
 
     def test_ignores_existing_legacy_gd_protocol_folder_in_pending_mode(self, tmp_path: Path):
         client = tmp_path / "Cliente"
-        legacy = client / "GD Neoenergia" / "2606184625"
+        legacy = client / "GD Neoenergia" / "2600001104"
         legacy.mkdir(parents=True)
 
         result = resolve_archive_destination_folder(
             client,
-            "2606184625",
+            "2600001104",
             "2026-07-14",
             "Cliente",
             tmp_path,
         )
 
         assert result.match_type == "pending_manual_review"
-        assert result.destination_folder == tmp_path / "_PENDENTES_CONFERENCIA_GD" / "2606184625 - Cliente"
+        assert result.destination_folder == tmp_path / "_PENDENTES_CONFERENCIA_GD" / "2600001104 - Cliente"
         assert result.legacy_gd_ignored is True
 
     def test_ignores_protocol_file_inside_legacy_gd_protocol_folder_in_pending_mode(self, tmp_path: Path):
         client = tmp_path / "Cliente"
-        legacy = client / "GD Neoenergia" / "2606184625"
+        legacy = client / "GD Neoenergia" / "2600001104"
         legacy.mkdir(parents=True)
-        (legacy / "Orcamento_de_Conexao_2606184625.pdf").touch()
+        (legacy / "Orcamento_de_Conexao_2600001104.pdf").touch()
 
         result = resolve_archive_destination_folder(
             client,
-            "2606184625",
+            "2600001104",
             "2026-07-14",
             "Cliente",
             tmp_path,
         )
 
         assert result.match_type == "pending_manual_review"
-        assert result.destination_folder == tmp_path / "_PENDENTES_CONFERENCIA_GD" / "2606184625 - Cliente"
+        assert result.destination_folder == tmp_path / "_PENDENTES_CONFERENCIA_GD" / "2600001104 - Cliente"
         assert result.legacy_gd_ignored is True
 
     def test_uses_existing_legacy_gd_protocol_folder_when_allowed_by_flag(self, tmp_path: Path, monkeypatch):
@@ -368,12 +368,12 @@ class TestResolveArchiveDestinationFolder:
         )
         monkeypatch.setattr("src.client_folder_service.get_settings", lambda: settings)
         client = tmp_path / "Cliente"
-        legacy = client / "GD Neoenergia" / "2606184625"
+        legacy = client / "GD Neoenergia" / "2600001104"
         legacy.mkdir(parents=True)
 
         result = resolve_archive_destination_folder(
             client,
-            "2606184625",
+            "2600001104",
             "2026-07-14",
             "Cliente",
             tmp_path,
@@ -396,12 +396,12 @@ class TestResolveArchiveDestinationFolder:
         )
         monkeypatch.setattr("src.client_folder_service.get_settings", lambda: settings)
         client = tmp_path / "Cliente"
-        legacy = client / "GD Neoenergia" / "2606184625"
+        legacy = client / "GD Neoenergia" / "2600001104"
         legacy.mkdir(parents=True)
 
         result = resolve_archive_destination_folder(
             client,
-            "2606184625",
+            "2600001104",
             "2026-07-14",
             "Cliente",
             tmp_path,
@@ -414,7 +414,7 @@ class TestResolveArchiveDestinationFolder:
     def test_does_not_create_entry_folder(self, tmp_path: Path):
         client = tmp_path / "Cliente"
         client.mkdir()
-        resolve_archive_destination_folder(client, "2606184625", "2026-07-14", "Cliente", tmp_path)
+        resolve_archive_destination_folder(client, "2600001104", "2026-07-14", "Cliente", tmp_path)
         assert not (client / "Entrada 14-07-2026").exists()
 
     def test_archive_pdf_to_entry_folder_versions_existing_file(self, tmp_path: Path):
@@ -424,11 +424,11 @@ class TestResolveArchiveDestinationFolder:
         entry.mkdir(parents=True)
         pdf = tmp_path / "origem.pdf"
         pdf.write_bytes(b"pdf")
-        existing = entry / "Orcamento_de_Conexao_2606184625.pdf"
+        existing = entry / "Orcamento_de_Conexao_2600001104.pdf"
         existing.write_bytes(b"old")
         match = ClientFolderMatch(
-            protocol="2606184625",
-            client_name="Cliente",
+            protocol="2600001104",
+            client_name="CLIENTE SINTETICO LTDA",
             matched_path=str(client),
             match_type="fuzzy_name",
             confidence=100.0,
@@ -437,7 +437,7 @@ class TestResolveArchiveDestinationFolder:
 
         result = archive_pdf_to_client_folder(
             pdf,
-            "2606184625",
+            "2600001104",
             "Cliente",
             root,
             match=match,
@@ -446,25 +446,25 @@ class TestResolveArchiveDestinationFolder:
 
         assert result.success is True
         assert result.match_type == "entrada_date_folder"
-        assert Path(result.archived_pdf_path).name == "Orcamento_de_Conexao_2606184625_v2.pdf"
+        assert Path(result.archived_pdf_path).name == "Orcamento_de_Conexao_2600001104_v2.pdf"
         assert existing.read_bytes() == b"old"
 
 
 class TestBuildDestinationPdfPath:
     def test_new_file(self, tmp_path: Path):
-        result = build_destination_pdf_path(tmp_path, "2606021741")
-        assert result.name == "Orcamento_de_Conexao_2606021741.pdf"
+        result = build_destination_pdf_path(tmp_path, "2600001097")
+        assert result.name == "Orcamento_de_Conexao_2600001097.pdf"
 
     def test_existing_file_gets_version(self, tmp_path: Path):
-        (tmp_path / "Orcamento_de_Conexao_2606021741.pdf").touch()
-        result = build_destination_pdf_path(tmp_path, "2606021741")
-        assert result.name == "Orcamento_de_Conexao_2606021741_v2.pdf"
+        (tmp_path / "Orcamento_de_Conexao_2600001097.pdf").touch()
+        result = build_destination_pdf_path(tmp_path, "2600001097")
+        assert result.name == "Orcamento_de_Conexao_2600001097_v2.pdf"
 
     def test_multiple_versions(self, tmp_path: Path):
-        (tmp_path / "Orcamento_de_Conexao_2606021741.pdf").touch()
-        (tmp_path / "Orcamento_de_Conexao_2606021741_v2.pdf").touch()
-        result = build_destination_pdf_path(tmp_path, "2606021741")
-        assert result.name == "Orcamento_de_Conexao_2606021741_v3.pdf"
+        (tmp_path / "Orcamento_de_Conexao_2600001097.pdf").touch()
+        (tmp_path / "Orcamento_de_Conexao_2600001097_v2.pdf").touch()
+        result = build_destination_pdf_path(tmp_path, "2600001097")
+        assert result.name == "Orcamento_de_Conexao_2600001097_v3.pdf"
 
 
 class TestRelativeDepth:

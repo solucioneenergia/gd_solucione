@@ -255,7 +255,7 @@ def build_audit_markdown(payload: dict[str, Any]) -> str:
 
 
 def _md(value: object) -> str:
-    return str(value or "-").replace("|", "\\|").replace("\n", " ")
+    return str(value or "-").replace("|", r"\|")
 
 
 def _public_text(value: object) -> str | None:

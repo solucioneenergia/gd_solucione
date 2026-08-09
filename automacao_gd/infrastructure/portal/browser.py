@@ -1,4 +1,5 @@
 from pathlib import Path
+from typing import TYPE_CHECKING, Any
 
 from tenacity import retry, stop_after_attempt, wait_fixed
 
@@ -10,14 +11,17 @@ from automacao_gd.infrastructure.persistence.atomic import (
 )
 from automacao_gd.domain.models import PortalSolicitation
 
+if TYPE_CHECKING:
+    from playwright.sync_api import Browser, BrowserContext, Page, Playwright
+
 
 class PersistentBrowserPortalGDAutomation:
     def __init__(self, settings: Settings | None = None) -> None:
         self.settings = settings or get_settings()
-        self.playwright = None
-        self.browser = None
-        self.context = None
-        self.page = None
+        self.playwright: Playwright | None = None
+        self.browser: Browser | None = None
+        self.context: BrowserContext | None = None
+        self.page: Page | None = None
 
     def start_browser(self) -> None:
         from playwright.sync_api import sync_playwright
@@ -40,11 +44,12 @@ class PersistentBrowserPortalGDAutomation:
             f"Iniciando navegador: {browser_channel}. "
             f"headless={self.settings.HEADLESS}; downloads={downloads_dir}"
         )
-        self.playwright = sync_playwright().start()
+        playwright = sync_playwright().start()
+        self.playwright = playwright
 
         try:
             if self.settings.USE_PERSISTENT_CONTEXT:
-                context_options = {
+                context_options: dict[str, Any] = {
                     "headless": self.settings.HEADLESS,
                     "accept_downloads": True,
                     "downloads_path": str(downloads_dir),
@@ -54,19 +59,20 @@ class PersistentBrowserPortalGDAutomation:
                 if browser_channel in {"msedge", "chrome"}:
                     context_options["channel"] = browser_channel
 
-                self.context = self.playwright.chromium.launch_persistent_context(
+                context = playwright.chromium.launch_persistent_context(
                     user_data_dir=str(profile_dir),
                     **context_options,
                 )
+                self.context = context
                 self.browser = None
                 self.page = (
-                    self.context.pages[0]
-                    if self.context.pages
-                    else self.context.new_page()
+                    context.pages[0]
+                    if context.pages
+                    else context.new_page()
                 )
                 return
 
-            launch_options = {
+            launch_options: dict[str, Any] = {
                 "headless": self.settings.HEADLESS,
                 "downloads_path": str(downloads_dir),
                 "args": ["--start-maximized"],
@@ -74,7 +80,8 @@ class PersistentBrowserPortalGDAutomation:
             if browser_channel in {"msedge", "chrome"}:
                 launch_options["channel"] = browser_channel
 
-            self.browser = self.playwright.chromium.launch(**launch_options)
+            browser = playwright.chromium.launch(**launch_options)
+            self.browser = browser
         except Exception as exc:
             if browser_channel == "msedge":
                 message = (
@@ -87,9 +94,8 @@ class PersistentBrowserPortalGDAutomation:
                 logger.error(
                     f"Falha ao iniciar navegador '{browser_channel}': {exc}"
                 )
-            if self.playwright:
-                self.playwright.stop()
-                self.playwright = None
+            playwright.stop()
+            self.playwright = None
             raise
 
         storage_state = (
@@ -97,12 +103,13 @@ class PersistentBrowserPortalGDAutomation:
             if self.settings.auth_state_path.exists()
             else None
         )
-        self.context = self.browser.new_context(
+        context = browser.new_context(
             accept_downloads=True,
             storage_state=storage_state,
             viewport={"width": 1366, "height": 768},
         )
-        self.page = self.context.new_page()
+        self.context = context
+        self.page = context.new_page()
 
     @retry(stop=stop_after_attempt(3), wait=wait_fixed(2))
     def open_portal(self) -> None:
@@ -175,7 +182,10 @@ class PersistentBrowserPortalGDAutomation:
                 const text = normalize(header);
                 if (text.includes("PROTOCOLO")) return "protocol_client";
                 if (text.includes("STATUS")) return "status";
-                if (text.includes("CODIGO") && text.includes("UNIDADE")) {
+                if (
+                  text.includes("CODIGO") &&
+                  (text.includes("UNIDADE") || text.includes("IDENTIFICACAO"))
+                ) {
                   return "consumer_unit_code";
                 }
                 if (text.includes("ENDERECO")) return "address";

@@ -132,7 +132,7 @@ def _write_equipment_to_synthetic_workbook(
     return update_excel_from_pdf_data(
         workbook_path=workbook_path,
         protocol="2600000001",
-        client_name="Cliente Sintético",
+        client_name="CLIENTE SINTETICO LTDA",
         entry_date="10/01/2026",
         module_text=module_text,
         inverter_text=inverter_text,
@@ -562,7 +562,7 @@ def test_excel_multiline_equipment_applies_wrap_top_alignment_and_row_height(
     result = update_excel_from_pdf_data(
         workbook_path=workbook_path,
         protocol="2600000001",
-        client_name="Cliente Sintético",
+        client_name="CLIENTE SINTETICO LTDA",
         entry_date="10/01/2026",
         module_text=module_text,
         inverter_text=inverter_text,
@@ -589,7 +589,7 @@ def test_excel_update_preserves_header_filter_color_and_width(tmp_path: Path) ->
     update_excel_from_pdf_data(
         workbook_path=workbook_path,
         protocol="2600000001",
-        client_name="Cliente Sintético",
+        client_name="CLIENTE SINTETICO LTDA",
         entry_date="10/01/2026",
         module_text="BYD | P6C-30 260\nTRINA | TSM-NEG21C 695\nQtd. total: 218 módulos",
         inverter_text="1x HUAWEI SUN2000-6KTL",
@@ -624,7 +624,7 @@ def test_excel_dry_run_does_not_save_workbook(tmp_path: Path) -> None:
     result = update_excel_from_pdf_data(
         workbook_path=workbook_path,
         protocol="2600000001",
-        client_name="Cliente Sintético",
+        client_name="CLIENTE SINTETICO LTDA",
         entry_date="10/01/2026",
         module_text="BYD | P6C-30 260\nTRINA | TSM-NEG21C 695\nQtd. total: 218 módulos",
         inverter_text="1x HUAWEI SUN2000-6KTL",

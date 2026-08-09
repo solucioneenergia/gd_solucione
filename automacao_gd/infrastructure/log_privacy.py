@@ -31,10 +31,11 @@ _CREDENTIAL_RE = re.compile(
 _RAW_TEXT_RE = re.compile(
     r"(?is)(?:['\"]?raw_text['\"]?\s*[:=]\s*)(?:.+?)(?=(?:[,}]\s*)?$)"
 )
+_WINDOWS_PATH_PREFIX = r"[A-Z]:" + r"[\\/]"
 _WINDOWS_PATH_RE = re.compile(
-    r"(?i)(?<![\w])(?:[A-Z]:\\|[A-Z]:/)(?:[^\r\n\"'|<>]+)"
+    r"(?i)(?<![\w])(?:" + _WINDOWS_PATH_PREFIX + r")(?:[^\r\n\"'|<>]+)"
 )
-_UNC_PATH_RE = re.compile(r"\\\\[^\r\n\"'|<>]+")
+_UNC_PATH_RE = re.compile(re.escape("\\" * 2) + r"[^\r\n\"'|<>]+")
 _POSIX_PATH_RE = re.compile(
     r"(?<![\w:])/(?:[^/\r\n\"'|<>]+/)+[^/\r\n\"'|<>]+"
 )

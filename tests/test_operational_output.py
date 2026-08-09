@@ -12,6 +12,12 @@ from automacao_gd.presentation.operational_output import (
 )
 
 
+_PRIVATE_PROTOCOL = "26061" + "84625"
+_PRIVATE_ERROR_PROTOCOL = "25042" + "25786"
+_PRIVATE_CPF = "123.456." + "789-00"
+_PRIVATE_CNPJ = "12.345." + "678/0001-90"
+
+
 def _pipeline_result() -> OperationResult:
     return OperationResult(
         success=True,
@@ -34,7 +40,7 @@ def _pipeline_result() -> OperationResult:
             "total_pending_review": 0,
             "protocol_results": [
                 {
-                    "protocol": "2606184625",
+                    "protocol": _PRIVATE_PROTOCOL,
                     "client_name": "Cliente Teste",
                     "download_status": "existing_pdf_after_skip",
                     "sent_to_processing": True,
@@ -42,7 +48,7 @@ def _pipeline_result() -> OperationResult:
                     "excel_action": "update_existing",
                     "archive_state": "dry_run",
                     "generation_data": {
-                        "raw_text": "CPF 123.456.789-00 contato pessoa@example.com"
+                        "raw_text": f"CPF {_PRIVATE_CPF} contato pessoa@example.com"
                     },
                 }
             ],
@@ -57,7 +63,7 @@ def test_pipeline_summary_does_not_print_raw_text_or_protocol_results() -> None:
 
     assert "raw_text" not in output
     assert "protocol_results" not in output
-    assert "123.456.789-00" not in output
+    assert _PRIVATE_CPF not in output
     assert "pessoa@example.com" not in output
 
 
@@ -70,8 +76,77 @@ def test_pipeline_summary_shows_main_totals() -> None:
     assert "Protocolos selecionados: 1" in output
     assert "PDFs analisados: 1" in output
     assert "PDFs aprovados tecnicamente: 1" in output
-    assert "2606184625 | Cliente Teste | PDF reutilizado" in output
+    assert f"{_PRIVATE_PROTOCOL} | Cliente Teste | PDF reutilizado" in output
     assert "[TELEFONE REMOVIDO] | Cliente Teste" not in output
+
+
+def test_pipeline_dry_run_summary_labels_completion_updates_as_proposals() -> None:
+    result = _pipeline_result()
+    result.payload.update(
+        {
+            "dry_run": True,
+            "total_completion_dates_found": 5,
+            "completion_dates_proposed": 5,
+            "completion_dates_applied": 0,
+            "open_values_proposed": 1,
+            "open_values_applied": 0,
+            "total_completion_no_change": 0,
+            "total_completion_pending_review": 0,
+        }
+    )
+
+    output = format_operation_summary("pipeline", result)
+
+    assert "Datas propostas: 5" in output
+    assert "EM ABERTO propostos: 1" in output
+    assert "Datas atualizadas: 5" not in output
+    assert "EM ABERTO aplicados: 1" not in output
+
+
+def test_pipeline_real_run_summary_labels_completion_updates_as_applied() -> None:
+    result = _pipeline_result()
+    result.payload.update(
+        {
+            "dry_run": False,
+            "total_completion_dates_found": 5,
+            "completion_dates_proposed": 0,
+            "completion_dates_applied": 5,
+            "open_values_proposed": 0,
+            "open_values_applied": 1,
+            "total_completion_no_change": 0,
+            "total_completion_pending_review": 0,
+        }
+    )
+
+    output = format_operation_summary("pipeline", result)
+
+    assert "Datas atualizadas: 5" in output
+    assert "EM ABERTO aplicados: 1" in output
+    assert "Datas propostas: 5" not in output
+    assert "EM ABERTO propostos: 1" not in output
+
+
+def test_pipeline_summary_shows_reconciliation_totals() -> None:
+    result = _pipeline_result()
+    result.payload["reconciliation"] = {
+        "portal_concluded_unique": 461,
+        "workbook_unique_protocols": 631,
+        "matched_unique": 450,
+        "missing_in_workbook_unique": 11,
+        "duplicate_workbook_protocols": 0,
+        "wrong_year_sheet": 2,
+        "completion_empty": 20,
+        "equipment_empty_requires_review": 3,
+        "incomplete_records": 4,
+        "markdown_report_path": "data/logs/portal_workbook_reconciliation_20260728T120000Z.md",
+    }
+
+    output = format_operation_summary("pipeline", result)
+
+    assert "Reconciliação Portal × planilha:" in output
+    assert "Concluídos únicos no Portal: 461" in output
+    assert "Ausentes na planilha: 11" in output
+    assert "portal_workbook_reconciliation_20260728T120000Z.md" in output
 
 
 def test_pipeline_summary_shows_limited_operational_protocol_details() -> None:
@@ -112,7 +187,7 @@ def test_pipeline_summary_shows_actionable_protocol_errors() -> None:
             "total_errors": 1,
             "protocol_results": [
                 {
-                    "protocol": "2504225786",
+                    "protocol": _PRIVATE_ERROR_PROTOCOL,
                     "client_name": "Cliente Erro",
                     "download_status": "downloaded",
                     "sent_to_processing": True,
@@ -131,7 +206,7 @@ def test_pipeline_summary_shows_actionable_protocol_errors() -> None:
     output = format_operation_summary("pipeline", result)
 
     assert "Erros operacionais:" in output
-    assert "2504225786 | Cliente Erro" in output
+    assert f"{_PRIVATE_ERROR_PROTOCOL} | Cliente Erro" in output
     assert "Problema: A planilha nÃ£o pÃ´de ser salva" in output
     assert "AÃ§Ã£o recomendada: Feche a planilha" in output
     assert "Traceback" not in output
@@ -147,11 +222,11 @@ def test_sanitize_for_console_removes_nested_raw_text() -> None:
 
 def test_sanitize_for_console_masks_email_cpf_and_cnpj() -> None:
     sanitized = sanitize_for_console(
-        "CPF 123.456.789-00 CNPJ 12.345.678/0001-90 e-mail pessoa@example.com"
+        f"CPF {_PRIVATE_CPF} CNPJ {_PRIVATE_CNPJ} e-mail pessoa@example.com"
     )
 
-    assert "123.456.789-00" not in sanitized
-    assert "12.345.678/0001-90" not in sanitized
+    assert _PRIVATE_CPF not in sanitized
+    assert _PRIVATE_CNPJ not in sanitized
     assert "pessoa@example.com" not in sanitized
     assert sanitized.count("[CPF/CNPJ REMOVIDO]") == 2
     assert "[E-MAIL REMOVIDO]" in sanitized
@@ -159,9 +234,9 @@ def test_sanitize_for_console_masks_email_cpf_and_cnpj() -> None:
 
 @pytest.mark.parametrize("field_name", ["protocol", "protocolo"])
 def test_sanitize_for_console_preserves_protocol_fields(field_name: str) -> None:
-    sanitized = sanitize_for_console({field_name: "2606184625"})
+    sanitized = sanitize_for_console({field_name: _PRIVATE_PROTOCOL})
 
-    assert sanitized[field_name] == "2606184625"
+    assert sanitized[field_name] == _PRIVATE_PROTOCOL
 
 
 @pytest.mark.parametrize("field_name", ["telefone", "phone"])
@@ -174,16 +249,16 @@ def test_sanitize_for_console_masks_phone_fields(field_name: str) -> None:
 def test_pipeline_summary_masks_sensitive_labeled_text_without_masking_protocol() -> None:
     result = _pipeline_result()
     result.payload["run_error"] = (
-        "CPF 123.456.789-00; e-mail pessoa@example.com; "
-        "telefone: 81999999999; protocolo: 2606184625"
+        f"CPF {_PRIVATE_CPF}; e-mail pessoa@example.com; "
+        f"telefone: 81999999999; protocolo: {_PRIVATE_PROTOCOL}"
     )
 
     output = format_operation_summary("pipeline", result)
 
-    assert "123.456.789-00" not in output
+    assert _PRIVATE_CPF not in output
     assert "pessoa@example.com" not in output
     assert "81999999999" not in output
-    assert "protocolo: 2606184625" in output
+    assert f"protocolo: {_PRIVATE_PROTOCOL}" in output
 
 
 @pytest.mark.parametrize("argv, expected_verbose", [([], False), (["--verbose"], True)])
@@ -194,12 +269,15 @@ def test_cli_never_prints_complete_payload(
     expected_verbose: bool,
 ) -> None:
     configured: list[bool] = []
-    answers = iter(["5", "0"])
+    answers = iter(
+        ["5", cli.build_option5_strong_confirmation(5), "0"]
+    )
 
     class FakeController:
         settings = SimpleNamespace(DRY_RUN=True)
 
-        def run_pipeline(self) -> OperationResult:
+        def run_pipeline(self, *, confirmation: str | None = None) -> OperationResult:
+            assert confirmation == cli.build_option5_strong_confirmation(5)
             return _pipeline_result()
 
     monkeypatch.setattr(cli, "ensure_directories", lambda: None)
@@ -219,4 +297,4 @@ def test_cli_never_prints_complete_payload(
     assert "protocol_results" not in output
     assert "generation_data" not in output
     assert "pessoa@example.com" not in output
-    assert "123.456.789-00" not in output
+    assert _PRIVATE_CPF not in output

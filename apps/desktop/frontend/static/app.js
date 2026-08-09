@@ -1,7 +1,7 @@
 (function () {
-  const confirmationText = "SIM, EXECUTAR PRODUÇÃO";
   let backend = null;
   let running = false;
+  let actionsBound = false;
 
   function text(selector, value) {
     const element = document.querySelector(selector);
@@ -120,19 +120,26 @@
   }
 
   function requestProduction() {
-    const typed = window.prompt(
-      "A execução em produção pode alterar a planilha e arquivar PDFs.\n\n" +
-        "Checklist:\n- Edge CDP aberto;\n- login manual realizado;\n- planilha fechada;\n- BACKUP_EXCEL=true;\n- primeira execução recomendada com 1 protocolo.\n\n" +
-        "Digite exatamente: " + confirmationText
-    );
-    if (typed !== confirmationText) {
-      setMessage("Produção bloqueada: confirmação textual não informada.");
-      return;
-    }
-    callBackend("run_production_confirmed", [typed]);
+    callBackend("get_production_confirmation", [], function (payload) {
+      const contract = parsePayload(payload);
+      if (contract.allowed !== true || typeof contract.confirmation !== "string") {
+        setMessage("Produção indisponível no ambiente atual.");
+        return;
+      }
+      const typed = window.prompt(
+        "A execução em produção pode alterar a planilha e arquivar PDFs.\n" +
+          "Limite autorizado: " + String(contract.limit || "") + ".\n" +
+          "Digite exatamente: " + contract.confirmation
+      );
+      callBackend("run_production_confirmed", [typed || ""]);
+    });
   }
 
   function bindActions() {
+    if (actionsBound) {
+      return;
+    }
+    actionsBound = true;
     const actions = {
       "open-edge-cdp": function () {
         callBackend("open_edge_cdp");
@@ -233,4 +240,5 @@
   } else {
     setupChannel();
   }
+  window.addEventListener("qt-channel-ready", setupChannel);
 })();

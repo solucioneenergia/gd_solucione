@@ -10,10 +10,14 @@ from automacao_gd.infrastructure.logging import setup_logger
 from automacao_gd.application.processing_service import process_downloaded_pdfs
 
 
-def main() -> None:
+def main() -> int:
     ensure_directories()
     setup_logger()
     settings = get_settings()
+    if not settings.DRY_RUN:
+        print("Status: BLOQUEADO")
+        print("Execução real direta desativada; use a opção 4 do CLI.")
+        return 2
 
     payload = process_downloaded_pdfs(
         downloads_root=settings.downloads_dir_path,
@@ -35,7 +39,8 @@ def main() -> None:
     print(f"PDFs arquivados: {payload['total_archived']}")
     print(f"Relatório JSON: {payload['json_report_path']}")
     print(f"Relatório Markdown: {payload['markdown_report_path']}")
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

@@ -88,13 +88,13 @@ def test_audit_is_read_only_and_correct_rows_are_no_change(tmp_path: Path) -> No
     workbook = tmp_path / "historico.xlsx"
     _workbook(
         workbook,
-        {"2025": [("2500000001", "5x LEAPTON LP182", "1x HUAWEI SUN2000")]},
+        {"2025": [("2600001012", "5x LEAPTON LP182", "1x HUAWEI SUN2000")]},
     )
     before = workbook.read_bytes()
 
     result = audit.audit_historical_workbook(
         workbook,
-        technical_resolver=_resolver({"2500000001": _approved()}),
+        technical_resolver=_resolver({"2600001012": _approved()}),
     )
 
     assert workbook.read_bytes() == before
@@ -105,11 +105,11 @@ def test_audit_is_read_only_and_correct_rows_are_no_change(tmp_path: Path) -> No
 def test_audit_proposes_both_equipment_cells_as_one_update(tmp_path: Path) -> None:
     models, audit, _, _, _ = _api()
     workbook = tmp_path / "historico.xlsx"
-    _workbook(workbook, {"2025": [("2500000002", "", "GOKIN AMBIGUO")]})
+    _workbook(workbook, {"2025": [("2600001013", "", "GOKIN AMBIGUO")]})
 
     result = audit.audit_historical_workbook(
         workbook,
-        technical_resolver=_resolver({"2500000002": _approved()}),
+        technical_resolver=_resolver({"2600001013": _approved()}),
     )
     item = result.items[0]
 
@@ -130,9 +130,9 @@ def test_audit_handles_multiple_sheets_header_offset_and_ignores_auxiliary(
     _workbook(
         workbook,
         {
-            "2024": [("2500000003", "", "1x HUAWEI SUN2000")],
-            "2025-2026": [("2500000004", "", "1x HUAWEI SUN2000")],
-            "Dashboard": [("2500000005", "ANTIGA", "ANTIGO")],
+            "2024": [("2600001014", "", "1x HUAWEI SUN2000")],
+            "2025-2026": [("2600001015", "", "1x HUAWEI SUN2000")],
+            "Dashboard": [("2600001016", "ANTIGA", "ANTIGO")],
         },
         header_row=3,
     )
@@ -140,12 +140,12 @@ def test_audit_handles_multiple_sheets_header_offset_and_ignores_auxiliary(
     result = audit.audit_historical_workbook(
         workbook,
         technical_resolver=_resolver(
-            {"2500000003": _approved(), "2500000004": _approved()}
+            {"2600001014": _approved(), "2600001015": _approved()}
         ),
     )
 
     assert result.summary.sheets_analyzed == 2
-    assert {item.protocol for item in result.items} == {"2500000003", "2500000004"}
+    assert {item.protocol for item in result.items} == {"2600001014", "2600001015"}
     assert all(
         item.action is models.BackfillAction.UPDATE_EQUIPMENT
         for item in result.items
@@ -158,8 +158,8 @@ def test_missing_protocol_duplicate_and_missing_pdf_are_blocked(tmp_path: Path) 
     _workbook(
         workbook,
         {
-            "2024": [("2500000006", "A", "B"), (None, "A", "B")],
-            "2025": [("2500000006", "A", "B"), ("2500000007", "A", "B")],
+            "2024": [("2600001017", "A", "B"), (None, "A", "B")],
+            "2025": [("2600001017", "A", "B"), ("2600001018", "A", "B")],
         },
     )
 
@@ -176,7 +176,7 @@ def test_missing_protocol_duplicate_and_missing_pdf_are_blocked(tmp_path: Path) 
 def test_unapproved_pdf_never_proposes_update(tmp_path: Path, status: str) -> None:
     models, audit, _, _, _ = _api()
     workbook = tmp_path / f"{status}.xlsx"
-    _workbook(workbook, {"2025": [("2500000008", "A", "B")]})
+    _workbook(workbook, {"2025": [("2600001019", "A", "B")]})
     proposal = audit.TechnicalProposal(
         status=status,
         pdf_status=status,
@@ -184,7 +184,7 @@ def test_unapproved_pdf_never_proposes_update(tmp_path: Path, status: str) -> No
     )
 
     result = audit.audit_historical_workbook(
-        workbook, technical_resolver=_resolver({"2500000008": proposal})
+        workbook, technical_resolver=_resolver({"2600001019": proposal})
     )
 
     assert result.items[0].action is models.BackfillAction.PENDING_TECHNICAL_REVIEW
@@ -199,18 +199,18 @@ def test_duplicate_solplanet_and_single_field_difference_are_updates(tmp_path: P
         {
             "2025": [
                 (
-                    "2500000009",
+                    "2600001020",
                     "5x LEAPTON LP182",
                     "SOLPLANET | ASW6000\nAISWEI | ASW6000",
                 ),
-                ("2500000010", "5x LEAPTON LP182", "INVERSOR ANTIGO"),
+                ("2600001021", "5x LEAPTON LP182", "INVERSOR ANTIGO"),
             ]
         },
     )
     resolver = _resolver(
         {
-            "2500000009": _approved(inverter="1x SOLPLANET ASW6000"),
-            "2500000010": _approved(),
+            "2600001020": _approved(inverter="1x SOLPLANET ASW6000"),
+            "2600001021": _approved(),
         }
     )
 
@@ -232,7 +232,7 @@ def test_audit_classifies_semantic_differences_without_using_them_as_source(
         {
             "2025": [
                 (
-                    "2500000028",
+                    "2600001039",
                     "MICROINVERSOR | MODELO-ANTIGO",
                     "AISWEI | ASW5000\nAISWEI | ASW5000\nQtd. total: 2 inversores",
                 )
@@ -243,7 +243,7 @@ def test_audit_classifies_semantic_differences_without_using_them_as_source(
         workbook,
         technical_resolver=_resolver(
             {
-                "2500000028": _approved(
+                "2600001039": _approved(
                     module="5x LEAPTON LP182",
                     inverter="1x SOLPLANET ASW6000",
                 )
@@ -265,10 +265,10 @@ def test_audit_classifies_semantic_differences_without_using_them_as_source(
 def test_plan_is_deterministic_and_tampering_is_detected(tmp_path: Path) -> None:
     _, audit, plan, _, _ = _api()
     workbook = tmp_path / "historico.xlsx"
-    _workbook(workbook, {"2025": [("2500000011", "A", "B")]})
+    _workbook(workbook, {"2025": [("2600001022", "A", "B")]})
     result = audit.audit_historical_workbook(
         workbook,
-        technical_resolver=_resolver({"2500000011": _approved()}),
+        technical_resolver=_resolver({"2600001022": _approved()}),
     )
 
     first = plan.build_backfill_plan(result, created_at="2026-07-21T10:00:00Z")
@@ -285,10 +285,10 @@ def test_plan_is_deterministic_and_tampering_is_detected(tmp_path: Path) -> None
 def test_plan_blocks_incompatible_versions_and_contains_no_paths(tmp_path: Path) -> None:
     _, audit, plan, _, _ = _api()
     workbook = tmp_path / "historico.xlsx"
-    _workbook(workbook, {"2025": [("2500000012", "A", "B")]})
+    _workbook(workbook, {"2025": [("2600001023", "A", "B")]})
     result = audit.audit_historical_workbook(
         workbook,
-        technical_resolver=_resolver({"2500000012": _approved()}),
+        technical_resolver=_resolver({"2600001023": _approved()}),
     )
     payload = plan.build_backfill_plan(result, created_at="2026-07-21T10:00:00Z")
     serialized = repr(payload)
@@ -319,10 +319,10 @@ class _ReadyPreflight:
 def test_apply_requires_production_confirmation_and_valid_plan(tmp_path: Path) -> None:
     _, audit, plan, apply, _ = _api()
     workbook = tmp_path / "historico.xlsx"
-    _workbook(workbook, {"2025": [("2500000013", "A", "B")]})
+    _workbook(workbook, {"2025": [("2600001024", "A", "B")]})
     audit_result = audit.audit_historical_workbook(
         workbook,
-        technical_resolver=_resolver({"2500000013": _approved()}),
+        technical_resolver=_resolver({"2600001024": _approved()}),
     )
     payload = plan.build_backfill_plan(audit_result, created_at="2026-07-21T10:00:00Z")
 
@@ -354,8 +354,8 @@ def test_apply_creates_integral_backup_preserves_workbook_and_is_idempotent(
         workbook,
         {
             "2025": [
-                ("2500000014", "1x LEAPTON LP182", "1x HUAWEI SUN2000"),
-                ("2500000015", "OK", "OK"),
+                ("2600001025", "1x LEAPTON LP182", "1x HUAWEI SUN2000"),
+                ("2600001026", "OK", "OK"),
             ]
         },
     )
@@ -388,8 +388,8 @@ def test_apply_creates_integral_backup_preserves_workbook_and_is_idempotent(
     metadata_check.close()
     resolver = _resolver(
         {
-            "2500000014": _approved(),
-            "2500000015": _approved(module="OK", inverter="OK"),
+            "2600001025": _approved(),
+            "2600001026": _approved(module="OK", inverter="OK"),
         }
     )
     audit_result = audit.audit_historical_workbook(workbook, technical_resolver=resolver)
@@ -440,11 +440,11 @@ def test_row_conflict_is_not_modified(tmp_path: Path) -> None:
     workbook = tmp_path / "historico.xlsx"
     _workbook(
         workbook,
-        {"2025": [("2500000016", "1x LEAPTON LP182", "1x HUAWEI SUN2000")]},
+        {"2025": [("2600001027", "1x LEAPTON LP182", "1x HUAWEI SUN2000")]},
     )
     audit_result = audit.audit_historical_workbook(
         workbook,
-        technical_resolver=_resolver({"2500000016": _approved()}),
+        technical_resolver=_resolver({"2600001027": _approved()}),
     )
     payload = plan.build_backfill_plan(audit_result, created_at="2026-07-21T10:00:00Z")
     wb = load_workbook(workbook)
@@ -469,21 +469,21 @@ def test_row_conflict_is_not_modified(tmp_path: Path) -> None:
 def test_public_report_is_allowlisted_and_redacts_paths(tmp_path: Path) -> None:
     _, audit, _, _, report = _api()
     workbook = tmp_path / "historico.xlsx"
-    _workbook(workbook, {"2025": [("2500000017", r"C:\Pessoa\arquivo.pdf", "B")]})
+    _workbook(workbook, {"2025": [("2600001028", r"C:\Pessoa\arquivo.pdf", "B")]})
     result = audit.audit_historical_workbook(
         workbook,
-        technical_resolver=_resolver({"2500000017": _approved()}),
+        technical_resolver=_resolver({"2600001028": _approved()}),
     )
 
     public = report.build_audit_public_payload(result)
     serialized = repr(public)
 
-    assert public["items"][0]["protocol"] == "2500000017"
+    assert public["items"][0]["protocol"] == "2600001028"
     for forbidden in ("C:\\", "Z:\\", "\\\\servidor\\", "/home/", ".pdf", ".xlsx"):
         assert forbidden not in serialized
 
 
-@pytest.mark.parametrize("protocol", ["2503261731", "2505160008", "2506022885"])
+@pytest.mark.parametrize("protocol", ["2600001064", "2600001070", "2600001073"])
 def test_known_anonymized_protocols_remain_pending_without_hardcode(
     tmp_path: Path, protocol: str
 ) -> None:
@@ -539,7 +539,7 @@ def test_apply_public_report_omits_backup_path(tmp_path: Path) -> None:
             models.BackfillApplyItemResult(
                 workbook_sheet="2025",
                 workbook_row=2,
-                protocol="2500000018",
+                protocol="2600001029",
                 action=models.BackfillAction.UPDATE_EQUIPMENT,
                 previous_module_text="ANTIGA",
                 final_module_text="5x LEAPTON LP182",
@@ -588,11 +588,11 @@ def test_only_module_difference_still_proposes_the_complete_pair(tmp_path: Path)
     workbook = tmp_path / "somente_placa.xlsx"
     _workbook(
         workbook,
-        {"2025": [("2500000019", "1x LEAPTON LP182", "1x HUAWEI SUN2000")]},
+        {"2025": [("2600001030", "1x LEAPTON LP182", "1x HUAWEI SUN2000")]},
     )
     result = audit.audit_historical_workbook(
         workbook,
-        technical_resolver=_resolver({"2500000019": _approved()}),
+        technical_resolver=_resolver({"2600001030": _approved()}),
     )
 
     assert result.items[0].action is models.BackfillAction.UPDATE_EQUIPMENT
@@ -605,10 +605,10 @@ def test_preflight_block_prevents_backup_and_write(tmp_path: Path, monkeypatch) 
 
     _, audit, plan, apply, _ = _api()
     workbook = tmp_path / "bloqueada.xlsx"
-    _workbook(workbook, {"2025": [("2500000020", "A", "B")]})
+    _workbook(workbook, {"2025": [("2600001031", "A", "B")]})
     audited = audit.audit_historical_workbook(
         workbook,
-        technical_resolver=_resolver({"2500000020": _approved()}),
+        technical_resolver=_resolver({"2600001031": _approved()}),
     )
     payload = plan.build_backfill_plan(audited, created_at="2026-07-21T10:00:00Z")
     before = workbook.read_bytes()
@@ -644,11 +644,11 @@ def test_save_failure_preserves_original_and_integral_backup(
     workbook = tmp_path / "falha_save.xlsx"
     _workbook(
         workbook,
-        {"2025": [("2500000021", "1x LEAPTON LP182", "1x HUAWEI SUN2000")]},
+        {"2025": [("2600001032", "1x LEAPTON LP182", "1x HUAWEI SUN2000")]},
     )
     audited = audit.audit_historical_workbook(
         workbook,
-        technical_resolver=_resolver({"2500000021": _approved()}),
+        technical_resolver=_resolver({"2600001032": _approved()}),
     )
     payload = plan.build_backfill_plan(audited, created_at="2026-07-21T10:00:00Z")
     original = workbook.read_bytes()
@@ -690,11 +690,11 @@ def test_post_save_verification_failure_keeps_backup_for_manual_rollback(
     workbook = tmp_path / "falha_verificacao.xlsx"
     _workbook(
         workbook,
-        {"2025": [("2500000022", "1x LEAPTON LP182", "1x HUAWEI SUN2000")]},
+        {"2025": [("2600001033", "1x LEAPTON LP182", "1x HUAWEI SUN2000")]},
     )
     audited = audit.audit_historical_workbook(
         workbook,
-        technical_resolver=_resolver({"2500000022": _approved()}),
+        technical_resolver=_resolver({"2600001033": _approved()}),
     )
     payload = plan.build_backfill_plan(audited, created_at="2026-07-21T10:00:00Z")
     original = workbook.read_bytes()
@@ -737,11 +737,11 @@ def test_post_save_verification_detects_unplanned_cell_change(
     workbook = tmp_path / "alteracao_extra.xlsx"
     _workbook(
         workbook,
-        {"2025": [("2500000027", "1x LEAPTON LP182", "1x HUAWEI SUN2000")]},
+        {"2025": [("2600001038", "1x LEAPTON LP182", "1x HUAWEI SUN2000")]},
     )
     audited = audit.audit_historical_workbook(
         workbook,
-        technical_resolver=_resolver({"2500000027": _approved()}),
+        technical_resolver=_resolver({"2600001038": _approved()}),
     )
     payload = plan.build_backfill_plan(audited, created_at="2026-07-21T10:00:00Z")
     real_write = apply._write_prepared_updates
@@ -775,12 +775,12 @@ def test_documented_manual_rollback_restores_the_integral_backup(tmp_path: Path)
     workbook = tmp_path / "rollback.xlsx"
     _workbook(
         workbook,
-        {"2025": [("2500000023", "1x LEAPTON LP182", "1x HUAWEI SUN2000")]},
+        {"2025": [("2600001034", "1x LEAPTON LP182", "1x HUAWEI SUN2000")]},
     )
     original = workbook.read_bytes()
     audited = audit.audit_historical_workbook(
         workbook,
-        technical_resolver=_resolver({"2500000023": _approved()}),
+        technical_resolver=_resolver({"2600001034": _approved()}),
     )
     payload = plan.build_backfill_plan(audited, created_at="2026-07-21T10:00:00Z")
     result = apply.apply_backfill_plan(
@@ -804,14 +804,14 @@ def test_documented_manual_rollback_restores_the_integral_backup(tmp_path: Path)
 def test_audit_blocks_if_workbook_changes_during_read(tmp_path: Path, monkeypatch) -> None:
     _, audit, _, _, _ = _api()
     workbook = tmp_path / "concorrente.xlsx"
-    _workbook(workbook, {"2025": [("2500000024", "A", "B")]})
+    _workbook(workbook, {"2025": [("2600001035", "A", "B")]})
     hashes = iter(("a" * 64, "b" * 64))
     monkeypatch.setattr(audit, "file_sha256", lambda path: next(hashes))
 
     with pytest.raises(audit.HistoricalAuditConsistencyError, match="alterada"):
         audit.audit_historical_workbook(
             workbook,
-            technical_resolver=_resolver({"2500000024": _approved()}),
+            technical_resolver=_resolver({"2600001035": _approved()}),
         )
 
 
@@ -824,8 +824,8 @@ def test_parser_failure_becomes_pending_and_does_not_abort_batch(
         workbook,
         {
             "2025": [
-                ("2500000025", "A", "B"),
-                ("2500000026", "A", "B"),
+                ("2600001036", "A", "B"),
+                ("2600001037", "A", "B"),
             ]
         },
     )
@@ -848,7 +848,7 @@ def test_parser_failure_becomes_pending_and_does_not_abort_batch(
 
     resolver = audit._default_resolver(tmp_path, None)
     items = []
-    for protocol in ("2500000025", "2500000026"):
+    for protocol in ("2600001036", "2600001037"):
         monkeypatch.setattr(audit, "_CURRENT_TEST_PROTOCOL", protocol, raising=False)
         items.append(resolver(protocol))
 
@@ -879,10 +879,10 @@ def test_plan_rejects_unknown_fields_and_invalid_item_types(
 ) -> None:
     _, audit, plan, _, _ = _api()
     workbook = tmp_path / "plano_malformado.xlsx"
-    _workbook(workbook, {"2025": [("2500000029", "A", "B")]})
+    _workbook(workbook, {"2025": [("2600001040", "A", "B")]})
     audited = audit.audit_historical_workbook(
         workbook,
-        technical_resolver=_resolver({"2500000029": _approved()}),
+        technical_resolver=_resolver({"2600001040": _approved()}),
     )
     payload = plan.build_backfill_plan(audited, created_at="2026-07-21T10:00:00Z")
     mutation(payload)
@@ -899,12 +899,12 @@ def test_backup_race_failure_is_controlled_and_does_not_modify_workbook(
     workbook = tmp_path / "falha_backup.xlsx"
     _workbook(
         workbook,
-        {"2025": [("2500000030", "1x LEAPTON LP182", "1x HUAWEI SUN2000")]},
+        {"2025": [("2600001041", "1x LEAPTON LP182", "1x HUAWEI SUN2000")]},
     )
     before = workbook.read_bytes()
     audited = audit.audit_historical_workbook(
         workbook,
-        technical_resolver=_resolver({"2500000030": _approved()}),
+        technical_resolver=_resolver({"2600001041": _approved()}),
     )
     payload = plan.build_backfill_plan(audited, created_at="2026-07-21T10:00:00Z")
     monkeypatch.setattr(
@@ -927,10 +927,10 @@ def test_backup_race_failure_is_controlled_and_does_not_modify_workbook(
 def test_workbook_open_race_failure_is_controlled(tmp_path: Path, monkeypatch) -> None:
     _, audit, plan, apply, _ = _api()
     workbook = tmp_path / "falha_abertura.xlsx"
-    _workbook(workbook, {"2025": [("2500000031", "A", "B")]})
+    _workbook(workbook, {"2025": [("2600001042", "A", "B")]})
     audited = audit.audit_historical_workbook(
         workbook,
-        technical_resolver=_resolver({"2500000031": _approved()}),
+        technical_resolver=_resolver({"2600001042": _approved()}),
     )
     payload = plan.build_backfill_plan(audited, created_at="2026-07-21T10:00:00Z")
     monkeypatch.setattr(
@@ -956,11 +956,11 @@ def test_post_save_reopen_error_has_failed_result_for_report(
     workbook = tmp_path / "falha_reabertura.xlsx"
     _workbook(
         workbook,
-        {"2025": [("2500000032", "1x LEAPTON LP182", "1x HUAWEI SUN2000")]},
+        {"2025": [("2600001043", "1x LEAPTON LP182", "1x HUAWEI SUN2000")]},
     )
     audited = audit.audit_historical_workbook(
         workbook,
-        technical_resolver=_resolver({"2500000032": _approved()}),
+        technical_resolver=_resolver({"2600001043": _approved()}),
     )
     payload = plan.build_backfill_plan(audited, created_at="2026-07-21T10:00:00Z")
     real_verify = apply._verify_saved_workbook
@@ -993,7 +993,7 @@ def test_unsafe_technical_proposal_is_pending_and_never_reaches_public_report(
 ) -> None:
     models, audit, _, _, report = _api()
     workbook = tmp_path / "proposta_insegura.xlsx"
-    _workbook(workbook, {"2025": [("2500000033", "A", "B")]})
+    _workbook(workbook, {"2025": [("2600001044", "A", "B")]})
     unsafe = audit.TechnicalProposal(
         status="approved",
         module_text=r"C:\dados\cliente.pdf",
@@ -1005,7 +1005,7 @@ def test_unsafe_technical_proposal_is_pending_and_never_reaches_public_report(
 
     result = audit.audit_historical_workbook(
         workbook,
-        technical_resolver=_resolver({"2500000033": unsafe}),
+        technical_resolver=_resolver({"2600001044": unsafe}),
     )
     public = report.build_audit_public_payload(result)
     serialized = repr(public)
@@ -1022,7 +1022,7 @@ def test_audit_markdown_includes_reasons_warnings_and_technical_status(
 ) -> None:
     _, audit, _, _, report = _api()
     workbook = tmp_path / "markdown.xlsx"
-    _workbook(workbook, {"2025": [("2500000034", "A", "B")]})
+    _workbook(workbook, {"2025": [("2600001045", "A", "B")]})
     proposal = audit.TechnicalProposal(
         status="approved",
         module_text="5x LEAPTON LP182",
@@ -1033,7 +1033,7 @@ def test_audit_markdown_includes_reasons_warnings_and_technical_status(
     )
     result = audit.audit_historical_workbook(
         workbook,
-        technical_resolver=_resolver({"2500000034": proposal}),
+        technical_resolver=_resolver({"2600001045": proposal}),
     )
 
     markdown = report.build_audit_markdown(report.build_audit_public_payload(result))
@@ -1049,13 +1049,13 @@ def test_audit_reports_share_plan_identity_and_versions(tmp_path: Path) -> None:
     workbook = tmp_path / "linked_artifacts.xlsx"
     _workbook(
         workbook,
-        {"2026": [("2602027219", "25x TSUN 615W N-TYPE", "1x SAJ 10K-R6")]},
+        {"2026": [("2600001085", "25x TSUN 615W N-TYPE", "1x SAJ 10K-R6")]},
     )
     audited = audit.audit_historical_workbook(
         workbook,
         technical_resolver=_resolver(
             {
-                "2602027219": _approved(
+                "2600001085": _approved(
                     module="25x TSUN 615W N-TYPE",
                     inverter="1x SAJ 10K-R6",
                 )
@@ -1089,13 +1089,13 @@ def test_rules5_artifacts_use_one_timestamp_and_preserve_rules4(
     workbook = tmp_path / "artifact_names.xlsx"
     _workbook(
         workbook,
-        {"2026": [("2601204137", "38x TSUN 610W N-TYPE", "1x SAJ 25K-R6")]},
+        {"2026": [("2600001084", "38x TSUN 610W N-TYPE", "1x SAJ 25K-R6")]},
     )
     audited = audit.audit_historical_workbook(
         workbook,
         technical_resolver=_resolver(
             {
-                "2601204137": _approved(
+                "2600001084": _approved(
                     module="38x TSUN 610W N-TYPE",
                     inverter="1x SAJ 25K-R6",
                 )

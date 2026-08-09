@@ -48,6 +48,9 @@ class Settings(BaseSettings):
     PROCESS_EXISTING_AFTER_SKIP: bool = Field(default=True)
     APPLY_EXCEL: bool = Field(default=True)
     APPLY_ARCHIVE: bool = Field(default=True)
+    SYNC_COMPLETION_STATUS: bool = Field(default=False)
+    APPLY_COMPLETION_STATUS: bool = Field(default=False)
+    MAX_COMPLETION_PROTOCOLS_PER_RUN: int = Field(default=5, ge=0)
     RESUME_PIPELINE: bool = Field(default=True)
     SKIP_ALREADY_COMPLETED: bool = Field(default=True)
     CACHE_CLIENT_FOLDER_LOOKUP: bool = Field(default=True)
@@ -208,6 +211,10 @@ class Settings(BaseSettings):
     @property
     def pipeline_state_path(self) -> Path:
         return self.resolve_path(Path("data/state/pipeline_cdp_state.json"))
+
+    @property
+    def option5_execution_lock_path(self) -> Path:
+        return self.resolve_path(Path("data/locks/option5_execution.lock"))
 
     @property
     def client_folder_cache_path(self) -> Path:

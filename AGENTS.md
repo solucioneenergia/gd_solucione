@@ -8,6 +8,28 @@ Este sistema automatiza o Portal GD Neoenergia: lê solicitações, baixa orçam
 
 Decida nesta ordem: (1) solicitação explícita e atual do usuário; (2) SPEC aprovada; (3) ADR aceita; (4) `AGENTS.md` aplicável ao diretório; (5) testes automatizados; (6) comportamento atual do código. Se uma SPEC nova e aprovada contrariar teste antigo, atualize o teste explicitamente e justifique.
 
+## Skills obrigatórias de desenvolvimento
+
+Todo desenvolvimento relacionado a este projeto deve anunciar, ler e aplicar as seguintes
+Skills antes de executar alterações:
+
+- `karpathy-guidelines`: explicitar premissas, preferir a solução mínima, fazer mudanças
+  cirúrgicas e definir critérios verificáveis de sucesso;
+- `prompt-engineering`: estruturar planos, instruções, prompts e delegações com escopo,
+  restrições, evidências esperadas e formato de retorno claros;
+- `test-driven-development`: para funcionalidade, correção, refatoração ou mudança de
+  comportamento, criar e observar um teste RED válido antes do código de produção, seguir com
+  GREEN e REFACTOR e então executar a suíte proporcional ao risco;
+- `subagent-driven-development`: avaliar obrigatoriamente a decomposição do trabalho e usar
+  subagentes para tarefas independentes quando os critérios da Skill forem atendidos, incluindo
+  revisão independente. Não forçar paralelismo em trabalho sequencial, exploratório ou com
+  estado compartilhado.
+
+O uso dessas Skills complementa, e não substitui, as Skills versionadas em `.agents/skills/`,
+as SPECs, ADRs e demais regras deste arquivo. Em tarefas somente de leitura ou documentação sem
+efeito comportamental, não simule RED/GREEN nem delegação artificial; aplique os critérios de
+evidência, simplicidade e verificação pertinentes.
+
 ## Fluxo obrigatório
 
 Para toda alteração funcional, siga:

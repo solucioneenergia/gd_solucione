@@ -16,7 +16,7 @@ from src.models import (
 
 
 SAMPLE_TEXT = """
-ORÇAMENTO DE CONEXÃO PARA CONEXÃO DE MINI E MICROGERAÇÃO - 2606021741
+ORÇAMENTO DE CONEXÃO PARA CONEXÃO DE MINI E MICROGERAÇÃO - 2600001097
 Titular da UC SEVERINO JOSE DA SILVA
 
 3. GERAÇÃO
@@ -45,7 +45,7 @@ FORBIDDEN_INVERTER_TERMS = [
 
 
 def test_extract_protocol_from_pdf_text() -> None:
-    assert extract_protocol_from_pdf_text(SAMPLE_TEXT) == "2606021741"
+    assert extract_protocol_from_pdf_text(SAMPLE_TEXT) == "2600001097"
 
 
 def test_extract_client_from_pdf_text() -> None:
@@ -484,3 +484,40 @@ def test_traditional_inverter_and_microinverter_are_both_formatted() -> None:
         "Total: 1 inversor + 10 microinversores"
     )
 
+
+def test_grouped_section_headers_before_values_are_matched_by_order() -> None:
+    data = parse_generation_data_from_text(
+        """
+        Fabricante(s) do(s) modulos(s)
+        Modelo(s) do(s) modulos(s)
+        Qtd modulos
+        Pot. total da(s) placa(s) (kWp)
+        HANERSUN
+        HN21RN-66HT
+        38
+        23,18
+
+        Fabricante(s) do(s) inversor(es)
+        Modelo(s) do(s) inversor(es)
+        Qtd inversores
+        Pot. total do(s) inversor(es) (kW)
+        Solplanet/Aiswei
+        ASW15K-LT-G2
+        1
+        15
+        Tipo de Conexao
+        Trifasica
+        """
+    )
+
+    assert data.module_manufacturer == "HANERSUN"
+    assert data.module_model == "HN21RN-66HT"
+    assert data.module_quantity == 38
+    assert data.module_total_kwp == "23,18"
+    assert data.inverter_manufacturer == "SOLPLANET"
+    assert data.inverter_model == "ASW15K-LT-G2"
+    assert data.inverter_quantity == 1
+    assert data.inverter_total_kw == "15"
+    assert data.format_module_for_planilha() == "38x HANERSUN HN21RN-66HT"
+    assert data.format_inverter_for_planilha() == "1x SOLPLANET ASW15K-LT-G2"
+    assert data.equipment_parse_warning is None

@@ -146,14 +146,14 @@ def test_frontend_payload_is_whitelisted_and_sanitized() -> None:
         "dry_run": True,
         "total_processed_success": 1,
         "raw_text": "conteúdo integral proibido",
-        "cpf": "123.456.789-09",
+        "cpf": "000.000.000-00",
         "email": "pessoa@example.com",
         "telefone": "81999999999",
         "protocol_results": [
             {
-                "protocol": "2606184625",
+                "protocol": "2600001104",
                 "client_name": (
-                    "CLIENTE | CPF: 123.456.789-09 | "
+                    "CLIENTE | CPF: 000.000.000-00 | "
                     "e-mail: pessoa@example.com | telefone: 81999999999"
                 ),
                 "download_status": "downloaded",
@@ -170,10 +170,10 @@ def test_frontend_payload_is_whitelisted_and_sanitized() -> None:
     protocols = build_frontend_protocols(payload)
     rendered = repr((summary, protocols))
 
-    assert protocols[0]["protocol"] == "2606184625"
+    assert protocols[0]["protocol"] == "2600001104"
     assert "raw_text" not in rendered
     assert "conteúdo integral proibido" not in rendered
-    assert "123.456.789-09" not in rendered
+    assert "000.000.000-00" not in rendered
     assert "pessoa@example.com" not in rendered
     assert "81999999999" not in rendered
     assert "[CPF/CNPJ REMOVIDO]" in protocols[0]["client"]

@@ -3,6 +3,6 @@ import sys as _sys
 import automacao_gd.application.full_pipeline as _impl
 
 if __name__ == "__main__":
-    _impl.main()
+    raise SystemExit(_impl.main())
 else:
     _sys.modules[__name__] = _impl

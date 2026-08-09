@@ -72,6 +72,18 @@ A execução do pipeline pelo terminal apresentou falhas operacionais com ruído
 
 Reverter as alterações nos três módulos de infraestrutura e remover os testes adicionados nesta especificação.
 
+## Adendo 2026-08-09 — substituição atômica sem fallback de cópia
+
+Este adendo, aprovado pela SPEC-009 e pela ADR 0006, substitui o requisito anterior de fallback
+por cópia quando `os.replace()` for negado.
+
+- O arquivo oficial deve permanecer intacto.
+- O temporário validado deve ser removido.
+- A operação deve falhar com código `WORKBOOK_ATOMIC_REPLACE_DENIED` e mensagem operacional.
+- Não é permitido copiar diretamente sobre o arquivo oficial, pois isso viola a atomicidade da
+  ADR 0002 e cria uma janela de corrupção.
+- O operador deve fechar bloqueios, verificar permissão/sincronização e retomar a operação.
+
 ## Adendo 2026-07-24 — isolamento de pendencias tecnicas por protocolo
 
 ### Problema

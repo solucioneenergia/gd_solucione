@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections.abc import Callable
 
 from automacao_gd.application.contracts import OperationResult, OperationStatus
+from automacao_gd.application.operational_guard import OfflineOperationAuthorization
 from automacao_gd.application.preflight import run_preflight
 from automacao_gd.domain.errors import OperationalBlockError
 from automacao_gd.infrastructure.config import Settings, get_settings
@@ -32,22 +33,40 @@ class ApplicationController:
             lambda: InspectPortalUseCase(self.settings).execute(confirm_login),
         )
 
-    def process_downloads(self, *, dry_run: bool) -> OperationResult:
+    def process_downloads(
+        self,
+        *,
+        dry_run: bool,
+        authorization: OfflineOperationAuthorization | None = None,
+    ) -> OperationResult:
         from automacao_gd.application.use_cases.process_downloads import (
             ProcessDownloadedPdfsUseCase,
         )
 
         return self._execute(
             "Processamento offline concluído.",
-            lambda: ProcessDownloadedPdfsUseCase(self.settings).execute(dry_run=dry_run),
+            lambda: ProcessDownloadedPdfsUseCase(self.settings).execute(
+                dry_run=dry_run,
+                authorization=authorization,
+            ),
         )
 
-    def run_pipeline(self) -> OperationResult:
-        from automacao_gd.application.use_cases.run_pipeline import RunFullPipelineUseCase
+    def run_pipeline(self, *, confirmation: str | None = None) -> OperationResult:
+        from automacao_gd.application.full_pipeline import run_full_cdp_pipeline
 
         return self._execute(
             "Pipeline CDP concluído.",
-            lambda: RunFullPipelineUseCase(self.settings).execute(),
+            lambda: run_full_cdp_pipeline(self.settings, confirmation=confirmation),
+        )
+
+    def sync_completion_status(self) -> OperationResult:
+        from automacao_gd.application.use_cases.sync_completion import (
+            SyncCompletionStatusUseCase,
+        )
+
+        return self._execute(
+            "SincronizaÃ§Ã£o de conclusÃ£o concluÃ­da.",
+            lambda: SyncCompletionStatusUseCase(self.settings).execute(),
         )
 
     @staticmethod

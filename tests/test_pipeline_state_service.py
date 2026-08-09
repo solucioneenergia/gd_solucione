@@ -1,3 +1,4 @@
+import hashlib
 import json
 from pathlib import Path
 from types import SimpleNamespace
@@ -65,6 +66,8 @@ def _completed_artifacts(tmp_path: Path, protocol: str) -> dict:
             "module_source": "synthetic",
             "inverter_source": "synthetic",
             "equipment": serialize_equipment_cache(generation),
+            "source_protocol": protocol,
+            "source_pdf_sha256": hashlib.sha256(b"%PDF-1.4\n").hexdigest(),
         },
         "client_folder": {
             "status": "found",
@@ -99,6 +102,24 @@ def test_completed_protocol_is_not_skipped_when_force_reprocess(tmp_path: Path) 
         last_step="completed",
         data=_completed_artifacts(tmp_path, protocol),
     )
+
+    assert store.should_skip_completed(protocol, _settings(tmp_path)) is False
+
+
+def test_completed_protocol_is_reprocessed_when_pdf_fingerprint_changes(
+    tmp_path: Path,
+) -> None:
+    protocol = "2601"
+    artifacts = _completed_artifacts(tmp_path, protocol)
+    pdf_path = Path(artifacts["download"]["pdf_path"])
+    store = PipelineStateStore(path=tmp_path / "state.json", resume=False)
+    store.update_protocol(
+        protocol,
+        status="completed",
+        last_step="completed",
+        data=artifacts,
+    )
+    pdf_path.write_bytes(b"%PDF-1.4\nCONTEUDO ALTERADO\n")
 
     assert store.should_skip_completed(protocol, _settings(tmp_path)) is False
 
@@ -151,7 +172,7 @@ def test_state_is_persisted_after_each_step(tmp_path: Path) -> None:
     store = PipelineStateStore(path=state_path, resume=False)
 
     store.mark_selected(
-        PortalSolicitation(protocol=protocol, client_name="Cliente", status="CONCLUIDA")
+        PortalSolicitation(protocol=protocol, client_name="CLIENTE SINTETICO LTDA", status="CONCLUIDA")
     )
     selected_state = json.loads(state_path.read_text(encoding="utf-8"))
     assert selected_state["protocols"][protocol]["last_step"] == "selected"

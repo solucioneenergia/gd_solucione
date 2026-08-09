@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 from apps.desktop import window
@@ -40,7 +41,8 @@ def test_window_uses_static_index_when_dist_does_not_exist(tmp_path, monkeypatch
     static_index.write_text("<html>static</html>", encoding="utf-8")
     monkeypatch.setattr(window, "FRONTEND_ROOT", frontend)
 
-    assert window._frontend_entrypoint() == static_index
+    assert window._frontend_entrypoint(allow_static_fallback=True) == static_index
+    assert window._frontend_entrypoint() is None
 
 
 def test_static_frontend_is_safe_without_vite() -> None:
@@ -52,11 +54,11 @@ def test_static_frontend_is_safe_without_vite() -> None:
     assert "./app.js" in source
 
 
-def test_static_dashboard_does_not_show_fallback_banner() -> None:
+def test_static_dashboard_is_explicitly_identified_as_recovery_only() -> None:
     source = Path("apps/desktop/frontend/static/index.html").read_text(encoding="utf-8")
 
-    assert "static-mode-banner" not in source
-    assert "Modo visual estático — execute npm run build para ativar React." not in source
+    assert "static-mode-banner" in source
+    assert "Modo de recuperação estático" in source
 
 
 def test_static_frontend_contains_visual_sections() -> None:
@@ -73,11 +75,11 @@ def test_static_frontend_contains_visual_sections() -> None:
         assert label in source
 
 
-def test_static_frontend_contains_four_mock_protocol_rows() -> None:
+def test_static_frontend_contains_empty_state_without_operational_protocols() -> None:
     source = Path("apps/desktop/frontend/static/index.html").read_text(encoding="utf-8")
 
-    for protocol in ["2606184625", "2606174347", "2606123663", "2606021741"]:
-        assert protocol in source
+    assert "Nenhum protocolo recente encontrado" in source
+    assert re.search(r"(?<!\d)\d{8,}(?!\d)", source) is None
 
 
 def test_static_frontend_contains_process_labels() -> None:
@@ -132,4 +134,5 @@ def test_static_styles_define_process_flow_glow() -> None:
 def test_static_production_confirmation_is_preserved() -> None:
     source = Path("apps/desktop/frontend/static/app.js").read_text(encoding="utf-8")
 
-    assert "SIM, EXECUTAR PRODUÇÃO" in source
+    assert "get_production_confirmation" in source
+    assert "contract.confirmation" in source

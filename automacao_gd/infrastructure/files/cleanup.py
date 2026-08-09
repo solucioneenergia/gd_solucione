@@ -86,7 +86,11 @@ class TemporaryCleanupService:
     ) -> CleanupResult:
         result = CleanupResult(dry_run=dry_run)
         explicit_candidates = candidates is not None
-        paths = list(candidates) if explicit_candidates else _scan_paths(self.allowed_root)
+        paths = (
+            list(candidates)
+            if candidates is not None
+            else _scan_paths(self.allowed_root)
+        )
 
         for raw_path in paths:
             try:

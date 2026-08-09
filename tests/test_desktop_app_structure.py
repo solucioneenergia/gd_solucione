@@ -34,12 +34,13 @@ def test_apps_desktop_main_is_importable() -> None:
 
 
 def test_desktop_main_contains_reference_dashboard_sections() -> None:
+    entrypoint = Path("apps/desktop/frontend/index.html").read_text(encoding="utf-8")
     source = "\n".join(
-        [
-            Path("apps/desktop/frontend/index.html").read_text(encoding="utf-8"),
-            Path("apps/desktop/frontend/src/App.tsx").read_text(encoding="utf-8"),
-        ]
+        path.read_text(encoding="utf-8")
+        for path in Path("apps/desktop/frontend/src").rglob("*.tsx")
     )
+
+    assert '<div id="root"></div>' in entrypoint
 
     for expected_text in [
         "Automação GD Neoenergia — Desktop Visual",

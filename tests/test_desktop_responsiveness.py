@@ -110,7 +110,8 @@ def test_static_frontend_keeps_required_actions_accessible() -> None:
 def test_static_frontend_still_blocks_production_without_exact_confirmation() -> None:
     source = _read(STATIC_JS)
 
-    assert "SIM, EXECUTAR PRODU" in source
+    assert "get_production_confirmation" in source
+    assert "contract.confirmation" in source
     assert "requestProduction" in source
     assert "confirmacao" in source or "confirmation" in source
 

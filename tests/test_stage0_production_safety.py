@@ -23,6 +23,7 @@ from automacao_gd.presentation import cli
 from automacao_gd.presentation.cli import exit_code_for_status
 from automacao_gd.presentation.controller import ApplicationController
 from automacao_gd.presentation.operational_output import format_operation_summary
+from tests._operational_auth import authorize_synthetic_pdfs
 
 
 def _workbook(path: Path) -> Path:
@@ -142,11 +143,11 @@ def test_unc_and_local_paths_do_not_require_drive_letter_probe(
     monkeypatch.setattr(availability.os.path, "exists", record_exists)
     assert validate_workbook_availability(local).ok is True
     assert "Z:\\" not in probes
-    assert availability.windows_drive_root(r"\\server\share\folder\book.xlsx") is None
+    assert availability.windows_drive_root(r"\\SERVIDOR\SINTETICO\folder\book.xlsx") is None
 
 
 def test_valid_unc_path_is_checked_without_mapped_drive(monkeypatch) -> None:
-    path = Path(r"\\server\share\folder\book.xlsx")
+    path = Path(r"\\SERVIDOR\SINTETICO\folder\book.xlsx")
     workbook = SimpleNamespace(close=Mock())
     monkeypatch.setattr(Path, "exists", lambda _self: True)
     monkeypatch.setattr(Path, "is_dir", lambda self: self != path)
@@ -307,13 +308,13 @@ def test_controller_catches_operational_block_without_traceback(
 def test_second_validation_blocks_all_real_writes_and_keeps_pdfs_pending(
     tmp_path: Path, monkeypatch
 ) -> None:
-    pdf = tmp_path / "Orcamento_de_Conexao_123.pdf"
+    pdf = tmp_path / "Orcamento_de_Conexao_2600000000.pdf"
     pdf.write_bytes(b"%PDF-1.4")
     simulated = processing_service._empty_result(pdf)
     simulated.update(
         {
             "success": True,
-            "protocol": "123",
+            "protocol": "2600000000",
             "client_name": "Cliente",
             "client_folder_match_type": "protocol",
         }
@@ -356,6 +357,8 @@ def test_second_validation_blocks_all_real_writes_and_keeps_pdfs_pending(
         pdf_paths=[pdf],
         apply_excel=True,
         apply_archive=True,
+        allowed_protocols={"2600000000"},
+        authorization=authorize_synthetic_pdfs(tmp_path, [pdf]),
     )
 
     assert validation.call_count == 2
@@ -479,12 +482,15 @@ def test_status_exit_codes(status: OperationStatus, exit_code: int) -> None:
 def test_interactive_cli_returns_last_operation_exit_code(
     status: OperationStatus, expected: int, monkeypatch
 ) -> None:
-    answers = iter(["5", "0"])
+    answers = iter(
+        ["5", full_pipeline.build_option5_strong_confirmation(5), "0"]
+    )
 
     class FakeController:
         settings = SimpleNamespace(DRY_RUN=True)
 
-        def run_pipeline(self):
+        def run_pipeline(self, *, confirmation: str | None = None):
+            assert confirmation == full_pipeline.build_option5_strong_confirmation(5)
             return OperationResult(
                 status is OperationStatus.SUCESSO,
                 "resultado",

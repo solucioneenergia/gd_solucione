@@ -49,7 +49,7 @@ def test_fuzzy_review_threshold_cannot_exceed_auto_threshold() -> None:
 def test_protocol_component_rejects_path_traversal() -> None:
     with pytest.raises(ValueError):
         validate_protocol_component("../../segredo")
-    assert validate_protocol_component("2606184625") == "2606184625"
+    assert validate_protocol_component("2600001104") == "2600001104"
 
 
 def test_path_must_remain_inside_root(tmp_path: Path) -> None:

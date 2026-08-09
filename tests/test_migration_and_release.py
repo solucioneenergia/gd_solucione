@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import json
+import os
+import subprocess
 import zipfile
 from pathlib import Path
 from types import SimpleNamespace
@@ -9,11 +12,21 @@ import pytest
 from scripts import inspect_portal_table
 from scripts.create_clean_release_zip import create_clean_release_zip
 from scripts.migrate_v1_operational_data import migrate_operational_data
+from scripts.validate_engineering_foundation import REQUIRED_FILES as FOUNDATION_REQUIRED_FILES
 
 
 def _write(path: Path, content: bytes = b"data") -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_bytes(content)
+
+
+def _git(root: Path, *args: str) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        ["git", "-C", str(root), *args],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
 
 
 def _prepare_migration_roots(tmp_path: Path) -> tuple[Path, Path]:
@@ -54,12 +67,25 @@ def test_migration_dry_run_does_not_change_v2(tmp_path: Path) -> None:
 def test_migration_apply_copies_only_allowed_data_and_creates_backups(
     tmp_path: Path,
 ) -> None:
+    from automacao_gd.application.operational_guard import (
+        MIGRATION_OPERATION,
+        authorize_direct_route,
+        build_direct_route_confirmation,
+    )
+
     v1, v2 = _prepare_migration_roots(tmp_path)
     _write(v2 / "data/state/pipeline_cdp_state.json", b"state-v2-old")
     _write(v2 / "data/cache/client_folder_cache.json", b"cache-v2-old")
     _write(v2 / "data/downloads/old/existing.pdf", b"%PDF-v2-old")
 
-    report = migrate_operational_data(v1, v2, apply=True)
+    confirmation = build_direct_route_confirmation(MIGRATION_OPERATION)
+    authorization = authorize_direct_route(MIGRATION_OPERATION, confirmation)
+    report = migrate_operational_data(
+        v1,
+        v2,
+        apply=True,
+        authorization=authorization,
+    )
 
     assert (v2 / "data/state/pipeline_cdp_state.json").read_bytes() == b"state-v1"
     assert (v2 / "data/cache/client_folder_cache.json").read_bytes() == b"cache-v1"
@@ -85,10 +111,20 @@ def test_migration_apply_copies_only_allowed_data_and_creates_backups(
 
 
 def _prepare_release_project(root: Path) -> None:
+    for relative in FOUNDATION_REQUIRED_FILES:
+        _write(root / relative, b"synthetic")
     _write(root / "README.md", b"readme")
     _write(root / "requirements.txt", b"pytest")
     _write(root / ".env.example", b"DRY_RUN=true")
-    _write(root / "automacao_gd/__init__.py", b"")
+    _write(root / "pyproject.toml", b'[project]\nversion = "2.0.2"\n')
+    _write(root / "desktop_app.py", b"def main(): return 0")
+    _write(root / "automacao_gd/__init__.py", b'__version__ = "2.0.2"\n')
+    _write(root / "apps/__init__.py", b"")
+    _write(root / "apps/desktop/__init__.py", b"")
+    _write(root / "apps/desktop/frontend/package.json", b'{"version":"2.0.2"}')
+    _write(root / "apps/desktop/frontend/pnpm-lock.yaml", b"synthetic")
+    _write(root / "apps/desktop/frontend/dist/index.html", b"synthetic")
+    _write(root / "apps/desktop/frontend/dist/assets/index.js", b"synthetic")
     _write(root / "docs/guide.md", b"docs")
     _write(root / "scripts/tool.py", b"print('ok')")
     _write(root / "tests/test_ok.py", b"def test_ok(): pass")
@@ -106,6 +142,20 @@ def _prepare_release_project(root: Path) -> None:
     _write(root / "frontend/node_modules/react/index.js", b"dependency")
     _write(root / "frontend/dist/assets/index.js", b"compiled")
     _write(root / "scratch.tmp", b"temporary")
+    _write(root / ".gitignore", b"ignored.txt\napps/desktop/frontend/dist/\n")
+    _git(root, "init")
+    _git(root, "add", ".")
+    _git(
+        root,
+        "-c",
+        "user.name=Synthetic",
+        "-c",
+        "user.email=synthetic@example.invalid",
+        "commit",
+        "-m",
+        "synthetic release fixture",
+    )
+    _write(root / "ignored.txt", b"must not ship")
 
 
 def test_clean_release_contains_required_files_and_no_sensitive_data(
@@ -125,6 +175,16 @@ def test_clean_release_contains_required_files_and_no_sensitive_data(
     assert "docs/guide.md" in names
     assert "scripts/tool.py" in names
     assert "tests/test_ok.py" in names
+    assert "release-manifest.json" in names
+    assert all("\\" not in name for name in names)
+    manifest = json.loads(zipfile.ZipFile(output).read("release-manifest.json"))
+    assert manifest["head_sha"] == _git(project, "rev-parse", "HEAD").stdout.strip()
+    assert set(manifest["generated_artifacts"]) == {
+        "apps/desktop/frontend/dist/index.html",
+        "apps/desktop/frontend/dist/assets/index.js",
+    }
+    assert not _git(project, "ls-files", "apps/desktop/frontend/dist").stdout
+    assert "ignored.txt" not in names
     forbidden = {
         ".env",
         "data/auth/storage_state.json",
@@ -143,47 +203,46 @@ def test_clean_release_contains_required_files_and_no_sensitive_data(
     }
     assert names.isdisjoint(forbidden)
     assert report["validation"]["valid"] is True
-    assert (project / "data/logs/release_validation.json").is_file()
-    assert (project / "data/logs/release_validation.md").is_file()
+    assert (tmp_path / "release_reports/release_validation.json").is_file()
+    assert (tmp_path / "release_reports/release_validation.md").is_file()
 
 
-def test_inspect_portal_script_uses_factory_and_disconnects_cdp(
+def test_release_bytes_do_not_depend_on_checkout_file_timestamps(tmp_path: Path) -> None:
+    project = tmp_path / "project"
+    project.mkdir()
+    _prepare_release_project(project)
+    first = tmp_path / "first.zip"
+    second = tmp_path / "second.zip"
+
+    create_clean_release_zip(project, first)
+    os.utime(project / "README.md", (946684800, 946684800))
+    create_clean_release_zip(project, second)
+
+    assert first.read_bytes() == second.read_bytes()
+
+
+def test_inspect_portal_script_is_blocked_before_factory(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     calls: list[str] = []
     settings = SimpleNamespace(CDP_MODE=True)
-    record = SimpleNamespace(
-        protocol="2601",
-        client_name="Cliente",
-        status="CONCLUÍDA",
-        entry_date="01/01/2026",
-    )
-
-    class FakeAutomation:
-        def start_browser(self): calls.append("start")
-        def open_portal(self): calls.append("open")
-        def wait_manual_login(self): calls.append("login")
-        def save_auth_state(self): calls.append("auth")
-        def read_current_page_table(self): return [record]
-        def save_table_snapshot(self, records): return Path("snapshot.json")
-        def close(self): calls.append("close")
-
     monkeypatch.setattr(inspect_portal_table, "ensure_directories", lambda: None)
     monkeypatch.setattr(inspect_portal_table, "setup_logger", lambda: None)
     monkeypatch.setattr(inspect_portal_table, "get_settings", lambda: settings)
     monkeypatch.setattr(
         inspect_portal_table,
         "create_portal_automation",
-        lambda effective: FakeAutomation(),
+        lambda effective: calls.append("factory"),
     )
     monkeypatch.setattr("builtins.input", lambda prompt="": "")
 
-    inspect_portal_table.main()
+    exit_code = inspect_portal_table.main()
 
     output = capsys.readouterr().out
-    assert calls == ["start", "open", "login", "auth", "close"]
-    assert "Edge permanecerá aberto" in output
+    assert exit_code == 2
+    assert calls == []
+    assert "Status: BLOQUEADO" in output
 
 
 @pytest.mark.parametrize(

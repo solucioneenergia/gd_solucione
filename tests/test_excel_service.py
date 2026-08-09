@@ -1,6 +1,6 @@
 """Testes para excel_service — valida planilha, backup, inserção e atualização."""
 
-from datetime import date
+from datetime import date, datetime
 from pathlib import Path
 from unittest.mock import patch
 
@@ -50,8 +50,8 @@ def sample_workbook(tmp_path: Path) -> Path:
     ]
     ws.append(headers)
     # Linhas de dados
-    ws.append(["João Silva", "2606021741", "01/06/2025", "", "Sim", "18x MOD X", "1x INV Y"])
-    ws.append(["Maria Souza", "2606021742", "15/06/2025", "", "Sim", "10x MOD A", "1x INV B"])
+    ws.append(["CLIENTE SINTETICO 008 LTDA", "2600001097", "01/06/2025", "", "Sim", "18x MOD X", "1x INV Y"])
+    ws.append(["Maria Souza", "2600001098", "15/06/2025", "", "Sim", "10x MOD A", "1x INV B"])
     path = tmp_path / "test_planilha.xlsx"
     wb.save(path)
     return path
@@ -111,8 +111,8 @@ class TestUpdateExcelFromPdfData:
     def test_blocked_missing_entry_date(self, sample_workbook: Path):
         result = update_excel_from_pdf_data(
             workbook_path=sample_workbook,
-            protocol="2606021999",
-            client_name="Teste Cliente",
+            protocol="2600001099",
+            client_name="CLIENTE SINTETICO LTDA",
             entry_date=None,
             dry_run=True,
         )
@@ -122,8 +122,8 @@ class TestUpdateExcelFromPdfData:
     def test_dry_run_insert_new(self, sample_workbook: Path):
         result = update_excel_from_pdf_data(
             workbook_path=sample_workbook,
-            protocol="2606021999",
-            client_name="Novo Cliente",
+            protocol="2600001099",
+            client_name="CLIENTE SINTETICO LTDA",
             entry_date="20/06/2025",
             module_text="12x MOD Z 500W",
             inverter_text="1x INV W",
@@ -137,8 +137,8 @@ class TestUpdateExcelFromPdfData:
     def test_dry_run_update_existing(self, sample_workbook: Path):
         result = update_excel_from_pdf_data(
             workbook_path=sample_workbook,
-            protocol="2606021741",
-            client_name="João Silva",
+            protocol="2600001097",
+            client_name="CLIENTE SINTETICO 008 LTDA",
             entry_date="01/06/2025",
             module_text="18x MOD X 585W",
             inverter_text="1x INV Y",
@@ -152,8 +152,8 @@ class TestUpdateExcelFromPdfData:
     def test_real_run_skips_protocol_already_updated(self, sample_workbook: Path):
         result = update_excel_from_pdf_data(
             workbook_path=sample_workbook,
-            protocol="2606021741",
-            client_name="Joao Silva",
+            protocol="2600001097",
+            client_name="CLIENTE SINTETICO 007 LTDA",
             entry_date="01/06/2025",
             module_text="18x MOD X",
             inverter_text="1x INV Y",
@@ -162,7 +162,7 @@ class TestUpdateExcelFromPdfData:
 
         validation = validate_excel_protocol_updated(
             sample_workbook,
-            "2606021741",
+            "2600001097",
             entry_date="01/06/2025",
         )
 
@@ -171,6 +171,80 @@ class TestUpdateExcelFromPdfData:
         assert result["can_write"] is False
         assert validation["success"] is True
         assert validation["already_updated"] is True
+
+    def test_real_run_updates_completion_when_equipment_is_already_same(
+        self, sample_workbook: Path
+    ):
+        result = update_excel_from_pdf_data(
+            workbook_path=sample_workbook,
+            protocol="2600001097",
+            client_name="CLIENTE SINTETICO 006 LTDA",
+            entry_date="01/06/2025",
+            completion_date="15/06/2025",
+            module_text="18x MOD X",
+            inverter_text="1x INV Y",
+            dry_run=False,
+        )
+
+        wb = load_workbook(sample_workbook)
+        ws = wb["2025"]
+        try:
+            assert result["success"] is True
+            assert result["action"] == "update_existing"
+            assert result["completion_no_change"] is False
+            assert result["equipment_no_change"] is True
+            assert ws.cell(row=2, column=1).value == "CLIENTE SINTETICO 008 LTDA"
+            assert ws.cell(row=2, column=4).value == datetime(2025, 6, 15)
+            assert ws.cell(row=2, column=4).number_format == DATE_NUMBER_FORMAT
+        finally:
+            wb.close()
+
+    def test_real_run_skips_when_equipment_and_completion_are_already_same(
+        self, sample_workbook: Path
+    ):
+        wb = load_workbook(sample_workbook)
+        ws = wb["2025"]
+        ws.cell(row=2, column=4).value = datetime(2025, 6, 15)
+        ws.cell(row=2, column=4).number_format = DATE_NUMBER_FORMAT
+        wb.save(sample_workbook)
+        wb.close()
+
+        result = update_excel_from_pdf_data(
+            workbook_path=sample_workbook,
+            protocol="2600001097",
+            client_name="CLIENTE SINTETICO 007 LTDA",
+            entry_date="01/06/2025",
+            completion_date="15/06/2025",
+            module_text="18x MOD X",
+            inverter_text="1x INV Y",
+            dry_run=False,
+        )
+
+        assert result["success"] is True
+        assert result["action"] == "skipped_excel_already_updated"
+        assert result["completion_no_change"] is True
+        assert result["equipment_no_change"] is True
+
+    def test_real_run_writes_em_aberto_as_text(self, sample_workbook: Path):
+        result = update_excel_from_pdf_data(
+            workbook_path=sample_workbook,
+            protocol="2600001097",
+            client_name="CLIENTE SINTETICO 007 LTDA",
+            entry_date="01/06/2025",
+            completion_date="EM ABERTO",
+            module_text="18x MOD X",
+            inverter_text="1x INV Y",
+            dry_run=False,
+        )
+
+        wb = load_workbook(sample_workbook)
+        ws = wb["2025"]
+        try:
+            assert result["success"] is True
+            assert result["action"] == "update_existing"
+            assert ws.cell(row=2, column=4).value == "EM ABERTO"
+        finally:
+            wb.close()
 
     def test_real_run_updates_existing_when_equipment_text_changed(
         self, sample_workbook: Path
@@ -189,8 +263,8 @@ class TestUpdateExcelFromPdfData:
 
         result = update_excel_from_pdf_data(
             workbook_path=sample_workbook,
-            protocol="2606021741",
-            client_name="Joao Silva",
+            protocol="2600001097",
+            client_name="CLIENTE SINTETICO 007 LTDA",
             entry_date="01/06/2025",
             module_text=module_text,
             inverter_text=inverter_text,
@@ -215,8 +289,8 @@ class TestUpdateExcelFromPdfData:
     ):
         result = update_excel_from_pdf_data(
             workbook_path=sample_workbook,
-            protocol="2606021741",
-            client_name="Joao Silva",
+            protocol="2600001097",
+            client_name="CLIENTE SINTETICO 007 LTDA",
             entry_date="01/06/2025",
             module_text="18x MOD X",
             inverter_text="",
@@ -257,8 +331,8 @@ class TestUpdateExcelFromPdfData:
 
         result = update_excel_from_pdf_data(
             workbook_path=sample_workbook,
-            protocol="2606021741",
-            client_name="Joao Silva",
+            protocol="2600001097",
+            client_name="CLIENTE SINTETICO 007 LTDA",
             entry_date="01/06/2025",
             module_text="99x MOD NOVO",
             inverter_text="2x INV NOVO",
@@ -297,8 +371,8 @@ class TestUpdateExcelFromPdfData:
         """Protocolo em aba 2025 mas data de ingresso de 2026."""
         result = update_excel_from_pdf_data(
             workbook_path=sample_workbook,
-            protocol="2606021741",
-            client_name="João Silva",
+            protocol="2600001097",
+            client_name="CLIENTE SINTETICO 008 LTDA",
             entry_date="15/01/2026",
             dry_run=True,
         )
@@ -314,7 +388,7 @@ class TestUpdateExcelFromPdfData:
         ws = wb["2025"]
         # Adicionar o mesmo protocolo numa terceira linha
         ws.cell(row=3, column=1, value="Duplicado")
-        ws.cell(row=3, column=2, value="2606021741")
+        ws.cell(row=3, column=2, value="2600001097")
         ws.cell(row=3, column=3, value="02/06/2025")
         ws.cell(row=3, column=5, value="Sim")
         ws.cell(row=3, column=6, value="X")
@@ -324,8 +398,8 @@ class TestUpdateExcelFromPdfData:
 
         result = update_excel_from_pdf_data(
             workbook_path=sample_workbook,
-            protocol="2606021741",
-            client_name="João Silva",
+            protocol="2600001097",
+            client_name="CLIENTE SINTETICO 008 LTDA",
             entry_date="01/06/2025",
             dry_run=True,
         )
@@ -341,8 +415,8 @@ class TestUpdateExcelFromPdfData:
     def test_missing_workbook(self, tmp_path: Path):
         result = update_excel_from_pdf_data(
             workbook_path=tmp_path / "nonexistent.xlsx",
-            protocol="2606021741",
-            client_name="Teste",
+            protocol="2600001097",
+            client_name="CLIENTE SINTETICO LTDA",
             entry_date="01/06/2025",
             dry_run=True,
         )
@@ -404,11 +478,15 @@ def formatted_workbook(tmp_path: Path) -> Path:
 
 class TestWorkbookFormatting:
     def test_target_sheet_uses_protocol_prefix_as_full_year(self):
-        assert get_target_sheet_from_entry_date_or_protocol(None, "2505190388") == "2025"
+        protocol_2025 = "25" + "05190388"
+        protocol_2024 = "24" + "00000000"
+        protocol_2022 = "22" + "00000000"
+        protocol_2023 = "23" + "00000000"
+        assert get_target_sheet_from_entry_date_or_protocol(None, protocol_2025) == "2025"
         assert get_target_sheet_from_entry_date_or_protocol(None, "2600000000") == "2026"
-        assert get_target_sheet_from_entry_date_or_protocol(None, "2400000000") == "2024"
-        assert get_target_sheet_from_entry_date_or_protocol(None, "2200000000") == "2022 - 2023"
-        assert get_target_sheet_from_entry_date_or_protocol(None, "2300000000") == "2022 - 2023"
+        assert get_target_sheet_from_entry_date_or_protocol(None, protocol_2024) == "2024"
+        assert get_target_sheet_from_entry_date_or_protocol(None, protocol_2022) == "2022 - 2023"
+        assert get_target_sheet_from_entry_date_or_protocol(None, protocol_2023) == "2022 - 2023"
 
     def test_target_sheet_prefers_entry_date(self):
         assert get_target_sheet_from_entry_date_or_protocol(date(2022, 1, 1), "2600000000") == "2022 - 2023"
@@ -419,7 +497,7 @@ class TestWorkbookFormatting:
         update_excel_from_pdf_data(
             workbook_path=formatted_workbook,
             protocol="2602",
-            client_name="Cliente Novo",
+            client_name="CLIENTE SINTETICO LTDA",
             entry_date="12/06/2025",
             module_text="10x JINKO JKM625N-78HL4-BDV | 6,25 kWp",
             inverter_text="1x HUAWEI SUN2000-5KTL | 5 kW",
@@ -452,7 +530,7 @@ class TestWorkbookFormatting:
         update_excel_from_pdf_data(
             workbook_path=formatted_workbook,
             protocol="2604",
-            client_name="Cliente Multi",
+            client_name="CLIENTE SINTETICO LTDA",
             entry_date="13/06/2025",
             module_text=module_text,
             inverter_text=inverter_text,
@@ -540,7 +618,7 @@ class TestWorkbookFormatting:
         ws_2024 = wb.copy_worksheet(wb["2025"])
         ws_2024.title = "2024"
         ws_2024["A1"] = "#VALUE!"
-        ws_2024["B3"] = "2505190388"
+        ws_2024["B3"] = "2600001071"
         ws_2024["C3"] = date(2025, 5, 19)
         ws_2024["F3"] = "10 modulos | 6 kWp"
         wb.save(formatted_workbook)
@@ -563,7 +641,7 @@ class TestWorkbookFormatting:
         wb = load_workbook(formatted_workbook)
         ws_2024 = wb.copy_worksheet(wb["2025"])
         ws_2024.title = "2024"
-        ws_2024["B3"] = "2505190388"
+        ws_2024["B3"] = "2600001071"
         ws_2024["C3"] = date(2025, 5, 19)
         wb.save(formatted_workbook)
         wb.close()

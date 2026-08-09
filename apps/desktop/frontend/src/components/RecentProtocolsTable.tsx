@@ -1,5 +1,4 @@
 import { Badge } from "./Badge";
-import { recentProtocols } from "../data/mockDashboard";
 
 export type RecentProtocol = {
   protocol: string;
@@ -11,7 +10,7 @@ export type RecentProtocol = {
 };
 
 export function RecentProtocolsTable({ protocols }: { protocols?: RecentProtocol[] }) {
-  const rows = protocols && protocols.length > 0 ? protocols : recentProtocols;
+  const rows = protocols ?? [];
 
   return (
     <section className="panel protocols-panel">
@@ -29,16 +28,22 @@ export function RecentProtocolsTable({ protocols }: { protocols?: RecentProtocol
             </tr>
           </thead>
           <tbody>
-            {rows.map((row) => (
-              <tr key={row.protocol}>
-                <td>{row.protocol}</td>
-                <td>{row.client}</td>
-                <td>{row.pdf}</td>
-                <td>{row.excel}</td>
-                <td>{row.archive}</td>
-                <td><Badge>{row.status}</Badge></td>
+            {rows.length === 0 ? (
+              <tr className="empty-state">
+                <td colSpan={6}>Nenhum protocolo recente encontrado.</td>
               </tr>
-            ))}
+            ) : (
+              rows.map((row) => (
+                <tr key={row.protocol}>
+                  <td>{row.protocol}</td>
+                  <td>{row.client}</td>
+                  <td>{row.pdf}</td>
+                  <td>{row.excel}</td>
+                  <td>{row.archive}</td>
+                  <td><Badge>{row.status}</Badge></td>
+                </tr>
+              ))
+            )}
           </tbody>
         </table>
       </div>

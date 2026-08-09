@@ -24,7 +24,7 @@ rollback e detecção de concorrência entre simulação e aplicação.
 
 - referência anterior: cerca de 95 linhas únicas e 165 ocorrências de aliases;
 - não existe auditoria histórica canônica nem plano aprovado entre simulação e aplicação;
-- os protocolos 2503261731, 2505160008 e 2506022885 permanecem pendentes pelas invariantes
+- os protocolos 2600001064, 2600001070 e 2600001073 permanecem pendentes pelas invariantes
   técnicas, nunca por lista especial em produção.
 
 ## Objetivo

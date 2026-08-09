@@ -13,6 +13,12 @@ from automacao_gd.infrastructure.persistence.atomic import (
     atomic_write_json,
     atomic_write_text,
 )
+from automacao_gd.application.operational_guard import (
+    DirectRouteAuthorization,
+    MIGRATION_OPERATION,
+    guard_direct_route,
+)
+from automacao_gd.infrastructure.config import get_settings
 
 
 _SINGLE_FILES = (
@@ -66,6 +72,24 @@ def migrate_operational_data(
     v2_root: Path,
     *,
     apply: bool = False,
+    authorization: DirectRouteAuthorization | None = None,
+) -> dict:
+    if not apply:
+        return _migrate_operational_data(v1_root, v2_root, apply=False)
+    settings = get_settings()
+    with guard_direct_route(
+        settings,
+        authorization,
+        operation=MIGRATION_OPERATION,
+    ):
+        return _migrate_operational_data(v1_root, v2_root, apply=True)
+
+
+def _migrate_operational_data(
+    v1_root: Path,
+    v2_root: Path,
+    *,
+    apply: bool,
 ) -> dict:
     source_root, destination_root = _validated_roots(v1_root, v2_root)
     plan = build_migration_plan(source_root, destination_root)
@@ -227,7 +251,7 @@ def _safe_child(root: Path, relative: Path) -> Path:
     return candidate
 
 
-def main() -> None:
+def main() -> int:
     parser = argparse.ArgumentParser(description="Migra dados operacionais da V1 para V2.")
     parser.add_argument("--v1-root", type=Path, required=True)
     parser.add_argument("--v2-root", type=Path, required=True)
@@ -235,6 +259,10 @@ def main() -> None:
     mode.add_argument("--dry-run", action="store_true")
     mode.add_argument("--apply", action="store_true")
     args = parser.parse_args()
+    if args.apply:
+        print("Status: BLOQUEADO")
+        print("Migração apply direta desativada nesta etapa; use --dry-run.")
+        return 2
 
     report = migrate_operational_data(
         args.v1_root,
@@ -253,7 +281,8 @@ def main() -> None:
         print(f"Relatório Markdown: {report['markdown_report_path']}")
     elif not args.apply:
         print("Dry-run: nenhum arquivo foi alterado.")
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

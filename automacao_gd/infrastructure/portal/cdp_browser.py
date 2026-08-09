@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from urllib.parse import urlparse
+from typing import TYPE_CHECKING
 
 from automacao_gd.infrastructure.logging import logger
 from automacao_gd.infrastructure.portal.browser import (
@@ -16,14 +17,18 @@ from automacao_gd.infrastructure.portal.cdp_service import (
 
 _LOOPBACK_HOSTS = {"127.0.0.1", "localhost", "::1"}
 
+if TYPE_CHECKING:
+    from playwright.sync_api import Playwright
+
 
 class CDPPortalGDAutomation(PersistentBrowserPortalGDAutomation):
     def connect(self) -> None:
         self._validate_endpoint()
-        self.playwright = _start_sync_playwright()
+        playwright = _start_sync_playwright()
+        self.playwright = playwright
         try:
             self.browser = connect_to_existing_edge(
-                self.playwright,
+                playwright,
                 self.settings.CDP_ENDPOINT,
             )
             self.page = self.find_portal_tab()
@@ -31,7 +36,7 @@ class CDPPortalGDAutomation(PersistentBrowserPortalGDAutomation):
                 raise RuntimeError("Nenhuma aba do Portal GD foi encontrada via CDP.")
             self.context = self.page.context
         except Exception:
-            self.playwright.stop()
+            playwright.stop()
             self.playwright = None
             self.browser = None
             self.context = None
@@ -95,7 +100,7 @@ class CDPPortalGDAutomation(PersistentBrowserPortalGDAutomation):
             )
 
 
-def _start_sync_playwright():
+def _start_sync_playwright() -> Playwright:
     from playwright.sync_api import sync_playwright
 
     return sync_playwright().start()

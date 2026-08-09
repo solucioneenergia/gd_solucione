@@ -4,17 +4,38 @@ from pathlib import Path
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_ROOT))
 
+from automacao_gd.application.operational_guard import (
+    INSPECT_PORTAL_OPERATION,
+    DirectRouteAuthorization,
+    guard_direct_route,
+)
 from automacao_gd.infrastructure.files.file_service import ensure_directories
 from automacao_gd.infrastructure.logging import logger, setup_logger
 from automacao_gd.infrastructure.config import get_settings
 from automacao_gd.infrastructure.portal.factory import create_portal_automation
 
 
-def main() -> None:
+def main() -> int:
+    print("Status: BLOQUEADO")
+    print("Inspeção direta do Portal desativada nesta etapa.")
+    return 2
+
+
+def _legacy_inspect_portal_table(
+    authorization: DirectRouteAuthorization | None = None,
+) -> None:
+    settings = get_settings()
+    with guard_direct_route(
+        settings,
+        authorization,
+        operation=INSPECT_PORTAL_OPERATION,
+    ):
+        _inspect_portal_table_locked(settings)
+
+
+def _inspect_portal_table_locked(settings) -> None:
     ensure_directories()
     setup_logger()
-
-    settings = get_settings()
     automation = create_portal_automation(settings)
     browser_started = False
     try:
@@ -46,4 +67,4 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

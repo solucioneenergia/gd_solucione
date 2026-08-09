@@ -604,7 +604,7 @@ def test_source_survives_parser_to_plan_and_complete_flow_is_lossless(
     ws = wb.active
     ws.title = "2026"
     ws.append(("Protocolo", "Placa", "Inversor"))
-    ws.append(("2500000999", "ANTIGA", "ANTIGO"))
+    ws.append(("2600001061", "ANTIGA", "ANTIGO"))
     wb.save(workbook)
     audited = audit_historical_workbook(
         workbook,

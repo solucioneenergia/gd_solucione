@@ -18,6 +18,7 @@ class AutomationWorker(QObject):
     progress = Signal(object)
     finished = Signal(object)
     failed = Signal(object)
+    cancelled = Signal(str)
     log = Signal(str)
 
     def __init__(
@@ -35,7 +36,7 @@ class AutomationWorker(QObject):
         self.protocol = protocol
         self.run_async = run_async
         self._thread: threading.Thread | None = None
-        self._cancel_requested = False
+        self._cancel_event = threading.Event()
         self.last_result: Any = None
         self.last_error: OperationError | None = None
 
@@ -50,12 +51,18 @@ class AutomationWorker(QObject):
     def run(self) -> None:
         self.started.emit()
         try:
-            kwargs = {}
+            self._raise_if_cancelled()
+            kwargs: dict[str, Any] = {}
             if _accepts_parameter(self.operation, "progress_callback"):
                 kwargs["progress_callback"] = self._emit_progress
+            if _accepts_parameter(self.operation, "cancel_event"):
+                kwargs["cancel_event"] = self._cancel_event
             result = self.operation(**kwargs)
+            self._raise_if_cancelled()
             self.last_result = result
             self.finished.emit(result)
+        except OperationCancelled:
+            self.cancelled.emit("Operação cancelada.")
         except Exception as exc:
             self.last_error = map_exception_to_operation_error(
                 exc,
@@ -65,15 +72,24 @@ class AutomationWorker(QObject):
             self.failed.emit(self.last_error)
 
     def stop(self) -> None:
-        self._cancel_requested = True
+        self._cancel_event.set()
         self.log.emit("Parada solicitada; a operação será interrompida quando o caso de uso permitir.")
 
     @property
     def cancel_requested(self) -> bool:
-        return self._cancel_requested
+        return self._cancel_event.is_set()
 
     def _emit_progress(self, event: Any) -> None:
+        self._raise_if_cancelled()
         self.progress.emit(event)
+
+    def _raise_if_cancelled(self) -> None:
+        if self._cancel_event.is_set():
+            raise OperationCancelled
+
+
+class OperationCancelled(RuntimeError):
+    """Cancelamento cooperativo observado em uma fronteira segura de etapa."""
 
 
 def operation_error_payload(error: OperationError | dict[str, Any]) -> dict[str, Any]:

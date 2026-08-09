@@ -8,6 +8,11 @@ sys.path.insert(0, str(PROJECT_ROOT))
 
 from playwright.sync_api import Error as PlaywrightError
 
+from automacao_gd.application.operational_guard import (
+    CONNECT_EXISTING_EDGE_OPERATION,
+    DirectRouteAuthorization,
+    guard_direct_route,
+)
 from automacao_gd.infrastructure.config import get_settings
 from automacao_gd.infrastructure.files.file_service import ensure_directories
 from automacao_gd.infrastructure.logging import logger, setup_logger
@@ -18,10 +23,27 @@ from automacao_gd.infrastructure.portal.factory import create_portal_automation
 OUTPUT_FILE_NAME = "registros_cdp_edge.json"
 
 
-def main() -> None:
+def main() -> int:
+    print("Status: BLOQUEADO")
+    print("Diagnóstico CDP direto desativado nesta etapa.")
+    return 2
+
+
+def _legacy_connect_existing_edge(
+    authorization: DirectRouteAuthorization | None = None,
+) -> None:
+    settings = get_settings()
+    with guard_direct_route(
+        settings,
+        authorization,
+        operation=CONNECT_EXISTING_EDGE_OPERATION,
+    ):
+        _connect_existing_edge_locked(settings)
+
+
+def _connect_existing_edge_locked(settings) -> None:
     ensure_directories()
     setup_logger()
-    settings = get_settings()
 
     logger.info(f"CDP_MODE={str(settings.CDP_MODE).lower()}")
     _print_manual_instructions(settings.CDP_ENDPOINT)
@@ -68,7 +90,7 @@ def _print_manual_instructions(cdp_endpoint: str) -> None:
     print("2. Abra o Edge manualmente com:")
     print(
         '   msedge.exe --remote-debugging-port=9222 '
-        '--user-data-dir="C:\\Users\\Solucione\\AppData\\Local\\Microsoft\\Edge\\User Data"'
+        '--user-data-dir="<PERFIL_CDP_DEDICADO>"'
     )
     print("3. Acesse o Portal GD normalmente.")
     print("4. Faça login manual.")
@@ -126,4 +148,4 @@ def _find_portal_page(pages: list, portal_url: str):
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

@@ -18,6 +18,7 @@ export function App() {
 
   useEffect(() => {
     initializeQtBridge();
+    const onChannelReady = () => initializeQtBridge();
     const onLog = (event: Event) => {
       setMessage((event as CustomEvent<string>).detail);
     };
@@ -37,11 +38,13 @@ export function App() {
     document.addEventListener("desktop-dashboard", onDashboard);
     document.addEventListener("desktop-protocols", onProtocols);
     document.addEventListener("desktop-progress", onProgress);
+    window.addEventListener("qt-channel-ready", onChannelReady);
     return () => {
       document.removeEventListener("desktop-log", onLog);
       document.removeEventListener("desktop-dashboard", onDashboard);
       document.removeEventListener("desktop-protocols", onProtocols);
       document.removeEventListener("desktop-progress", onProgress);
+      window.removeEventListener("qt-channel-ready", onChannelReady);
     };
   }, []);
 

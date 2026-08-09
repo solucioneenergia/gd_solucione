@@ -236,6 +236,20 @@ def parse_generation_data_from_text(text: str) -> GenerationData:
             inverter_data = _parse_inverter_identity_lines(
                 inverter_lines, source_section="inverter"
             )
+            if (
+                not (inverter_data["manufacturer"] or inverter_data["model"])
+                and inverter_quantity_idx is not None
+            ):
+                grouped_end_idx = _first_existing_index(
+                    microinverter_header_idx,
+                    len(lines),
+                )
+                grouped_data = _parse_grouped_inverter_identity_lines(
+                    lines[inverter_header_idx:grouped_end_idx],
+                    source_section="inverter",
+                )
+                if grouped_data is not None:
+                    inverter_data = grouped_data
             inverter_manufacturer = inverter_data["manufacturer"]
             inverter_model = inverter_data["model"]
             inverter_items = inverter_data.get("inverters") or []
@@ -984,6 +998,19 @@ def _parse_module_structured_lines(lines: list[str]) -> dict:
     model_raw = _extract_labeled_value(lines, ["modelo", "modulo"])
     quantity_raw = _extract_labeled_value(lines, ["qtd", "modulo"])
     total_raw = _extract_labeled_value(lines, ["pot", "placa"])
+    grouped = _extract_grouped_header_values(
+        lines,
+        {
+            "manufacturer": (["fabricante", "modulo"],),
+            "model": (["modelo", "modulo"],),
+            "quantity": (["qtd", "modulo"],),
+            "total": (["pot", "placa"], ["pot", "modulo"]),
+        },
+    )
+    manufacturer_raw = manufacturer_raw or grouped.get("manufacturer")
+    model_raw = model_raw or grouped.get("model")
+    quantity_raw = quantity_raw or grouped.get("quantity")
+    total_raw = total_raw or grouped.get("total")
     if not manufacturer_raw and not model_raw:
         table_data = _parse_module_table_lines(lines)
         if table_data["manufacturer"] or table_data["model"]:
@@ -1036,6 +1063,17 @@ def _parse_inverter_structured_lines(
 ) -> dict:
     manufacturer_raw = _extract_labeled_value(lines, ["fabricante", "inversor"])
     model_raw = _extract_labeled_value(lines, ["modelo", "inversor"])
+    grouped = _extract_grouped_header_values(
+        lines,
+        {
+            "manufacturer": (["fabricante", "inversor"],),
+            "model": (["modelo", "inversor"],),
+            "quantity": (["qtd", "inversor"],),
+            "total": (["pot", "inversor"],),
+        },
+    )
+    manufacturer_raw = manufacturer_raw or grouped.get("manufacturer")
+    model_raw = model_raw or grouped.get("model")
     if not manufacturer_raw and not model_raw:
         table_data = _parse_inverter_table_lines(
             lines, source_section=source_section
@@ -1078,6 +1116,54 @@ def _parse_inverter_structured_lines(
         "model": " | ".join(models) or None,
         "inverters": inverters,
         "warnings": warnings,
+        "violations": violations,
+    }
+
+
+def _parse_grouped_inverter_identity_lines(
+    lines: list[str], *, source_section: EquipmentType = "inverter"
+) -> dict | None:
+    grouped = _extract_grouped_header_values(
+        lines,
+        {
+            "manufacturer": (["fabricante", "inversor"],),
+            "model": (["modelo", "inversor"],),
+            "quantity": (["qtd", "inversor"],),
+            "total": (["pot", "inversor"],),
+        },
+    )
+    if not grouped:
+        return None
+
+    manufacturers = split_equipment_values(
+        grouped.get("manufacturer"),
+        context="manufacturer",
+        uppercase_manufacturers=False,
+    )
+    models = _split_pdf_models(grouped.get("model"), len(manufacturers))
+    manufacturers, module_only_warnings, violations = (
+        _filter_module_only_inverter_manufacturers(
+            manufacturers, source_section=source_section
+        )
+    )
+    paired_items, pairing_warnings = pair_equipment_values(
+        manufacturers,
+        models,
+        equipment_label="inversores",
+        equipment_type="inverter",
+    )
+    return {
+        "manufacturer": " | ".join(manufacturers) or None,
+        "model": " | ".join(models) or None,
+        "inverters": [
+            InverterEquipment(
+                manufacturer=item.manufacturer,
+                model=item.model,
+                source=_model_source(item.manufacturer, item.model),
+            )
+            for item in paired_items
+        ],
+        "warnings": [*module_only_warnings, *pairing_warnings],
         "violations": violations,
     }
 
@@ -1251,6 +1337,51 @@ def _extract_labeled_value(lines: list[str], terms: list[str]) -> str | None:
         if cleaned_values:
             return "\n".join(cleaned_values)
     return None
+
+
+def _extract_grouped_header_values(
+    lines: list[str],
+    field_terms: dict[str, tuple[list[str], ...]],
+) -> dict[str, str]:
+    header_positions: dict[str, int] = {}
+    for index, line in enumerate(lines):
+        key = _search_key(line)
+        for field, alternatives in field_terms.items():
+            if field in header_positions:
+                continue
+            if any(
+                _line_matches_terms(key, [_search_key(term) for term in terms])
+                for terms in alternatives
+            ):
+                header_positions[field] = index
+                break
+
+    if set(header_positions) != set(field_terms):
+        return {}
+
+    ordered_fields = sorted(header_positions, key=header_positions.__getitem__)
+    first_header = header_positions[ordered_fields[0]]
+    last_header = header_positions[ordered_fields[-1]]
+    if _clean_generation_lines(lines[first_header : last_header + 1]):
+        return {}
+
+    values: list[str] = []
+    for line in lines[last_header + 1 :]:
+        if _is_header_like(line):
+            break
+        cleaned = _clean_equipment_text(line)
+        if cleaned and not _is_connection_type_value(cleaned):
+            values.append(cleaned)
+        if len(values) == len(ordered_fields):
+            break
+
+    if len(values) != len(ordered_fields):
+        return {}
+
+    return {
+        field: values[index]
+        for index, field in enumerate(ordered_fields)
+    }
 
 
 def _join_wrapped_equipment_value(values: list[str]) -> str | None:

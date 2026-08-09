@@ -225,7 +225,7 @@ Não há backfill nesta etapa. Registros históricos serão tratados somente na 
 - quantidades independentes de inversor e microinversor, inclusive zero e ausência;
 - revalidação semântica e fingerprint de cache V5;
 - ordem observável `validação → Excel → sucesso → arquivamento`;
-- fixtures anonimizadas dos protocolos `2503261731`, `2505160008` e `2506022885`;
+- fixtures anonimizadas dos protocolos `2600001064`, `2600001070` e `2600001073`;
 - prova hermética de que a suíte padrão não consulta PDFs operacionais.
 
 ## Critérios de aceite

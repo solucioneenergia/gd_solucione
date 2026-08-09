@@ -31,7 +31,7 @@ Liberar a Automação GD Neoenergia para produção controlada após fechamento 
 
 ## Identidade da planilha
 
-- SHA oficial atual: `c86c97a1c31f58e0150222872f91e79941bf8b5ede8fcac715c3fffc0bca973e`
+- SHA oficial atual: `c86c97a1c31f58e[PROTOCOLO REDIGIDO]f91e79941bf8b5ede8fcac715c3fffc0bca973e`
 - SHA anterior histórico: `22d2872b30bccbd4be2f04ce89871632e46691f9d5ce387376b2ff7d44afb5ee`
 - Causa da mudança de SHA: aplicação dos três protocolos seguros no canário aprovado da Etapa 3.2.
 
@@ -83,10 +83,12 @@ Liberar a Automação GD Neoenergia para produção controlada após fechamento 
 
 Os protocolos abaixo permanecem `PENDING_REVIEW/SOURCE_INCOMPLETE`:
 
-- `2605250167`
-- `2605148473`
-- `2605056663`
-- `2604275348`
+- `[PROTOCOLO REDIGIDO]`
+- `[PROTOCOLO REDIGIDO]`
+- `[PROTOCOLO REDIGIDO]`
+- `[PROTOCOLO REDIGIDO]`
+- `[PROTOCOLO REDIGIDO]`
+- `[PROTOCOLO REDIGIDO]`
 
 Motivo vinculante: a quantidade total aparece no documento, mas a quantidade individual por modelo ou fabricante não está documentalmente separada.
 
@@ -129,36 +131,16 @@ Regras:
 - Release técnica: APPROVED
 - Produção controlada: AUTHORIZED
 
-## Hotfix v2.0.1
+## Nota pós-release
 
-Em 2026-07-26 foi corrigido o controle de amplitude do lote para que
-`MAX_COMPLETED_TO_PROCESS` limite globalmente protocolos únicos analisados,
-incluindo PDFs baixados, PDFs reutilizados, retomadas e
-`PROCESS_EXISTING_AFTER_SKIP=true`.
+Este arquivo permanece como manifesto histórico da `v2.0.0`.
 
-Estado final do hotfix:
+A identidade operacional atual da release está registrada em:
 
-- Código corrigido: SIM
-- Testes direcionados: passed
-- Ruff: passed
-- Compileall: passed
-- MyPy restrito aos arquivos alterados: passed
-- Suíte completa: 682 passed
-- Unidade `Z:` e planilha oficial: disponíveis
-- SHA oficial recuperado: `b1bfedc497db8f207d900234b185c80f974ce2a0b628cb437edb19e13953c441`
-- Canário real com limite 5: aprovado
-- Protocolos únicos selecionados/analisados: 5/5
-- PDFs baixados: 0
-- PDFs reutilizados: 5
-- Protocolos `NO_CHANGE`: 5
-- Pendências: 0
-- Updates aplicados: 0
-- PDFs arquivados: 5
-- Protocolos duplicados: 0
-- Mudanças fora da allowlist: 0
-- Erros sistêmicos: 0
-- SHA oficial final: `b1bfedc497db8f207d900234b185c80f974ce2a0b628cb437edb19e13953c441`
-- Tag v2.0.1: criada localmente
+```text
+docs/releases/release_v2.0.1_manifest.md
+```
 
-A produção controlada permanece autorizada em `v2.0.1`. A operação ampla
-continua bloqueada até autorização operacional explícita.
+O hotfix `v2.0.1` corrigiu o limite global de protocolos únicos por execução,
+foi validado por canário real 5/5 e mantém a operação ampla bloqueada até
+autorização operacional explícita.

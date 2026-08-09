@@ -16,23 +16,38 @@ from automacao_gd.infrastructure.config import get_settings
 from automacao_gd.infrastructure.files.file_service import ensure_directories
 from automacao_gd.infrastructure.logging import logger, setup_logger
 from automacao_gd.infrastructure.persistence.atomic import atomic_write_json
+from automacao_gd.application.operational_guard import (
+    DOWNLOAD_CDP_OPERATION,
+    DirectRouteAuthorization,
+    guard_direct_route,
+)
 
 
 OUTPUT_FILE_NAME = "downloads_orcamentos_concluidos_cdp.json"
 
 
-def main() -> None:
+def main() -> int:
     ensure_directories()
     setup_logger()
+    print("Status: BLOQUEADO")
+    print("Download CDP direto desativado; use a opção 5 do CLI.")
+    return 2
+
+
+def run_download_completed_budgets_cdp(
+    authorization: DirectRouteAuthorization | None = None,
+) -> dict:
     settings = get_settings()
+    with guard_direct_route(
+        settings,
+        authorization,
+        operation=DOWNLOAD_CDP_OPERATION,
+        requested_limit=settings.MAX_COMPLETED_TO_PROCESS,
+    ):
+        return _run_download_completed_budgets_cdp(settings)
 
-    summary = run_download_completed_budgets_cdp()
-    output_path = _save_summary(settings.logs_dir_path, summary)
-    print(f"JSON consolidado salvo em: {output_path}")
 
-
-def run_download_completed_budgets_cdp() -> dict:
-    settings = get_settings()
+def _run_download_completed_budgets_cdp(settings) -> dict:
     automation = create_portal_automation(settings)
     summary: dict | None = None
 
@@ -107,4 +122,4 @@ def _save_summary(logs_dir: Path, summary: dict) -> Path:
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

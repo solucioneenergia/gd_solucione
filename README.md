@@ -1,4 +1,4 @@
-# Automação GD Neoenergia — versão 2.0
+# Automação GD Neoenergia — candidata 2.0.2
 
 Aplicação Python para consultar solicitações no Portal GD Neoenergia Pernambuco, baixar Orçamentos de Conexão, extrair dados técnicos dos PDFs, atualizar uma planilha Excel e arquivar os documentos nas pastas dos clientes.
 
@@ -17,7 +17,7 @@ Principais correções:
 - cache de clientes validado por raiz, TTL e limite de entradas;
 - timestamps do pipeline em UTC com timezone;
 - pré-voo para operações reais;
-- interface PySide6 com React, QWebChannel e worker em `QThread`;
+- interface PySide6 com React, QWebChannel protegido e cancelamento cooperativo;
 - pacote de produção sem `.env`, cookies, logs, PDFs, planilhas ou `.venv`.
 
 ## Estrutura
@@ -28,7 +28,8 @@ automacao_gd/
 ├── application/            # casos de uso, pré-voo e orquestração
 ├── infrastructure/         # Playwright, CDP, PDF, Excel, filesystem e estado
 └── presentation/           # CLI, controlador, desktop web e Tkinter legado
-frontend/                   # React, TypeScript, Vite e Three.js
+apps/desktop/               # desktop canônico, bridge e frontend React
+frontend/                   # frontend legado congelado
 src/                        # compatibilidade com imports da versão 1.x
 scripts/                    # utilitários operacionais e diagnósticos
 tests/                      # regressão, segurança e aplicação
@@ -86,16 +87,24 @@ python -m automacao_gd
 Desktop visual:
 
 ```powershell
-cd frontend
-npm install
-npm run build
-cd ..
+cd apps\desktop\frontend
+pnpm install --frozen-lockfile
+pnpm test
+pnpm build
+cd ..\..\..
 python desktop_app.py
 ```
+
+O modo normal exige `apps/desktop/frontend/dist/index.html`; a ausência do build reprova a
+instalação em vez de ativar silenciosamente o fallback. O fallback estático é somente um estado
+de recuperação identificado para desenvolvimento.
 
 Para desenvolvimento com Vite:
 
 ```powershell
+cd apps\desktop\frontend
+pnpm dev
+# em outro terminal, na raiz:
 python desktop_app.py --dev
 ```
 

@@ -1,4 +1,4 @@
-﻿# Classificação e normalização de fabricantes
+# Classificação e normalização de fabricantes
 
 Status: aceita; complementa `equipment_format_v2.md` na Etapa 1.
 

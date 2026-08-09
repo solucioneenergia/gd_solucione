@@ -1,13 +1,16 @@
 import re
+import time
 import unicodedata
 from datetime import datetime
 from pathlib import Path
+from typing import Any
 from urllib.parse import urlparse
 
 from playwright.sync_api import Error as PlaywrightError
 from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 
 from automacao_gd.infrastructure.config import get_settings
+from automacao_gd.infrastructure.dates import parse_date
 from automacao_gd.infrastructure.files.file_service import sanitize_filename
 from automacao_gd.infrastructure.logging import logger
 from automacao_gd.infrastructure.metadata.service import save_download_metadata
@@ -20,11 +23,33 @@ BUDGET_BUTTON_TIMEOUT_MS = 10_000
 DETAIL_TIMEOUT_MS = 20_000
 LISTING_RECOVERY_ATTEMPTS = 3
 VALID_DOWNLOAD_STATUSES_FOR_PROCESSING = {"downloaded", "existing_pdf_after_skip"}
+POINT_OF_CONNECTION_STAGE = "PONTO_DE_CONEXAO_APROVADO"
+POINT_OF_CONNECTION_STAGE_LABEL = "Ponto de Conexão Aprovado"
+_COMPLETION_DATE_RE = re.compile(
+    r"Conclu[ií]do\s+em\s+(\d{2}/\d{2}/\d{4})",
+    flags=re.IGNORECASE,
+)
+_KNOWN_TIMELINE_STAGES = {
+    "AGUARDANDO DOCUMENTACAO",
+    "EM ANALISE TECNICA",
+    "AGUARDANDO SOLICITACAO DE VISTORIA E CONEXAO",
+    "REALIZANDO VISTORIA E CONEXAO",
+    "PONTO DE CONEXAO APROVADO",
+    "SOLICITACAO CONCLUIDA",
+}
 OPERATIONAL_ORIGIN_NAVIGATION_STATUSES = {
     "pagination_numeric_target_not_found",
     "pagination_numeric_target_disabled",
     "pagination_click_failed",
     "pagination_active_page_mismatch",
+    "cannot_confirm_active_page",
+}
+INCOMPLETE_PAGINATION_STOP_REASONS = {
+    "safety_cap_reached_with_next_page",
+    "pagination_click_no_change",
+    "pagination_repeated_signature",
+    "pagination_loop_detected",
+    "pagination_duplicate_page_content",
     "cannot_confirm_active_page",
 }
 
@@ -131,7 +156,10 @@ def read_current_page_table_with_row_handles(page) -> list[dict]:
             const text = normalize(header);
             if (text.includes("PROTOCOLO")) return "protocol_client";
             if (text.includes("STATUS")) return "status";
-            if (text.includes("CODIGO") && text.includes("UNIDADE")) {
+            if (
+              text.includes("CODIGO") &&
+              (text.includes("UNIDADE") || text.includes("IDENTIFICACAO"))
+            ) {
               return "consumer_unit_code";
             }
             if (text.includes("ENDERECO")) return "address";
@@ -250,6 +278,12 @@ def _collect_completed_listing_rows_across_pages(page, settings) -> dict:
         summary.update(
             {
                 "pagination_enabled": False,
+                "pagination_complete": True,
+                "last_page_confirmed": True,
+                "last_page_number": active_page,
+                "next_page_available_after_stop": False,
+                "pagination_safety_cap": 1,
+                "pages_visited": [active_page],
                 "pagination_stop_reason": "pagination_disabled",
                 "pagination_next_found": False,
                 "pagination_click_attempts": 0,
@@ -273,22 +307,65 @@ def _collect_completed_listing_rows_across_pages(page, settings) -> dict:
     pagination_target_page = None
     pagination_numeric_links_found: list[str] = []
     pending_click_diagnostic: dict | None = None
+    pagination_complete = False
+    last_page_confirmed = False
+    last_page_number = None
+    next_page_available_after_stop = False
+    pages_visited: list[int] = []
+    visited_page_numbers: set[int] = set()
 
     while True:
         if max_pages > 0 and len(page_rows) >= max_pages:
-            pagination_stop_reason = "max_portal_pages_reached"
+            availability = inspect_next_page_availability(page, pagination_current_page)
+            next_page_available_after_stop = bool(
+                availability.get("next_page_available")
+            )
+            pagination_target_page = availability.get("target_page_number")
+            pagination_numeric_links_found = list(
+                availability.get("numeric_page_links_found") or []
+            )
+            if next_page_available_after_stop:
+                pagination_stop_reason = "safety_cap_reached_with_next_page"
+            else:
+                pagination_stop_reason = "last_page_reached"
+                pagination_complete = True
+                last_page_confirmed = True
+                last_page_number = pagination_current_page
             warnings.append(f"MAX_PORTAL_PAGES atingido: {max_pages}.")
             break
 
-        active_page = get_active_numeric_page(page)
-        if active_page is None:
+        current_active_page = get_active_numeric_page(page)
+        if current_active_page is None:
             pagination_stop_reason = "cannot_confirm_active_page"
             warnings.append("cannot_confirm_active_page")
             break
-        pagination_current_page = active_page
+        if current_active_page in visited_page_numbers:
+            if pending_click_diagnostic is not None:
+                stabilized_page = _wait_for_active_page_change(
+                    page,
+                    previous_page_number=current_active_page,
+                )
+                pending_click_diagnostic["active_page_after_retry"] = stabilized_page
+                if stabilized_page is not None and stabilized_page not in visited_page_numbers:
+                    current_active_page = stabilized_page
+                else:
+                    pagination_stop_reason = "pagination_loop_detected"
+                    warnings.append("PAGINATION_LOOP_DETECTED")
+                    break
+            else:
+                pagination_stop_reason = "pagination_loop_detected"
+                warnings.append("PAGINATION_LOOP_DETECTED")
+                break
+        if current_active_page in visited_page_numbers:
+            pagination_stop_reason = "pagination_loop_detected"
+            warnings.append("PAGINATION_LOOP_DETECTED")
+            break
+        visited_page_numbers.add(current_active_page)
+        pages_visited.append(current_active_page)
+        pagination_current_page = current_active_page
         rows = _annotate_listing_rows(
             read_current_page_table_with_row_handles(page),
-            active_page,
+            current_active_page,
         )
         signature = _listing_rows_signature(rows)
         if pending_click_diagnostic is not None:
@@ -308,22 +385,45 @@ def _collect_completed_listing_rows_across_pages(page, settings) -> dict:
         seen_signatures.add(signature)
         page_rows.append(rows)
         logger.info(
-            f"Pagina {active_page} lida no portal: "
+            f"Pagina {current_active_page} lida no portal: "
             f"{len(rows)} linhas, assinatura={signature}."
         )
 
         if max_pages > 0 and len(page_rows) >= max_pages:
-            pagination_stop_reason = "max_portal_pages_reached"
+            availability = inspect_next_page_availability(page, current_active_page)
+            next_page_available_after_stop = bool(
+                availability.get("next_page_available")
+            )
+            pagination_target_page = availability.get("target_page_number")
+            pagination_numeric_links_found = list(
+                availability.get("numeric_page_links_found") or []
+            )
+            diagnostics.append(
+                {
+                    "mode": "availability_after_safety_cap",
+                    "page_number": current_active_page,
+                    **availability,
+                }
+            )
+            if next_page_available_after_stop:
+                pagination_stop_reason = "safety_cap_reached_with_next_page"
+            else:
+                pagination_stop_reason = "last_page_reached"
+                pagination_complete = True
+                last_page_confirmed = True
+                last_page_number = current_active_page
             warnings.append(f"MAX_PORTAL_PAGES atingido: {max_pages}.")
             break
 
-        logger.info(f"Tentando clicar pagina numerica alvo: {active_page + 1}")
-        next_diagnostic = find_and_click_next_numeric_page(page, active_page)
-        next_diagnostic["page_number"] = active_page
+        logger.info(f"Tentando avancar para pagina alvo: {current_active_page + 1}")
+        next_diagnostic = find_and_click_next_listing_page(page, current_active_page)
+        next_diagnostic["page_number"] = current_active_page
         next_diagnostic["signature_before"] = signature
         diagnostics.append(next_diagnostic)
-        pagination_next_found = pagination_next_found or bool(next_diagnostic.get("found"))
-        pagination_current_page = active_page
+        pagination_next_found = pagination_next_found or bool(
+            next_diagnostic.get("next_page_available", next_diagnostic.get("found"))
+        )
+        pagination_current_page = current_active_page
         pagination_target_page = next_diagnostic.get("target_page_number")
         pagination_numeric_links_found = list(
             next_diagnostic.get("numeric_page_links_found") or []
@@ -332,10 +432,16 @@ def _collect_completed_listing_rows_across_pages(page, settings) -> dict:
             pagination_click_attempts += 1
         logger.info(f"Diagnostico de paginacao: {next_diagnostic}")
 
+        if next_diagnostic.get("stop_reason") == "last_page_reached":
+            pagination_stop_reason = "last_page_reached"
+            pagination_complete = True
+            last_page_confirmed = True
+            last_page_number = current_active_page
+            next_page_available_after_stop = False
+            break
         if not next_diagnostic.get("found"):
-            pagination_stop_reason = (
-                next_diagnostic.get("stop_reason")
-                or "pagination_numeric_target_not_found"
+            pagination_stop_reason = next_diagnostic.get("stop_reason") or (
+                "pagination_numeric_target_not_found"
             )
             warnings.append(pagination_stop_reason)
             break
@@ -358,9 +464,23 @@ def _collect_completed_listing_rows_across_pages(page, settings) -> dict:
 
     summary = consolidate_listing_page_rows(page_rows, max_pages=max_pages)
     summary["pagination_warnings"].extend(warnings)
+    if pagination_stop_reason is None and page_rows:
+        pagination_stop_reason = "last_page_reached"
+        pagination_complete = True
+        last_page_confirmed = True
+        last_page_number = pagination_current_page
+    if pagination_stop_reason in INCOMPLETE_PAGINATION_STOP_REASONS:
+        pagination_complete = False
+        last_page_confirmed = False
     summary.update(
         {
             "pagination_enabled": True,
+            "pagination_complete": pagination_complete,
+            "last_page_confirmed": last_page_confirmed,
+            "last_page_number": last_page_number,
+            "next_page_available_after_stop": next_page_available_after_stop,
+            "pagination_safety_cap": max_pages,
+            "pages_visited": pages_visited,
             "pagination_stop_reason": (
                 pagination_stop_reason or "pagination_completed_without_explicit_reason"
             ),
@@ -691,16 +811,92 @@ def extract_detail_header(page) -> dict[str, str | None]:
 
 
 def extract_completion_date(page) -> str | None:
-    text = _detail_text(page)
-    patterns = [
-        r"Data\s+de\s+conclus[aã]o\s*:?\s*(\d{2}/\d{2}/\d{4})",
-        r"Conclus[aã]o\s*:?\s*(\d{2}/\d{2}/\d{4})",
-        r"Solicita[cç][aã]o\s+Conclu[ií]da\D{0,100}(\d{2}/\d{2}/\d{4})",
+    extraction = extract_point_of_connection_completion(page)
+    return extraction["completion_date_raw"]
+
+
+def extract_point_of_connection_completion(page, protocol: str | None = None) -> dict:
+    return extract_point_of_connection_completion_from_text(
+        _detail_text(page),
+        protocol=protocol,
+        source_selector="body:text_block",
+    )
+
+
+def extract_point_of_connection_completion_from_text(
+    text: str,
+    *,
+    protocol: str | None = None,
+    source_selector: str = "text_block",
+) -> dict:
+    lines = [
+        re.sub(r"\s+", " ", line).strip()
+        for line in str(text or "").replace("\r\n", "\n").replace("\r", "\n").split("\n")
+        if line.strip()
     ]
-    for pattern in patterns:
-        match = re.search(pattern, text, flags=re.IGNORECASE)
-        if match:
-            return match.group(1)
+    base = {
+        "protocol": protocol,
+        "completion_date_raw": None,
+        "completion_date_normalized": None,
+        "completion_source_stage": POINT_OF_CONNECTION_STAGE,
+        "completion_source_selector": source_selector,
+    }
+    stages = _find_stage_ranges(lines, "PONTO DE CONEXAO APROVADO")
+    if not stages:
+        return {
+            **base,
+            "completion_extraction_status": "POINT_OF_CONNECTION_STAGE_NOT_FOUND",
+        }
+    if len(stages) > 1:
+        return {
+            **base,
+            "completion_extraction_status": "AMBIGUOUS_POINT_OF_CONNECTION_STAGE",
+        }
+
+    start, end = stages[0]
+    next_stage = _next_timeline_stage_index(lines, end + 1)
+    block_lines = lines[start : next_stage if next_stage is not None else len(lines)]
+    dates = _COMPLETION_DATE_RE.findall("\n".join(block_lines))
+    if not dates:
+        return {
+            **base,
+            "completion_extraction_status": "POINT_OF_CONNECTION_COMPLETION_DATE_NOT_AVAILABLE",
+        }
+    unique_dates = list(dict.fromkeys(dates))
+    if len(unique_dates) != 1:
+        return {
+            **base,
+            "completion_extraction_status": "AMBIGUOUS_POINT_OF_CONNECTION_COMPLETION_DATE",
+        }
+    parsed = parse_date(unique_dates[0])
+    if parsed is None:
+        return {
+            **base,
+            "completion_extraction_status": "INVALID_POINT_OF_CONNECTION_COMPLETION_DATE",
+        }
+    return {
+        **base,
+        "completion_date_raw": unique_dates[0],
+        "completion_date_normalized": parsed.isoformat(),
+        "completion_extraction_status": "FOUND",
+    }
+
+
+def _find_stage_ranges(lines: list[str], target_normalized: str) -> list[tuple[int, int]]:
+    ranges: list[tuple[int, int]] = []
+    for start in range(len(lines)):
+        for end in range(start, min(start + 3, len(lines))):
+            if _normalize_search(" ".join(lines[start : end + 1])) == target_normalized:
+                ranges.append((start, end))
+                break
+    return ranges
+
+
+def _next_timeline_stage_index(lines: list[str], start_index: int) -> int | None:
+    for index in range(start_index, len(lines)):
+        for end in range(index, min(index + 3, len(lines))):
+            if _normalize_search(" ".join(lines[index : end + 1])) in _KNOWN_TIMELINE_STAGES:
+                return index
     return None
 
 
@@ -878,10 +1074,7 @@ def should_open_detail_for_budget(
     downloads_root: Path | None = None,
     reprocess_existing_pdfs: bool = False,
 ) -> bool:
-    if reprocess_existing_pdfs:
-        return True
-    existing_pdf = find_existing_connection_budget_pdf(protocol, downloads_root)
-    return not _is_valid_pdf(existing_pdf)
+    return True
 
 
 def download_completed_budgets_from_current_page(
@@ -893,6 +1086,7 @@ def download_completed_budgets_from_current_page(
     listing_url: str | None = None,
     state_store=None,
     skip_already_completed: bool = True,
+    reconciliation_callback=None,
 ) -> dict:
     settings = get_settings()
     downloads_root = Path(downloads_root or settings.downloads_dir_path)
@@ -944,9 +1138,95 @@ def download_completed_budgets_from_current_page(
     listing_url = listing_url or page.url
 
     completed_records = collection["completed_records"]
+    reconciliation_context = {
+        "pages_read": collection["pages_read"],
+        "rows_read": collection["total_rows"],
+        "completed_records": collection["total_completed"],
+        "pagination_complete": collection.get("pagination_complete"),
+        "last_page_confirmed": collection.get("last_page_confirmed"),
+        "last_page_number": collection.get("last_page_number"),
+        "next_page_available_after_stop": collection.get(
+            "next_page_available_after_stop"
+        ),
+        "pagination_safety_cap": collection.get("pagination_safety_cap"),
+        "pages_visited": collection.get("pages_visited", []),
+        "pagination_stop_reason": collection.get("pagination_stop_reason"),
+        "pagination_enabled": collection.get("pagination_enabled", False),
+        "pagination_mode": collection.get("pagination_mode"),
+    }
+    reconciliation_pre_limit = None
+    if reconciliation_callback is not None:
+        logger.info(
+            "Reconciliação global Portal x planilha iniciada antes do limite: "
+            f"{len(completed_records)} registros concluídos."
+        )
+        reconciliation_pre_limit = reconciliation_callback(
+            "before_limit",
+            completed_records,
+            [],
+            reconciliation_context,
+        )
+        logger.info("Reconciliação global Portal x planilha concluída antes do limite.")
+    if collection.get("pagination_complete") is False:
+        summary.update(
+            {
+                "finished_at": datetime.now().isoformat(timespec="seconds"),
+                "aborted": True,
+                "abort_reason": "PORTAL_PAGINATION_INCOMPLETE",
+                "run_error": (
+                    "Reconciliação global não concluída. "
+                    "O Portal ainda possui páginas não lidas."
+                ),
+                "total_pages_read": collection["pages_read"],
+                "total_rows": collection["total_rows"],
+                "total_completed": collection["total_completed"],
+                "total_selected": 0,
+                "selected_protocols": [],
+                "results": [],
+                "pagination_warnings": collection["pagination_warnings"],
+                "pagination_enabled": collection.get("pagination_enabled", False),
+                "pagination_complete": collection.get("pagination_complete"),
+                "last_page_confirmed": collection.get("last_page_confirmed"),
+                "last_page_number": collection.get("last_page_number"),
+                "next_page_available_after_stop": collection.get(
+                    "next_page_available_after_stop"
+                ),
+                "pagination_safety_cap": collection.get("pagination_safety_cap"),
+                "pages_visited": collection.get("pages_visited", []),
+                "pagination_stop_reason": collection.get("pagination_stop_reason"),
+                "pagination_next_found": collection.get(
+                    "pagination_next_found", False
+                ),
+                "pagination_click_attempts": collection.get(
+                    "pagination_click_attempts", 0
+                ),
+                "pagination_mode": collection.get("pagination_mode"),
+                "pagination_current_page": collection.get("pagination_current_page"),
+                "pagination_target_page": collection.get("pagination_target_page"),
+                "pagination_numeric_links_found": collection.get(
+                    "pagination_numeric_links_found", []
+                ),
+                "pagination_diagnostics": collection.get(
+                    "pagination_diagnostics", []
+                ),
+                "reconciliation": reconciliation_pre_limit,
+                "reconciliation_pre_limit": reconciliation_pre_limit,
+            }
+        )
+        _refresh_download_totals(summary)
+        logger.error(summary["run_error"])
+        return summary
     if state_store:
-        for record in completed_records:
-            state_store.mark_discovered(record)
+        logger.info(
+            "Registrando protocolos descobertos no estado de retomada: "
+            f"{len(completed_records)} registros."
+        )
+        if hasattr(state_store, "mark_discovered_many"):
+            state_store.mark_discovered_many(completed_records)
+        else:
+            for record in completed_records:
+                state_store.mark_discovered(record)
+        logger.info("Registro de protocolos descobertos concluído.")
     selection = select_eligible_completed_requests(
         completed_requests=completed_records,
         pipeline_state=state_store,
@@ -956,6 +1236,14 @@ def download_completed_budgets_from_current_page(
         settings=settings,
     )
     selected_records = selection["selected_records"]
+    if reconciliation_callback is not None:
+        summary["reconciliation"] = reconciliation_callback(
+            "after_selection",
+            completed_records,
+            [record.protocol for record in selected_records],
+            reconciliation_context,
+        )
+        summary["reconciliation_pre_limit"] = reconciliation_pre_limit
     skipped_completed = selection["skipped_completed"]
     eligible_records = selection["eligible_records"]
     duplicate_skips = [
@@ -970,6 +1258,14 @@ def download_completed_budgets_from_current_page(
     summary["total_force_reprocess"] = selection["total_force_reprocess"]
     summary["pagination_warnings"] = collection["pagination_warnings"]
     summary["pagination_enabled"] = collection.get("pagination_enabled", False)
+    summary["pagination_complete"] = collection.get("pagination_complete")
+    summary["last_page_confirmed"] = collection.get("last_page_confirmed")
+    summary["last_page_number"] = collection.get("last_page_number")
+    summary["next_page_available_after_stop"] = collection.get(
+        "next_page_available_after_stop"
+    )
+    summary["pagination_safety_cap"] = collection.get("pagination_safety_cap")
+    summary["pages_visited"] = collection.get("pages_visited", [])
     summary["pagination_stop_reason"] = collection.get("pagination_stop_reason")
     summary["pagination_next_found"] = collection.get("pagination_next_found", False)
     summary["pagination_click_attempts"] = collection.get(
@@ -990,6 +1286,12 @@ def download_completed_budgets_from_current_page(
         ),
         "pagination_reset_to_first_page": summary.get("pagination_reset_to_first_page"),
         "pagination_enabled": summary["pagination_enabled"],
+        "pagination_complete": summary["pagination_complete"],
+        "last_page_confirmed": summary["last_page_confirmed"],
+        "last_page_number": summary["last_page_number"],
+        "next_page_available_after_stop": summary["next_page_available_after_stop"],
+        "pagination_safety_cap": summary["pagination_safety_cap"],
+        "pages_visited": summary["pages_visited"],
         "pagination_stop_reason": summary["pagination_stop_reason"],
         "pagination_next_found": summary["pagination_next_found"],
         "pagination_click_attempts": summary["pagination_click_attempts"],
@@ -1137,22 +1439,6 @@ def download_completed_budgets_from_current_page(
             if existing_pdf is not None:
                 result["existing_pdf_path"] = str(existing_pdf)
 
-            if existing_pdf is not None and not reprocess_existing_pdfs:
-                result["url_antes_detalhe"] = listing_page.url
-                _reuse_existing_pdf_without_detail(
-                    record=current_record,
-                    existing_pdf=existing_pdf,
-                    downloads_root=downloads_root,
-                    result=result,
-                    process_existing_after_skip=process_existing_after_skip,
-                    state_store=state_store,
-                )
-                logger.info(
-                    "Detalhe nao aberto porque ja existe PDF para o protocolo "
-                    f"{protocol}: {existing_pdf}"
-                )
-                continue
-
             before_pages = list(listing_page.context.pages)
             result["abriu_detalhe"] = True
             result["url_antes_detalhe"] = listing_page.url
@@ -1180,7 +1466,12 @@ def download_completed_budgets_from_current_page(
             result["is_completed"] = detail_has_completed_status(
                 detail_page
             ) or is_completed_status(current_record.status)
-            result["completion_date"] = extract_completion_date(detail_page)
+            completion_extraction = extract_point_of_connection_completion(
+                detail_page,
+                protocol=protocol,
+            )
+            result.update(completion_extraction)
+            result["completion_date"] = completion_extraction["completion_date_raw"]
 
             protocol_dir = downloads_root / sanitize_filename(protocol)
             metadata_path = save_download_metadata(
@@ -1192,6 +1483,11 @@ def download_completed_budgets_from_current_page(
                     or record.client_name,
                     "entry_date": record.entry_date,
                     "completion_date": result.get("completion_date"),
+                    "completion_date_raw": result.get("completion_date_raw"),
+                    "completion_date_normalized": result.get("completion_date_normalized"),
+                    "completion_source_stage": result.get("completion_source_stage"),
+                    "completion_source_selector": result.get("completion_source_selector"),
+                    "completion_extraction_status": result.get("completion_extraction_status"),
                 },
             )
             result["metadata_path"] = str(metadata_path)
@@ -1444,6 +1740,11 @@ def _download_result_from_record(record: PortalSolicitation) -> dict:
         "detail_client_name": None,
         "is_completed": False,
         "completion_date": None,
+        "completion_date_raw": None,
+        "completion_date_normalized": None,
+        "completion_source_stage": None,
+        "completion_source_selector": None,
+        "completion_extraction_status": None,
         "has_connection_budget": None,
         "download_status": "pending",
         "existing_pdf_path": None,
@@ -1617,7 +1918,7 @@ def get_active_numeric_page(page) -> int | None:
 
 
 def ensure_listing_starts_on_page_one(page) -> dict:
-    result = {
+    result: dict[str, Any] = {
         "success": False,
         "status": None,
         "initial_active_page": None,
@@ -2208,15 +2509,35 @@ def find_and_click_next_numeric_page(page, current_page_number: int) -> dict:
                 details.stop_reason = "pagination_numeric_target_disabled";
                 return details;
               }
-              target.clickElement.scrollIntoView({ block: "center", inline: "center" });
-              target.clickElement.click();
-              details.clicked = true;
-              details.stop_reason = "pagination_numeric_page_clicked";
+              details.clicked = false;
+              details.stop_reason = "pagination_numeric_target_ready";
               return details;
             }
             """,
             target_page_number,
         )
+        if (
+            isinstance(result, dict)
+            and result.get("found")
+            and result.get("enabled")
+            and not result.get("clicked")
+        ):
+            locator_click = _click_numeric_paginator_with_playwright(
+                page,
+                target_page_number=target_page_number,
+            )
+            result["locator_click"] = locator_click
+            result["clicked"] = bool(locator_click.get("clicked"))
+            if result["clicked"]:
+                result["stop_reason"] = "pagination_numeric_page_clicked"
+                result["selector"] = locator_click.get("selector") or result.get("selector")
+                result["text"] = locator_click.get("text") or result.get("text")
+            else:
+                result["stop_reason"] = (
+                    locator_click.get("stop_reason")
+                    or result.get("stop_reason")
+                    or "pagination_numeric_click_failed"
+                )
         if not isinstance(result, dict):
             result = {
                 "found": False,
@@ -2241,7 +2562,7 @@ def find_and_click_next_numeric_page(page, current_page_number: int) -> dict:
             f"links={result.get('numeric_page_links_found')}."
         )
         return result
-    except PlaywrightError as exc:
+    except (PlaywrightError, AttributeError) as exc:
         logger.warning(f"Falha ao clicar na pagina numerica {target_page_number}: {exc}")
         return {
             "found": False,
@@ -2257,6 +2578,193 @@ def find_and_click_next_numeric_page(page, current_page_number: int) -> dict:
             "numeric_page_links_count": 0,
             "stop_reason": f"pagination_numeric_click_error: {exc}",
         }
+
+
+def _click_numeric_paginator_with_playwright(page, *, target_page_number: int) -> dict:
+    target_text = str(target_page_number)
+    try:
+        links = page.locator(".ui-paginator a.ui-paginator-page")
+        count = links.count()
+        for index in range(count):
+            link = links.nth(index)
+            try:
+                text = (link.inner_text(timeout=1_000) or "").strip()
+                class_name = str(
+                    link.get_attribute("class", timeout=1_000) or ""
+                )
+            except (PlaywrightError, AttributeError):
+                continue
+            if text != target_text:
+                continue
+            if "ui-state-active" in class_name or "ui-state-disabled" in class_name:
+                continue
+            link.click(timeout=DETAIL_TIMEOUT_MS)
+            return {
+                "clicked": True,
+                "selector": ".ui-paginator a.ui-paginator-page",
+                "index": index,
+                "text": text,
+                "class_name": class_name,
+                "stop_reason": "pagination_numeric_page_clicked",
+            }
+        return {
+            "clicked": False,
+            "selector": ".ui-paginator a.ui-paginator-page",
+            "text": target_text,
+            "stop_reason": "pagination_numeric_locator_target_not_found",
+        }
+    except (PlaywrightError, AttributeError) as exc:
+        return {
+            "clicked": False,
+            "selector": ".ui-paginator a.ui-paginator-page",
+            "text": target_text,
+            "stop_reason": f"pagination_numeric_locator_click_error: {exc}",
+        }
+
+
+def find_and_click_next_listing_page(page, current_page_number: int) -> dict:
+    numeric = find_and_click_next_numeric_page(page, current_page_number)
+    if numeric.get("found"):
+        return numeric
+
+    next_button = _click_next_listing_page_diagnostic(page)
+    numeric_links = list(numeric.get("numeric_page_links_found") or [])
+    result = {
+        **next_button,
+        "mode": "next_button",
+        "current_page_number": current_page_number,
+        "target_page_number": current_page_number + 1,
+        "numeric_page_links_found": numeric_links,
+        "numeric_page_links_count": len(numeric_links),
+        "numeric_probe": numeric,
+    }
+    if next_button.get("clicked"):
+        result["found"] = True
+        result["enabled"] = True
+        result["next_page_available"] = True
+        result["stop_reason"] = "pagination_next_clicked"
+        return result
+    if not next_button.get("found") or not next_button.get("enabled"):
+        result["found"] = False
+        result["enabled"] = False
+        result["next_page_available"] = False
+        result["stop_reason"] = "last_page_reached"
+        return result
+    return result
+
+
+def inspect_next_page_availability(page, current_page_number: int) -> dict:
+    target_page_number = int(current_page_number or 0) + 1
+    try:
+        result = page.evaluate(
+            """
+            (targetPageNumber) => {
+              const targetText = String(targetPageNumber);
+              const normalize = (value) => (value || "")
+                .normalize("NFD")
+                .replace(/[\\u0300-\\u036f]/g, "")
+                .toUpperCase()
+                .replace(/\\s+/g, " ")
+                .trim();
+              const textFor = (element) => [
+                element?.innerText,
+                element?.textContent,
+                element?.value,
+                element?.getAttribute?.("aria-label"),
+                element?.getAttribute?.("title")
+              ].filter(Boolean).join(" ").replace(/\\s+/g, " ").trim();
+              const directText = (element) => (
+                element?.innerText ||
+                element?.textContent ||
+                element?.value ||
+                ""
+              ).replace(/\\s+/g, " ").trim();
+              const isVisible = (element) => {
+                if (!element) return false;
+                const style = window.getComputedStyle(element);
+                const rect = element.getBoundingClientRect();
+                return style.display !== "none" &&
+                  style.visibility !== "hidden" &&
+                  rect.width > 0 &&
+                  rect.height > 0;
+              };
+              const isDisabled = (element) => {
+                if (!element) return true;
+                const classes = normalize(String(element.className || ""));
+                return Boolean(
+                  element.disabled ||
+                  element.getAttribute("aria-disabled") === "true" ||
+                  element.getAttribute("disabled") !== null ||
+                  classes.includes("DISABLED") ||
+                  classes.includes("UI STATE DISABLED")
+                );
+              };
+              const clickableFor = (element) =>
+                element?.closest?.("a,button,input,[role='button']") || element;
+              const containers = Array.from(document.querySelectorAll(
+                ".ui-paginator,[class*='paginator'],[class*='pagination'],[id*='paginator'],[id*='pagination'],nav"
+              )).filter(isVisible);
+              const numericLinks = [];
+              let targetNumericAvailable = false;
+              let nextButtonFound = false;
+              let nextButtonEnabled = false;
+              for (const container of containers) {
+                const elements = Array.from(container.querySelectorAll(
+                  "a,button,input,[role='button'],span,li"
+                ));
+                for (const raw of elements) {
+                  if (!isVisible(raw)) continue;
+                  const clickElement = clickableFor(raw);
+                  if (!clickElement || !isVisible(clickElement)) continue;
+                  const rawText = textFor(clickElement) || textFor(raw);
+                  const normalized = normalize(rawText);
+                  const direct = directText(raw) || directText(clickElement);
+                  const disabled = isDisabled(clickElement) || isDisabled(raw);
+                  if (/^\\d+$/.test(direct)) {
+                    numericLinks.push(direct);
+                    if (direct === targetText && !disabled) {
+                      targetNumericAvailable = true;
+                    }
+                  }
+                  const classText = normalize(
+                    String(clickElement.className || "") + " " + String(raw.className || "")
+                  );
+                  const isNext = normalized.includes("PROXIMA") ||
+                    normalized.includes("NEXT") ||
+                    classText.includes("NEXT") ||
+                    rawText === ">" ||
+                    rawText === "›" ||
+                    rawText === "»";
+                  if (!isNext) continue;
+                  nextButtonFound = true;
+                  if (!disabled) nextButtonEnabled = true;
+                }
+              }
+              const uniqueNumericLinks = Array.from(new Set(numericLinks));
+              return {
+                next_page_available: targetNumericAvailable || nextButtonEnabled,
+                target_page_number: targetPageNumber,
+                target_numeric_available: targetNumericAvailable,
+                next_button_found: nextButtonFound,
+                next_button_enabled: nextButtonEnabled,
+                numeric_page_links_found: uniqueNumericLinks,
+              };
+            }
+            """,
+            target_page_number,
+        )
+        if isinstance(result, dict):
+            return result
+    except (PlaywrightError, AttributeError) as exc:
+        logger.warning(f"Falha ao inspecionar disponibilidade da proxima pagina: {exc}")
+    return {
+        "next_page_available": False,
+        "target_page_number": target_page_number,
+        "target_numeric_available": False,
+        "next_button_found": False,
+        "next_button_enabled": False,
+        "numeric_page_links_found": [],
+    }
 
 
 def _click_next_listing_page_diagnostic(page) -> dict:
@@ -2400,7 +2908,7 @@ def _click_next_listing_page_diagnostic(page) -> dict:
         else:
             logger.info(f"Proxima pagina nao clicada: {result}")
         return result
-    except PlaywrightError as exc:
+    except (PlaywrightError, AttributeError) as exc:
         logger.warning(f"Falha ao clicar na proxima pagina: {exc}")
         return {
             "found": False,
@@ -2506,6 +3014,28 @@ def _wait_after_pagination_click(page) -> None:
         page.wait_for_timeout(1_000)
     except PlaywrightError:
         pass
+
+
+def _wait_for_active_page_change(
+    page,
+    *,
+    previous_page_number: int,
+    timeout_ms: int = 8_000,
+    interval_ms: int = 250,
+) -> int | None:
+    deadline = time.monotonic() + (timeout_ms / 1000)
+    while time.monotonic() < deadline:
+        try:
+            active_page = get_active_numeric_page(page)
+        except (PlaywrightError, AttributeError):
+            active_page = None
+        if active_page is not None and active_page != previous_page_number:
+            return active_page
+        try:
+            page.wait_for_timeout(interval_ms)
+        except (PlaywrightError, AttributeError):
+            time.sleep(interval_ms / 1000)
+    return None
 
 
 def ensure_listing_page(page, listing_url: str):

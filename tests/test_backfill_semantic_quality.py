@@ -181,21 +181,21 @@ def test_cosmetic_case_separator_and_spacing_change_is_no_change() -> None:
     ("protocol", "current_module", "current_inverter", "proposed_module", "proposed_inverter"),
     [
         (
-            "2509231679",
+            "2600001077",
             "5x TSUN 600W BIFACIAL",
             "1x SUNGROW SG5KW-RS",
             "5x TSUN TSUN 600W BIFACIAL",
             "1x SUNGROW SUNGROW SG5KW-RS",
         ),
         (
-            "2509241897",
+            "2600001078",
             "58x LEAPTON PANTHER 585W",
             "1x SAJ 10K-R6",
             "58x LEAPTON LEAPTON PANTHER 585W",
             "1x SAJ 10K-R6",
         ),
         (
-            "2605280999",
+            "2600001094",
             "18x RONMA RM182/144TB 585W",
             "1x SAJ 10K-R6",
             "18x RONMA RM182/144TB 585",
@@ -240,7 +240,7 @@ def test_plan_v3_quality_gate_and_rules5_are_mandatory(tmp_path: Path) -> None:
     ws = wb.active
     ws.title = "2026"
     ws.append(("Protocolo", "Placa", "Inversor"))
-    ws.append(("2500000099", "OLD MODULE", "OLD INVERTER"))
+    ws.append(("2600001046", "OLD MODULE", "OLD INVERTER"))
     wb.save(workbook)
     proposal = TechnicalProposal(
         status="approved",
@@ -271,7 +271,7 @@ def test_rules4_plan_is_rejected_after_rules5_activation(tmp_path: Path) -> None
     ws = wb.active
     ws.title = "2026"
     ws.append(("Protocolo", "Placa", "Inversor"))
-    ws.append(("2601204137", "38x TSUN 610W N-TYPE", "1x SAJ 25K-R6"))
+    ws.append(("2600001084", "38x TSUN 610W N-TYPE", "1x SAJ 25K-R6"))
     wb.save(workbook)
     audited = audit_historical_workbook(
         workbook,
@@ -299,14 +299,14 @@ def test_rules5_audit_blocks_unproven_known_unsafe_protocols(tmp_path: Path) -> 
     ws.append(("Protocolo", "Placa", "Inversor"))
     ws.append(
         (
-            "2601204137",
+            "2600001084",
             "38x TSUN 610W N-TYPE TSUN BIFACIAL 30MM",
             "1x SAJ 25K-R6-ON GRID",
         )
     )
     ws.append(
         (
-            "2602027219",
+            "2600001085",
             "25x TSUN 615W N-TYPE TSUN BIFACIAL 30MM",
             "1x SAJ AFCI MONO 10K-R6 220V 3MPPT",
         )
@@ -316,7 +316,7 @@ def test_rules5_audit_blocks_unproven_known_unsafe_protocols(tmp_path: Path) -> 
     linear = EquipmentSource(EquipmentSourceType.LINEAR_FIELD_VALUE)
     table = EquipmentSource(EquipmentSourceType.TABLE_CELL)
     proposals: dict[str, CanonicalEquipmentCollection] = {
-        "2601204137": CanonicalEquipmentCollection(
+        "2600001084": CanonicalEquipmentCollection(
             modules=(
                 canonicalize_equipment(
                     equipment_type="module",
@@ -336,7 +336,7 @@ def test_rules5_audit_blocks_unproven_known_unsafe_protocols(tmp_path: Path) -> 
                 ),
             ),
         ),
-        "2602027219": CanonicalEquipmentCollection(
+        "2600001085": CanonicalEquipmentCollection(
             modules=(
                 canonicalize_equipment(
                     equipment_type="module",
@@ -373,8 +373,8 @@ def test_rules5_audit_blocks_unproven_known_unsafe_protocols(tmp_path: Path) -> 
     audited = audit_historical_workbook(workbook, technical_resolver=resolver)
 
     assert {item.protocol for item in audited.items} == {
-        "2601204137",
-        "2602027219",
+        "2600001084",
+        "2600001085",
     }
     assert all(
         item.action is BackfillAction.PENDING_TECHNICAL_REVIEW
@@ -403,7 +403,7 @@ def test_plan_quality_gate_recomputes_and_rejects_invalid_update(
     ws.append(("Protocolo", "Placa", "Inversor"))
     ws.append(
         (
-            "2500000100",
+            "2600001047",
             "5x LEAPTON LEAPTON PANTHER 585W",
             "1x SUNGROW SG5KW-RS",
         )
@@ -441,7 +441,7 @@ def test_apply_revalidates_quality_gate_before_opening_workbook(
     ws.append(("Protocolo", "Placa", "Inversor"))
     ws.append(
         (
-            "2500000101",
+            "2600001048",
             "5x LEAPTON LEAPTON PANTHER 585W",
             "1x SUNGROW SG5KW-RS",
         )

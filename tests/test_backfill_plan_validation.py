@@ -99,7 +99,7 @@ def _audit_item(
     return HistoricalEquipmentAuditItem(
         workbook_sheet="2025",
         workbook_row=2,
-        protocol="2500000000",
+        protocol="2600001011",
         current_module_text=current_module,
         current_inverter_text=current_inverter,
         proposed_module_text=proposed_module,
@@ -110,7 +110,7 @@ def _audit_item(
         pdf_status="valid",
         source_hash="b" * 64,
         expected_row_fingerprint=row_fingerprint(
-            "2025", 2, "2500000000", current_module, current_inverter
+            "2025", 2, "2600001011", current_module, current_inverter
         ),
         semantic_validation_status="approved",
         current_semantic_fingerprint=semantic_fingerprint(
@@ -197,7 +197,7 @@ def test_cross_field_comparison_still_blocks_real_lost_inverter() -> None:
     ("protocol", "current_module", "current_inverter", "proposed_inverter", "source"),
     [
         (
-            "2504225778",
+            "2600001069",
             "12x GOKIN GK-1-72HTBD 585W",
             "1x Ginlong (Solis) SOLIS 1P7,7K-5G",
             "1x GINLONG (SOLIS) SOLIS 1P7,7K-5G",
@@ -212,7 +212,7 @@ def test_cross_field_comparison_still_blocks_real_lost_inverter() -> None:
             ),
         ),
         (
-            "2512228262",
+            "2600001082",
             "48x TRINA TSM-NEG19RC620W",
             "1x GUANGZHOU SANJING ELECTRIC CO., LTD (SAJ) SAJ TRIF AFCI 25K-R6-ON GRID",
             "1x GUANGZHOU SANJING ELECTRIC CO., LTD (SAJ) SAJ TRIF AFCI 25K-R6-ON GRID",
@@ -262,14 +262,14 @@ def test_documented_alias_at_model_prefix_is_no_change(
     ),
     [
         (
-            "2504165265",
+            "2600001068",
             "6x TSUN TSUN 605W BIFACIAL",
             "6x TSUN 605W BIFACIAL",
             ("TSUN", "605W BIFACIAL", 6, EquipmentSourceType.TABLE_CELL),
             "DUPLICATED_MANUFACTURER_IN_MODEL_REMOVED",
         ),
         (
-            "2506043351",
+            "2600001074",
             "7x DMEGC Dmegc 605W (Monocristalino/N- Type) Bifacial",
             "7x DMEGC 605W (Monocristalino/N- Type) Bifacial",
             (
@@ -314,8 +314,8 @@ def test_duplicate_manufacturer_text_cleanup_is_update(
 @pytest.mark.parametrize(
     ("protocol", "current_inverter", "proposed_inverter"),
     [
-        ("2510074020", "1x SOLPLANET/AISWEI ASW4000-S", "1x SOLPLANET ASW4000-S"),
-        ("2510236705", "1x SOLPLANET/AISWEI ASW5000-S", "1x SOLPLANET ASW5000-S"),
+        ("2600001079", "1x SOLPLANET/AISWEI ASW4000-S", "1x SOLPLANET ASW4000-S"),
+        ("2600001080", "1x SOLPLANET/AISWEI ASW5000-S", "1x SOLPLANET ASW5000-S"),
     ],
 )
 def test_solplanet_aiswei_text_cleanup_is_update(
@@ -356,7 +356,7 @@ def test_corporate_capitalization_only_remains_no_change(tmp_path: Path) -> None
     _workbook(
         workbook,
         (
-            "2500000001",
+            "2600001012",
             "6x astronergy ASTRO N5 585W",
             "1x Ginlong (Solis) S6-GR1P3K-M",
         ),
@@ -386,7 +386,7 @@ def test_text_difference_without_cleanup_evidence_remains_no_change(
     _workbook(
         workbook,
         (
-            "2500000002",
+            "2600001013",
             "10x Jinko JKM625N 625W",
             "1x Huawei SUN2000-5KTL-L1",
         ),
@@ -416,7 +416,7 @@ def test_duplicate_warning_without_actual_manufacturer_removal_remains_no_change
     _workbook(
         workbook,
         (
-            "2603310409",
+            "2600001088",
             "12x LEAPTON MONO HALF-CELL 665W",
             "1x SOLIS SOLIS-1P5K - 4G",
         ),
@@ -477,7 +477,7 @@ def test_tsun_structural_label_contamination_with_origin_is_update(
     _workbook(
         workbook,
         (
-            "2507119114",
+            "2600001075",
             "17x TSUN MODULO 690W HJT TSUN BIFACIAL 35MM",
             "1x SAJ R5-5K-S1",
         ),
@@ -513,7 +513,7 @@ def test_tsun_structural_label_contamination_without_origin_stays_pending(
     _workbook(
         workbook,
         (
-            "2507119114",
+            "2600001075",
             "17x TSUN MODULO 690W HJT TSUN BIFACIAL 35MM",
             "1x SAJ R5-5K-S1",
         ),

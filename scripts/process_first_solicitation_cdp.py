@@ -18,6 +18,11 @@ from automacao_gd.infrastructure.logging import logger, setup_logger
 from automacao_gd.infrastructure.persistence.atomic import atomic_write_json
 from automacao_gd.infrastructure.pdf.service import extract_generation_data
 from automacao_gd.infrastructure.portal.factory import create_portal_automation
+from automacao_gd.application.operational_guard import (
+    DirectRouteAuthorization,
+    PROCESS_FIRST_CDP_OPERATION,
+    guard_direct_route,
+)
 
 
 OUTPUT_FILE_NAME = "processamento_primeira_solicitacao_cdp.json"
@@ -26,10 +31,28 @@ DETAIL_TIMEOUT_MS = 20_000
 BUDGET_BUTTON_TIMEOUT_MS = 10_000
 
 
-def main() -> None:
+def main() -> int:
+    print("Status: BLOQUEADO")
+    print("Download direto da primeira solicitacao desativado; use a opcao 5 do CLI.")
+    return 2
+
+
+def _legacy_process_first_solicitation_cdp(
+    authorization: DirectRouteAuthorization | None = None,
+) -> None:
+    settings = get_settings()
+    with guard_direct_route(
+        settings,
+        authorization,
+        operation=PROCESS_FIRST_CDP_OPERATION,
+        requested_limit=1,
+    ):
+        _process_first_solicitation_cdp_locked(settings)
+
+
+def _process_first_solicitation_cdp_locked(settings) -> None:
     ensure_directories()
     setup_logger()
-    settings = get_settings()
     result = _empty_result()
     automation = create_portal_automation(settings)
 
@@ -606,4 +629,4 @@ def _save_result(logs_dir: Path, result: dict) -> Path:
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

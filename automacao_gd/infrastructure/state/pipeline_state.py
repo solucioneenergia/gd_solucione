@@ -1,3 +1,4 @@
+import hashlib
 import json
 from datetime import datetime, timezone
 from pathlib import Path
@@ -137,6 +138,17 @@ class PipelineStateStore:
         return protocol in self.force_reprocess_protocols
 
     def mark_discovered(self, record: Any) -> dict:
+        entry = self._mark_discovered_entry(record)
+        self.save()
+        return entry
+
+    def mark_discovered_many(self, records: list[Any]) -> list[dict]:
+        entries = [self._mark_discovered_entry(record) for record in records]
+        if entries:
+            self.save()
+        return entries
+
+    def _mark_discovered_entry(self, record: Any) -> dict:
         protocol = str(record.protocol)
         entry = self.protocol_entry(protocol)
         now = utc_now_iso()
@@ -155,7 +167,6 @@ class PipelineStateStore:
         if entry.get("status") != "completed":
             entry["status"] = "discovered"
             entry["last_step"] = "discovered"
-        self.save()
         return entry
 
     def mark_selected(self, record: Any) -> dict:
@@ -307,6 +318,8 @@ class PipelineStateStore:
             return False
         if load_validated_equipment_cache(technical) is None:
             return False
+        if not _technical_cache_matches_pdf(entry, settings, protocol):
+            return False
         if not _client_folder_valid(entry):
             return False
         if settings.APPLY_EXCEL and not _excel_valid(entry, settings, protocol):
@@ -324,6 +337,10 @@ def _metadata_exists(entry: dict, settings, protocol: str) -> bool:
 
 
 def _download_pdf_exists(entry: dict, settings, protocol: str) -> bool:
+    return _download_pdf_path(entry, settings, protocol) is not None
+
+
+def _download_pdf_path(entry: dict, settings, protocol: str) -> Path | None:
     path = entry.get("download", {}).get("pdf_path")
     candidates = [Path(path)] if path else []
     candidates.extend(
@@ -331,12 +348,39 @@ def _download_pdf_exists(entry: dict, settings, protocol: str) -> bool:
             f"Orcamento_de_Conexao_{protocol}*.pdf"
         ))
     )
-    return any(
-        candidate.exists()
-        and candidate.is_file()
-        and candidate.suffix.lower() == ".pdf"
-        for candidate in candidates
+    return next(
+        (
+            candidate
+            for candidate in candidates
+            if candidate.exists()
+            and candidate.is_file()
+            and candidate.suffix.lower() == ".pdf"
+        ),
+        None,
     )
+
+
+def _technical_cache_matches_pdf(entry: dict, settings, protocol: str) -> bool:
+    technical = entry.get("technical_processing")
+    if not isinstance(technical, dict):
+        return False
+    pdf_path = _download_pdf_path(entry, settings, protocol)
+    if pdf_path is None:
+        return False
+    expected_sha256 = technical.get("source_pdf_sha256")
+    return (
+        technical.get("source_protocol") == protocol
+        and isinstance(expected_sha256, str)
+        and expected_sha256 == _sha256(pdf_path)
+    )
+
+
+def _sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with Path(path).open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
 
 
 def _client_folder_valid(entry: dict) -> bool:

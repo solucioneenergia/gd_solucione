@@ -1,3 +1,4 @@
+import hashlib
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock
@@ -13,6 +14,7 @@ from src.processing_service import (
     _resolve_pdf_paths,
     _skipped_excel_status,
 )
+from tests._operational_auth import authorize_synthetic_pdfs
 
 
 def test_resolve_pdf_paths_filters_explicit_list(tmp_path: Path) -> None:
@@ -97,12 +99,12 @@ def test_processing_uses_per_model_equipment_quantities(
     Qtd inversores: 1 | 2
     Pot. total do(s) inversor(es): 70 kW
     """
-    pdf_path = tmp_path / "Orcamento_de_Conexao_2606184625.pdf"
+    pdf_path = tmp_path / "Orcamento_de_Conexao_2600001104.pdf"
     monkeypatch.setattr(processing_service, "extract_pdf_text", lambda path: text)
     monkeypatch.setattr(
         processing_service,
         "extract_protocol_from_pdf_text",
-        lambda value: "2606184625",
+        lambda value: "2600001104",
     )
     monkeypatch.setattr(
         processing_service,
@@ -138,12 +140,12 @@ def test_processing_ignores_stale_technical_cache_without_format_version(
     Qtd inversores: 3
     Pot. total do(s) inversor(es): 70 kW
     """
-    pdf_path = tmp_path / "Orcamento_de_Conexao_2604275348.pdf"
+    pdf_path = tmp_path / "Orcamento_de_Conexao_2600001089.pdf"
     monkeypatch.setattr(processing_service, "extract_pdf_text", lambda path: text)
     monkeypatch.setattr(
         processing_service,
         "extract_protocol_from_pdf_text",
-        lambda value: "2604275348",
+        lambda value: "2600001089",
     )
     monkeypatch.setattr(
         processing_service,
@@ -215,12 +217,12 @@ def test_processing_ignores_previous_technical_cache_version_for_equipment_fix(
     Qtd inversores: 1
     Pot. total do(s) inversor(es): 6 kW
     """
-    pdf_path = tmp_path / "Orcamento_de_Conexao_2606021741.pdf"
+    pdf_path = tmp_path / "Orcamento_de_Conexao_2600001097.pdf"
     monkeypatch.setattr(processing_service, "extract_pdf_text", lambda path: text)
     monkeypatch.setattr(
         processing_service,
         "extract_protocol_from_pdf_text",
-        lambda value: "2606021741",
+        lambda value: "2600001097",
     )
     monkeypatch.setattr(
         processing_service,
@@ -437,7 +439,7 @@ def test_pending_technical_review_skips_excel_archive_and_completion(
         processing_service,
         "_load_or_extract_technical_data",
         lambda *args: (
-            "2500000001",
+            "2600001012",
             "CLIENTE SINTETICO",
             "modulo",
             "inversor contaminado",
@@ -469,7 +471,7 @@ def test_pending_technical_review_skips_excel_archive_and_completion(
 
     state_store = StateStore()
     result = processing_service._process_single_pdf(
-        tmp_path / "Orcamento_de_Conexao_2500000001.pdf",
+        tmp_path / "Orcamento_de_Conexao_2600001012.pdf",
         tmp_path / "planilha.xlsx",
         tmp_path / "clientes",
         dry_run=False,
@@ -493,8 +495,8 @@ def test_pending_technical_review_does_not_interrupt_remaining_batch(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     pdfs = [
-        tmp_path / "Orcamento_de_Conexao_2500000010.pdf",
-        tmp_path / "Orcamento_de_Conexao_2500000011.pdf",
+        tmp_path / "Orcamento_de_Conexao_2600001021.pdf",
+        tmp_path / "Orcamento_de_Conexao_2600001022.pdf",
     ]
     calls: list[Path] = []
 
@@ -504,7 +506,7 @@ def test_pending_technical_review_does_not_interrupt_remaining_batch(
         return {
             **processing_service._empty_result(pdf_path),
             "success": not pending,
-            "protocol": "2500000010" if pending else "2500000011",
+            "protocol": "2600001021" if pending else "2600001022",
             "action": "pending_technical_review" if pending else "updated",
             "technical_review_required": pending,
             "technical_validation_status": "pending_review" if pending else "approved",
@@ -553,8 +555,8 @@ def test_real_run_technical_pending_does_not_block_safe_protocol(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     pdfs = [
-        tmp_path / "Orcamento_de_Conexao_2500000100.pdf",
-        tmp_path / "Orcamento_de_Conexao_2500000101.pdf",
+        tmp_path / "Orcamento_de_Conexao_2600001047.pdf",
+        tmp_path / "Orcamento_de_Conexao_2600001048.pdf",
     ]
     calls: list[tuple[Path, bool]] = []
 
@@ -565,7 +567,7 @@ def test_real_run_technical_pending_does_not_block_safe_protocol(
         result = {
             **processing_service._empty_result(pdf_path),
             "success": not pending,
-            "protocol": "2500000101" if pending else "2500000100",
+            "protocol": "2600001048" if pending else "2600001047",
             "action": "pending_technical_review" if pending else "update_existing",
             "technical_review_required": pending,
             "technical_validation_status": "pending_review" if pending else "approved",
@@ -607,8 +609,10 @@ def test_real_run_technical_pending_does_not_block_safe_protocol(
         clientes_root=tmp_path / "clientes",
         dry_run=False,
         pdf_paths=pdfs,
+        allowed_protocols={path.stem.rsplit("_", 1)[-1] for path in pdfs},
         apply_excel=True,
         apply_archive=True,
+        authorization=authorize_synthetic_pdfs(tmp_path, pdfs),
     )
 
     assert payload["blocked_real_run"] is False
@@ -626,8 +630,8 @@ def test_real_run_only_pending_protocols_blocks_without_backup(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     pdfs = [
-        tmp_path / "Orcamento_de_Conexao_2500000110.pdf",
-        tmp_path / "Orcamento_de_Conexao_2500000111.pdf",
+        tmp_path / "Orcamento_de_Conexao_2600001051.pdf",
+        tmp_path / "Orcamento_de_Conexao_2600001052.pdf",
     ]
 
     def fake_process(pdf_path, *_args, dry_run=True, **_kwargs):
@@ -671,8 +675,10 @@ def test_real_run_only_pending_protocols_blocks_without_backup(
         clientes_root=tmp_path / "clientes",
         dry_run=False,
         pdf_paths=pdfs,
+        allowed_protocols={path.stem.rsplit("_", 1)[-1] for path in pdfs},
         apply_excel=True,
         apply_archive=True,
+        authorization=authorize_synthetic_pdfs(tmp_path, pdfs),
     )
 
     assert payload["status"] == "BLOQUEADO"
@@ -686,7 +692,7 @@ def test_real_run_systemic_preflight_error_blocks_entire_batch(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    pdf = tmp_path / "Orcamento_de_Conexao_2500000120.pdf"
+    pdf = tmp_path / "Orcamento_de_Conexao_2600001053.pdf"
     monkeypatch.setattr(processing_service, "ensure_directories", lambda: None)
     monkeypatch.setattr(processing_service, "clear_folder_cache", lambda: None)
     monkeypatch.setattr(
@@ -718,8 +724,10 @@ def test_real_run_systemic_preflight_error_blocks_entire_batch(
         clientes_root=tmp_path / "clientes",
         dry_run=False,
         pdf_paths=[pdf],
+        allowed_protocols={pdf.stem.rsplit("_", 1)[-1]},
         apply_excel=True,
         apply_archive=True,
+        authorization=authorize_synthetic_pdfs(tmp_path, [pdf]),
     )
 
     assert payload["status"] == "BLOQUEADO"
@@ -736,8 +744,8 @@ def test_real_run_systemic_failure_rolls_back_safe_subset(
     workbook.write_text("ORIGINAL", encoding="utf-8")
     backup.write_text("ORIGINAL", encoding="utf-8")
     pdfs = [
-        tmp_path / "Orcamento_de_Conexao_2500000130.pdf",
-        tmp_path / "Orcamento_de_Conexao_2500000131.pdf",
+        tmp_path / "Orcamento_de_Conexao_2600001054.pdf",
+        tmp_path / "Orcamento_de_Conexao_2600001055.pdf",
     ]
 
     def fake_process(pdf_path, *_args, dry_run=True, **_kwargs):
@@ -754,7 +762,7 @@ def test_real_run_systemic_failure_rolls_back_safe_subset(
                 "excel_status": {"success": True, "can_write": True, "skipped": False},
                 "archive_status": {"success": True, "skipped": True, "simulated": True},
             }
-        if protocol == "2500000130":
+        if protocol == "2600001054":
             workbook.write_text("PARTIAL", encoding="utf-8")
             return {
                 **processing_service._empty_result(pdf_path),
@@ -806,8 +814,10 @@ def test_real_run_systemic_failure_rolls_back_safe_subset(
         clientes_root=tmp_path / "clientes",
         dry_run=False,
         pdf_paths=pdfs,
+        allowed_protocols={path.stem.rsplit("_", 1)[-1] for path in pdfs},
         apply_excel=True,
         apply_archive=True,
+        authorization=authorize_synthetic_pdfs(tmp_path, pdfs),
     )
 
     assert workbook.read_text(encoding="utf-8") == "ORIGINAL"
@@ -820,8 +830,8 @@ def test_processing_metrics_distinguish_analyzed_safe_pending_and_applied(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    safe = tmp_path / "Orcamento_de_Conexao_2500000140.pdf"
-    pending = tmp_path / "Orcamento_de_Conexao_2500000141.pdf"
+    safe = tmp_path / "Orcamento_de_Conexao_2600001056.pdf"
+    pending = tmp_path / "Orcamento_de_Conexao_2600001057.pdf"
 
     def fake_process(pdf_path, *_args, dry_run=True, **_kwargs):
         actual_dry_run = _args[2] if len(_args) >= 3 else dry_run
@@ -861,8 +871,13 @@ def test_processing_metrics_distinguish_analyzed_safe_pending_and_applied(
         clientes_root=tmp_path / "clientes",
         dry_run=False,
         pdf_paths=[safe, pending],
+        allowed_protocols={
+            safe.stem.rsplit("_", 1)[-1],
+            pending.stem.rsplit("_", 1)[-1],
+        },
         apply_excel=True,
         apply_archive=True,
+        authorization=authorize_synthetic_pdfs(tmp_path, [safe, pending]),
     )
 
     assert payload["total_pdfs_analyzed"] == 2
@@ -877,8 +892,8 @@ def test_real_run_reuses_pending_simulation_result_without_second_warning(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    safe = tmp_path / "Orcamento_de_Conexao_2500000150.pdf"
-    pending = tmp_path / "Orcamento_de_Conexao_2500000151.pdf"
+    safe = tmp_path / "Orcamento_de_Conexao_2600001058.pdf"
+    pending = tmp_path / "Orcamento_de_Conexao_2600001059.pdf"
     calls: list[tuple[str, bool]] = []
 
     def fake_process(pdf_path, *_args, dry_run=True, **_kwargs):
@@ -933,14 +948,19 @@ def test_real_run_reuses_pending_simulation_result_without_second_warning(
         clientes_root=tmp_path / "clientes",
         dry_run=False,
         pdf_paths=[safe, pending],
+        allowed_protocols={
+            safe.stem.rsplit("_", 1)[-1],
+            pending.stem.rsplit("_", 1)[-1],
+        },
         apply_excel=True,
         apply_archive=True,
+        authorization=authorize_synthetic_pdfs(tmp_path, [safe, pending]),
     )
 
     assert calls == [
-        ("2500000150", True),
-        ("2500000151", True),
-        ("2500000150", False),
+        ("2600001058", True),
+        ("2600001059", True),
+        ("2600001058", False),
     ]
     assert payload["total_pdfs_analyzed"] == 2
     assert payload["total_pending_protocols"] == 1
@@ -951,7 +971,7 @@ def test_file_report_redacts_client_identity_and_folder_paths() -> None:
     payload = {
         "results": [
             {
-                "protocol": "2500000012",
+                "protocol": "2600001023",
                 "client_name": "PESSOA SINTETICA",
                 "matched_path": r"Z:\Clientes\PESSOA SINTETICA",
                 "target_folder": r"Z:\Clientes\PESSOA SINTETICA\GD",
@@ -987,7 +1007,7 @@ def test_valid_technical_result_reaches_excel(
         processing_service,
         "_load_or_extract_technical_data",
         lambda *args: (
-            "2500000002",
+            "2600001013",
             "CLIENTE SINTETICO",
             "modulo",
             "inversor",
@@ -1036,7 +1056,7 @@ def test_valid_technical_result_reaches_excel(
     monkeypatch.setattr(processing_service, "update_excel_from_pdf_data", excel_mock)
 
     result = processing_service._process_single_pdf(
-        tmp_path / "Orcamento_de_Conexao_2500000002.pdf",
+        tmp_path / "Orcamento_de_Conexao_2600001013.pdf",
         tmp_path / "planilha.xlsx",
         tmp_path / "clientes",
         dry_run=True,
@@ -1048,10 +1068,107 @@ def test_valid_technical_result_reaches_excel(
     assert result["technical_validation_status"] == "approved"
 
 
+def test_point_of_connection_no_date_metadata_marks_completion_open(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    validation = SimpleNamespace(
+        approved=True,
+        status="approved",
+        errors=[],
+        warnings=[],
+        technical_review_required=False,
+        module_source="parallel_table",
+        inverter_source="parallel_table",
+    )
+    monkeypatch.setattr(
+        processing_service,
+        "_load_or_extract_technical_data",
+        lambda *args: (
+            "2600001060",
+            "CLIENTE SINTETICO",
+            "modulo",
+            "inversor",
+            "5x LEAPTON MODELO",
+            "1x GROWATT MODELO",
+            validation,
+        ),
+    )
+    monkeypatch.setattr(
+        processing_service,
+        "load_portal_metadata",
+        lambda *args: (
+            {
+                "entry_date": "2026-07-01",
+                "status": "Solicitação Concluída",
+                "completion_date": None,
+                "completion_date_raw": None,
+                "completion_source_stage": "PONTO_DE_CONEXAO_APROVADO",
+                "completion_extraction_status": "POINT_OF_CONNECTION_COMPLETION_DATE_NOT_AVAILABLE",
+            },
+            "metadata.json",
+        ),
+    )
+    monkeypatch.setattr(
+        processing_service,
+        "find_client_folder",
+        lambda *args: SimpleNamespace(
+            match_type="protocol",
+            matched_path=str(tmp_path / "cliente"),
+            confidence=1.0,
+            cache_hit=False,
+            cache_key=None,
+            reason=None,
+            found_by="protocol",
+            protocol_search_hit=True,
+            search_elapsed_seconds=0.0,
+        ),
+    )
+    monkeypatch.setattr(
+        processing_service,
+        "resolve_archive_destination_folder",
+        lambda **kwargs: SimpleNamespace(
+            destination_folder=tmp_path / "cliente",
+            match_type="protocol",
+            reason=None,
+            should_create_folder=False,
+            fallback_mode=None,
+            legacy_gd_ignored=False,
+        ),
+    )
+    excel_mock = Mock(
+        return_value={
+            "success": True,
+            "can_write": True,
+            "action": "update_existing",
+            "completion_action": "MARKED_AS_OPEN",
+            "row_found": True,
+            "row_number": 2,
+        }
+    )
+    monkeypatch.setattr(processing_service, "update_excel_from_pdf_data", excel_mock)
+
+    result = processing_service._process_single_pdf(
+        tmp_path / "Orcamento_de_Conexao_2600001060.pdf",
+        tmp_path / "planilha.xlsx",
+        tmp_path / "clientes",
+        dry_run=True,
+        apply_archive=False,
+    )
+
+    assert excel_mock.call_args.kwargs["completion_date"] == "EM ABERTO"
+    assert result["completion_reason"] == "POINT_OF_CONNECTION_COMPLETION_DATE_NOT_AVAILABLE"
+    assert result["completion_action"] == "MARKED_AS_OPEN"
+
+
 def test_valid_v6_cache_is_reused_without_pdf_extraction(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    pdf = tmp_path / "Orcamento_de_Conexao_2600001014.pdf"
+    pdf_content = b"%PDF-1.4\nCONTEUDO SINTETICO\n%%EOF"
+    pdf.write_bytes(pdf_content)
+    pdf_sha256 = hashlib.sha256(pdf_content).hexdigest()
     extraction_mock = Mock(side_effect=AssertionError("cache v6 deveria ser reutilizado"))
     monkeypatch.setattr(processing_service, "extract_pdf_text", extraction_mock)
     data = GenerationData(
@@ -1098,6 +1215,8 @@ def test_valid_v6_cache_is_reused_without_pdf_extraction(
                     "module_source": "parallel_table",
                     "inverter_source": "parallel_table",
                     "equipment": serialize_equipment_cache(data),
+                    "source_protocol": "2600001014",
+                    "source_pdf_sha256": pdf_sha256,
                 },
             }
 
@@ -1105,7 +1224,7 @@ def test_valid_v6_cache_is_reused_without_pdf_extraction(
             return False
 
     result = processing_service._load_or_extract_technical_data(
-        tmp_path / "Orcamento_de_Conexao_2500000003.pdf", StateStore()
+        pdf, StateStore()
     )
 
     extraction_mock.assert_not_called()
@@ -1159,7 +1278,7 @@ def test_invalid_or_pending_v4_cache_is_reextracted(
     monkeypatch.setattr(
         processing_service,
         "extract_protocol_from_pdf_text",
-        lambda value: "2500000004",
+        lambda value: "2600001015",
     )
     monkeypatch.setattr(
         processing_service,
@@ -1181,7 +1300,7 @@ def test_invalid_or_pending_v4_cache_is_reextracted(
 
     state_store = StateStore()
     result = processing_service._load_or_extract_technical_data(
-        tmp_path / "Orcamento_de_Conexao_2500000004.pdf", state_store
+        tmp_path / "Orcamento_de_Conexao_2600001015.pdf", state_store
     )
 
     extraction_mock.assert_called_once()
@@ -1210,7 +1329,7 @@ def test_pending_validation_does_not_write_reusable_v4_cache(
     monkeypatch.setattr(
         processing_service,
         "extract_protocol_from_pdf_text",
-        lambda value: "2500000005",
+        lambda value: "2600001016",
     )
     monkeypatch.setattr(
         processing_service,
@@ -1232,7 +1351,7 @@ def test_pending_validation_does_not_write_reusable_v4_cache(
 
     state_store = StateStore()
     result = processing_service._load_or_extract_technical_data(
-        tmp_path / "Orcamento_de_Conexao_2500000005.pdf", state_store
+        tmp_path / "Orcamento_de_Conexao_2600001016.pdf", state_store
     )
 
     assert result[6].approved is False

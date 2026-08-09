@@ -1,5 +1,6 @@
 ﻿from __future__ import annotations
 
+import hashlib
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock
@@ -434,7 +435,7 @@ def test_invalid_v4_cache_is_reextracted(
     extraction = Mock(return_value=_linear_text())
     monkeypatch.setattr(processing_service, "extract_pdf_text", extraction)
     monkeypatch.setattr(
-        processing_service, "extract_protocol_from_pdf_text", lambda text: "2500000100"
+        processing_service, "extract_protocol_from_pdf_text", lambda text: "2600001047"
     )
     monkeypatch.setattr(
         processing_service, "extract_client_from_pdf_text", lambda text: "CLIENTE SINTETICO"
@@ -442,7 +443,7 @@ def test_invalid_v4_cache_is_reextracted(
     state = _CacheState(invalid_cache)
 
     result = processing_service._load_or_extract_technical_data(
-        tmp_path / "Orcamento_de_Conexao_2500000100.pdf", state
+        tmp_path / "Orcamento_de_Conexao_2600001047.pdf", state
     )
 
     extraction.assert_called_once()
@@ -456,10 +457,17 @@ def test_v6_cache_is_semantically_revalidated_without_pdf_extraction(
 ) -> None:
     extraction = Mock(side_effect=AssertionError("cache semântico válido deve ser reutilizado"))
     monkeypatch.setattr(processing_service, "extract_pdf_text", extraction)
+    pdf_path = tmp_path / "Orcamento_de_Conexao_2600001048.pdf"
+    pdf_bytes = b"%PDF-1.4\nSYNTHETIC TEST PDF\n%%EOF\n"
+    pdf_path.write_bytes(pdf_bytes)
+    cache = _valid_structured_cache(
+        source_protocol="2600001048",
+        source_pdf_sha256=hashlib.sha256(pdf_bytes).hexdigest(),
+    )
 
     result = processing_service._load_or_extract_technical_data(
-        tmp_path / "Orcamento_de_Conexao_2500000101.pdf",
-        _CacheState(_valid_structured_cache()),
+        pdf_path,
+        _CacheState(cache),
     )
 
     extraction.assert_not_called()
@@ -502,7 +510,7 @@ def _patch_operational_dependencies(
 ) -> Mock:
     monkeypatch.setattr(processing_service, "extract_pdf_text", lambda path: _linear_text())
     monkeypatch.setattr(
-        processing_service, "extract_protocol_from_pdf_text", lambda text: "2500000102"
+        processing_service, "extract_protocol_from_pdf_text", lambda text: "2600001049"
     )
     monkeypatch.setattr(
         processing_service, "extract_client_from_pdf_text", lambda text: "CLIENTE SINTETICO"
@@ -587,7 +595,7 @@ def test_success_is_persisted_only_after_excel_and_before_archive(
     state = _OrderedState(events)
 
     result = processing_service._process_single_pdf(
-        tmp_path / "Orcamento_de_Conexao_2500000102.pdf",
+        tmp_path / "Orcamento_de_Conexao_2600001049.pdf",
         tmp_path / "planilha.xlsx",
         tmp_path / "clientes",
         dry_run=False,
@@ -613,7 +621,7 @@ def test_excel_failure_does_not_persist_success_or_archive(
     state = _OrderedState(events)
 
     result = processing_service._process_single_pdf(
-        tmp_path / "Orcamento_de_Conexao_2500000102.pdf",
+        tmp_path / "Orcamento_de_Conexao_2600001049.pdf",
         tmp_path / "planilha.xlsx",
         tmp_path / "clientes",
         dry_run=False,
@@ -631,7 +639,7 @@ def test_excel_failure_does_not_persist_success_or_archive(
     ("protocol", "data", "expected_error"),
     [
         (
-            "2503261731",
+            "2600001064",
             GenerationData(
                 modules=[ModuleEquipment(manufacturer="MODULO", model="M1", quantity=5)],
                 module_total_quantity=5,
@@ -639,7 +647,7 @@ def test_excel_failure_does_not_persist_success_or_archive(
             "INVERTER_IDENTITY_MISSING",
         ),
         (
-            "2505160008",
+            "2600001070",
             GenerationData(
                 modules=[ModuleEquipment(manufacturer="MODULO", model=None, quantity=5)],
                 module_total_quantity=5,
@@ -651,7 +659,7 @@ def test_excel_failure_does_not_persist_success_or_archive(
             "MODULE_PAIRING_UNSAFE",
         ),
         (
-            "2506022885",
+            "2600001073",
             GenerationData(
                 modules=[ModuleEquipment(manufacturer="MODULO", model="M1", quantity=5)],
                 module_total_quantity=5,
@@ -683,11 +691,11 @@ def test_public_report_removes_all_paths() -> None:
         "finished_at": "2026-07-21T10:01:00",
         "downloads_root": r"C:\empresa\downloads",
         "workbook_path": r"Z:\empresa\planilha.xlsx",
-        "clientes_root": r"\\servidor\clientes\Pessoa Exemplo",
-        "pending_pdf_paths": ["/home/user/documento.pdf"],
+        "clientes_root": r"\\SERVIDOR\SINTETICO\Pessoa Exemplo",
+        "pending_pdf_paths": ["/CAMINHO/SINTETICO"],
         "results": [
             {
-                "protocol": "2500000103",
+                "protocol": "2600001050",
                 "action": "pending_technical_review",
                 "pdf_path": r"C:\empresa\documento.pdf",
                 "error": r"falhou em Z:\empresa\arquivo.xlsx",
@@ -700,11 +708,11 @@ def test_public_report_removes_all_paths() -> None:
                 "recommended_action": "Reprocesse o protocolo.",
                 "excel_status": {
                     "success": False,
-                    "error": r"\\servidor\privado\planilha.xlsx",
+                    "error": r"\\SERVIDOR\SINTETICO\planilha.xlsx",
                 },
                 "archive_status": {
                     "success": False,
-                    "nested": {"path": "/home/user/cliente.pdf"},
+                    "nested": {"path": "/CAMINHO/SINTETICO"},
                 },
             }
         ],
@@ -713,7 +721,7 @@ def test_public_report_removes_all_paths() -> None:
     public = processing_service._privacy_safe_report_payload(internal)
     serialized = repr(public)
 
-    assert public["results"][0]["protocol"] == "2500000103"
+    assert public["results"][0]["protocol"] == "2600001050"
     for forbidden in ("C:\\", "Z:\\", "\\\\servidor\\", "/home/", ".pdf", ".xlsx"):
         assert forbidden not in serialized
     assert "downloads_root" not in public

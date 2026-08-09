@@ -5,7 +5,7 @@ import unicodedata
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from rapidfuzz import fuzz
 
@@ -802,9 +802,10 @@ def _cached_client_folder_match(
             except ValueError:
                 logger.warning("Entrada de cache fora da raiz de clientes foi ignorada.")
                 continue
-            match_type = entry.get("match_type")
-            if match_type not in {"protocol", "fuzzy_name"}:
-                match_type = "fuzzy_name"
+            raw_match_type = entry.get("match_type")
+            match_type: Literal["protocol", "fuzzy_name"] = (
+                "protocol" if raw_match_type == "protocol" else "fuzzy_name"
+            )
             return ClientFolderMatch(
                 protocol=protocol,
                 client_name=client_name,

@@ -10,30 +10,22 @@ from automacao_gd.infrastructure.config import get_settings
 from automacao_gd.infrastructure.files.file_service import ensure_directories
 from automacao_gd.infrastructure.logging import setup_logger
 from automacao_gd.infrastructure.excel.service import repair_workbook_format
+from automacao_gd.infrastructure.persistence.atomic import atomic_write_json, atomic_write_text
 
 
 JSON_REPORT_NAME = "reparo_formatacao_planilha.json"
 MARKDOWN_REPORT_NAME = "reparo_formatacao_planilha.md"
 
 
-def main() -> None:
+def main() -> int:
     ensure_directories()
     setup_logger()
     settings = get_settings()
 
     if not settings.DRY_RUN:
-        print("")
-        print("ATENCAO: DRY_RUN=false.")
-        print(f"Planilha configurada: {settings.planilha_path}")
-        print("Digite SIM para aplicar reparo real de formatacao.")
-        try:
-            confirmacao = input("Confirmar reparo real? ")
-        except EOFError:
-            print("Reparo cancelado: confirmacao SIM nao recebida.")
-            return
-        if confirmacao.strip().upper() != "SIM":
-            print("Reparo cancelado.")
-            return
+        print("Status: BLOQUEADO")
+        print("Reparo real direto desativado nesta etapa; execute somente dry-run.")
+        return 2
 
     payload = repair_workbook_format(
         workbook_path=settings.planilha_path,
@@ -46,6 +38,7 @@ def main() -> None:
     print(f"Relatorio JSON: {json_path}")
     print(f"Relatorio Markdown: {markdown_path}")
     print(f"Sucesso: {payload['success']}")
+    return 0 if payload["success"] else 1
 
 
 def _save_reports(logs_dir: Path, payload: dict) -> tuple[Path, Path]:
@@ -152,4 +145,4 @@ def _md(value) -> str:
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

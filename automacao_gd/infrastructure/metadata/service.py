@@ -24,6 +24,10 @@ def build_portal_metadata(data: dict[str, Any]) -> dict:
         "entry_date": date_to_iso(entry_date_raw),
         "completion_date_raw": completion_date_raw,
         "completion_date": date_to_iso(completion_date_raw),
+        "completion_date_normalized": data.get("completion_date_normalized"),
+        "completion_source_stage": data.get("completion_source_stage"),
+        "completion_source_selector": data.get("completion_source_selector"),
+        "completion_extraction_status": data.get("completion_extraction_status"),
         "consumer_unit_code": data.get("consumer_unit_code"),
         "address": data.get("address"),
     }
