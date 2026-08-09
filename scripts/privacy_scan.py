@@ -11,11 +11,101 @@ from pathlib import Path, PurePosixPath
 from typing import Any
 
 
-_SYNTHETIC_IDENTIFIERS = {
-    "0000000000",
-    "2600000000",
-    "2600000001",
-    "2600000002",
+# Frozen, explicitly enumerated fixture namespace. Do not replace this list with a
+# range: a path under tests/specs is not proof that an identifier is synthetic.
+_OFFICIAL_SYNTHETIC_PROTOCOL_SUFFIXES = {
+    "0000",
+    "0001",
+    "0002",
+    "0003",
+    "0004",
+    "0005",
+    "0006",
+    "0007",
+    "0008",
+    "0009",
+    "0017",
+    "1003",
+    "1007",
+    "1011",
+    "1012",
+    "1013",
+    "1014",
+    "1015",
+    "1016",
+    "1017",
+    "1018",
+    "1019",
+    "1020",
+    "1021",
+    "1022",
+    "1023",
+    "1024",
+    "1025",
+    "1026",
+    "1027",
+    "1028",
+    "1029",
+    "1030",
+    "1031",
+    "1032",
+    "1033",
+    "1034",
+    "1035",
+    "1036",
+    "1037",
+    "1038",
+    "1039",
+    "1040",
+    "1041",
+    "1042",
+    "1043",
+    "1044",
+    "1045",
+    "1046",
+    "1047",
+    "1048",
+    "1049",
+    "1050",
+    "1051",
+    "1052",
+    "1053",
+    "1054",
+    "1055",
+    "1056",
+    "1057",
+    "1058",
+    "1059",
+    "1060",
+    "1061",
+    "1064",
+    "1068",
+    "1069",
+    "1070",
+    "1071",
+    "1073",
+    "1074",
+    "1075",
+    "1077",
+    "1078",
+    "1079",
+    "1080",
+    "1082",
+    "1083",
+    "1084",
+    "1085",
+    "1088",
+    "1089",
+    "1094",
+    "1097",
+    "1098",
+    "1099",
+    "1104",
+    "1106",
+    "1107",
+}
+_SYNTHETIC_IDENTIFIERS = {"0000000000"} | {
+    f"260000{suffix}" for suffix in _OFFICIAL_SYNTHETIC_PROTOCOL_SUFFIXES
 }
 _SYNTHETIC_TEXT_MARKERS = {
     "CLIENTE SINTETICO LTDA",
@@ -127,10 +217,6 @@ def _is_synthetic(match: str, path: str) -> bool:
     inner_path = path.rsplit("!", 1)[-1]
     parts = tuple(part.casefold() for part in PurePosixPath(inner_path).parts)
     synthetic_context = bool(parts and parts[0] in {"specs", "tests"})
-    if synthetic_context and identifiers and all(
-        re.fullmatch(r"2[2-9]0000\d{4}", item) for item in identifiers
-    ):
-        return True
     folded = stripped.casefold()
     if synthetic_context and "cliente sintetico" in folded:
         return True

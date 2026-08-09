@@ -120,6 +120,17 @@ def test_privacy_scanner_accepts_only_official_synthetic_markers(tmp_path: Path)
     assert report["findings"] == []
 
 
+def test_test_path_does_not_authorize_undeclared_identifier() -> None:
+    identifier = "260" + "0009999"
+
+    report = privacy_scan.scan_entries(
+        {"tests/test_portal.py": f'protocol = "{identifier}"'.encode("utf-8")}
+    )
+
+    assert report["valid"] is False
+    assert identifier not in json.dumps(report, ensure_ascii=False)
+
+
 def test_privacy_scanner_blocks_embedded_client_name(tmp_path: Path) -> None:
     private_value = "PESSOA" + " OPERACIONAL"
     field_name = "client_" + "name"
@@ -177,7 +188,8 @@ def test_tree_archive_scan_preserves_inner_synthetic_test_context(
 
 
 def test_privacy_scanner_allows_digest_digits_but_not_manifest_protocol() -> None:
-    digest = "a" * 20 + "2600001234" + "b" * 34
+    undeclared_identifier = "260" + "0001234"
+    digest = "a" * 20 + undeclared_identifier + "b" * 34
     clean = privacy_scan.scan_entries(
         {
             "release-manifest.json": json.dumps(
@@ -188,7 +200,10 @@ def test_privacy_scanner_allows_digest_digits_but_not_manifest_protocol() -> Non
     contaminated = privacy_scan.scan_entries(
         {
             "release-manifest.json": json.dumps(
-                {"files": {"module.py": digest}, "protocol": "2600001234"}
+                {
+                    "files": {"module.py": digest},
+                    "protocol": undeclared_identifier,
+                }
             ).encode("utf-8")
         }
     )
