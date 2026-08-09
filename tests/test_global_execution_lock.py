@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import multiprocessing
+import os
 import queue
 import time
 from pathlib import Path
@@ -71,7 +72,7 @@ def test_global_execution_lock_blocks_second_process_and_releases(tmp_path: Path
 
 
 def test_global_execution_lock_writes_sanitized_metadata(tmp_path: Path) -> None:
-    lock_path = tmp_path / "nested" / "option5_execution.lock"
+    lock_path = tmp_path / "nested" / "real_run_execution.lock"
 
     with ExecutionLock(
         lock_path,
@@ -79,10 +80,9 @@ def test_global_execution_lock_writes_sanitized_metadata(tmp_path: Path) -> None
         operation="option5",
         requested_batch_limit=10,
         authorization_scope="SYNTHETIC_BATCH10_VALIDATION",
-    ):
-        pass
-
-    metadata = json.loads(lock_path.read_text(encoding="utf-8"))
+    ) as lock:
+        metadata = json.loads(lock.metadata.to_json())
+        assert lock_path.exists()
 
     assert metadata["schema_version"] == 1
     assert metadata["execution_id"] == "SYNTH-META"
@@ -93,12 +93,13 @@ def test_global_execution_lock_writes_sanitized_metadata(tmp_path: Path) -> None
     assert "username" not in metadata
     assert "\\" not in json.dumps(metadata)
     assert ":/" not in json.dumps(metadata)
+    assert not lock_path.exists()
 
 
-def test_global_execution_lock_releases_after_exception_and_persistent_file_does_not_block(
+def test_global_execution_lock_removes_marker_after_exception(
     tmp_path: Path,
 ) -> None:
-    lock_path = tmp_path / "option5_execution.lock"
+    lock_path = tmp_path / "real_run_execution.lock"
 
     with pytest.raises(RuntimeError):
         with ExecutionLock(
@@ -110,7 +111,7 @@ def test_global_execution_lock_releases_after_exception_and_persistent_file_does
         ):
             raise RuntimeError("synthetic failure")
 
-    assert lock_path.exists()
+    assert not lock_path.exists()
     with ExecutionLock(
         lock_path,
         execution_id="SYNTH-AFTER",
@@ -119,6 +120,83 @@ def test_global_execution_lock_releases_after_exception_and_persistent_file_does
         authorization_scope="SYNTHETIC_BATCH10_VALIDATION",
     ):
         pass
+    assert not lock_path.exists()
+
+
+def test_global_execution_lock_removes_marker_after_success(tmp_path: Path) -> None:
+    lock_path = tmp_path / "real_run_execution.lock"
+
+    with ExecutionLock(
+        lock_path,
+        execution_id="SYNTH-SUCCESS",
+        operation="option4",
+        requested_batch_limit=1,
+        authorization_scope="SYNTHETIC_OPTION4",
+    ):
+        assert lock_path.exists()
+
+    assert not lock_path.exists()
+
+
+def test_global_execution_lock_reclaims_orphan_marker_with_dead_pid(
+    tmp_path: Path,
+) -> None:
+    lock_path = tmp_path / "real_run_execution.lock"
+    lock_path.write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "execution_id": "SYNTH-ORPHAN",
+                "pid": 999999999,
+                "operation": "option4",
+                "requested_batch_limit": 1,
+                "authorization_scope": "SYNTHETIC_OPTION4",
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    with ExecutionLock(
+        lock_path,
+        execution_id="SYNTH-AFTER-ORPHAN",
+        operation="option4",
+        requested_batch_limit=1,
+        authorization_scope="SYNTHETIC_OPTION4",
+    ) as lock:
+        metadata = json.loads(lock.metadata.to_json())
+        assert metadata["execution_id"] == "SYNTH-AFTER-ORPHAN"
+
+    assert not lock_path.exists()
+
+
+def test_global_execution_lock_blocks_marker_with_active_pid(tmp_path: Path) -> None:
+    lock_path = tmp_path / "real_run_execution.lock"
+    lock_path.write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "execution_id": "SYNTH-ACTIVE",
+                "pid": os.getpid(),
+                "operation": "option4",
+                "requested_batch_limit": 1,
+                "authorization_scope": "SYNTHETIC_OPTION4",
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ExecutionLockError) as exc:
+        with ExecutionLock(
+            lock_path,
+            execution_id="SYNTH-BLOCKED",
+            operation="option4",
+            requested_batch_limit=1,
+            authorization_scope="SYNTHETIC_OPTION4",
+        ):
+            pass
+
+    assert exc.value.code == "GLOBAL_EXECUTION_LOCKED"
+    assert json.loads(lock_path.read_text(encoding="utf-8"))["execution_id"] == "SYNTH-ACTIVE"
 
 
 def test_global_execution_lock_reentrant_acquire_is_blocked(tmp_path: Path) -> None:

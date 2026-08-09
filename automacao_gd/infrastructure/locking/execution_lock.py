@@ -1,12 +1,13 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import IO
 from pathlib import Path
 from types import TracebackType
+from typing import IO
 
 
 class ExecutionLockError(RuntimeError):
@@ -16,6 +17,7 @@ class ExecutionLockError(RuntimeError):
 
 
 _HELD_LOCK_PATHS: set[str] = set()
+_LOGGER = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -77,6 +79,14 @@ class ExecutionLock:
                 "GLOBAL_EXECUTION_LOCKED",
                 "Outra execução operacional já está em andamento.",
             ) from exc
+        try:
+            _validate_existing_marker_is_reclaimable(handle)
+        except ExecutionLockError:
+            try:
+                _unlock_file(handle)
+            finally:
+                handle.close()
+            raise
         handle.seek(0)
         handle.truncate()
         handle.write(self.metadata.to_json())
@@ -95,14 +105,103 @@ class ExecutionLock:
     ) -> None:
         handle = self._handle
         key = str(self.path.resolve(strict=False)).lower()
-        if handle is not None:
-            try:
-                _unlock_file(handle)
-            finally:
-                handle.close()
-        self._handle = None
-        self.acquired = False
-        _HELD_LOCK_PATHS.discard(key)
+        try:
+            if handle is not None:
+                try:
+                    _unlock_file(handle)
+                finally:
+                    handle.close()
+        finally:
+            self._handle = None
+            self.acquired = False
+            _HELD_LOCK_PATHS.discard(key)
+            _remove_owned_marker(self.path, self.metadata.execution_id)
+
+
+def _validate_existing_marker_is_reclaimable(handle: IO[str]) -> None:
+    handle.seek(0)
+    raw = handle.read().strip()
+    if not raw:
+        return
+    marker = _parse_marker(raw)
+    pid = _marker_pid(marker)
+    if pid is not None and _pid_is_active(pid):
+        raise ExecutionLockError(
+            "GLOBAL_EXECUTION_LOCKED",
+            "Outra execuÃ§Ã£o operacional jÃ¡ estÃ¡ em andamento.",
+        )
+    _LOGGER.warning(
+        "Lock global orfao recuperado; marcador=%s; pid_status=inactive_or_invalid.",
+        Path(handle.name).name,
+    )
+
+
+def _remove_owned_marker(path: Path, execution_id: str) -> None:
+    try:
+        raw = path.read_text(encoding="utf-8").strip()
+    except OSError:
+        return
+    marker = _parse_marker(raw)
+    if marker.get("execution_id") != execution_id:
+        return
+    try:
+        path.unlink()
+    except OSError:
+        _LOGGER.warning(
+            "Nao foi possivel remover marcador de lock global; marcador=%s.",
+            path.name,
+        )
+
+
+def _parse_marker(raw: str) -> dict[str, object]:
+    try:
+        payload = json.loads(raw)
+    except json.JSONDecodeError:
+        return {}
+    return payload if isinstance(payload, dict) else {}
+
+
+def _marker_pid(marker: dict[str, object]) -> int | None:
+    raw_pid = marker.get("pid")
+    if not isinstance(raw_pid, int | str):
+        return None
+    try:
+        pid = int(raw_pid)
+    except ValueError:
+        return None
+    return pid if pid > 0 else None
+
+
+def _pid_is_active(pid: int) -> bool:
+    if pid <= 0:
+        return False
+    if pid == os.getpid():
+        return True
+    if os.name == "nt":
+        return _windows_pid_is_active(pid)
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    except OSError:
+        return False
+    return True
+
+
+def _windows_pid_is_active(pid: int) -> bool:
+    try:
+        import ctypes
+
+        kernel32 = getattr(ctypes, "windll").kernel32
+        handle = kernel32.OpenProcess(0x1000, False, pid)
+        if not handle:
+            return False
+        kernel32.CloseHandle(handle)
+        return True
+    except (AttributeError, OSError, ValueError):
+        return False
 
 
 if os.name == "nt":

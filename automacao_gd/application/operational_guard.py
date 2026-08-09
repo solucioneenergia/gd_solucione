@@ -386,13 +386,15 @@ def validate_frozen_batch(batch: FrozenOfflineBatch) -> None:
 
 
 def global_execution_lock_path(settings: object) -> Path:
-    configured = getattr(settings, "option5_execution_lock_path", None)
+    configured = getattr(settings, "real_run_execution_lock_path", None)
+    if configured is None:
+        configured = getattr(settings, "option5_execution_lock_path", None)
     if configured is not None:
         return Path(configured)
     logs_dir = getattr(settings, "logs_dir_path", None)
     if logs_dir is None:
         logs_dir = getattr(settings, "LOGS_DIR", Path("data/logs"))
-    return Path(str(logs_dir)) / "option5_execution.lock"
+    return Path(str(logs_dir)).parent / "locks" / "real_run_execution.lock"
 
 
 def _validated_limit(value: int) -> int:

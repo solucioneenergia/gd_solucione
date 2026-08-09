@@ -476,6 +476,57 @@ def test_real_offline_use_case_passes_only_frozen_scope_to_processing(
     assert captured["allowed_protocols"] == {"2600000000"}
 
 
+def test_real_offline_use_case_success_removes_global_lock_marker(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from automacao_gd.application.operational_guard import (
+        authorize_offline_batch,
+        prepare_offline_batch,
+    )
+    from automacao_gd.application.use_cases import process_downloads as module
+
+    pdf = tmp_path / "Orcamento_de_Conexao_2600000000.pdf"
+    pdf.write_bytes(b"%PDF-1.4\nCONTEUDO SINTETICO\n%%EOF")
+    lock_path = tmp_path / "real_run_execution.lock"
+    settings = SimpleNamespace(
+        downloads_dir_path=tmp_path,
+        planilha_path=tmp_path / "planilha-sintetica.xlsx",
+        clientes_root_path=tmp_path / "clientes-sinteticos",
+        APPLY_EXCEL=True,
+        APPLY_ARCHIVE=False,
+        real_run_execution_lock_path=lock_path,
+    )
+    authorization = authorize_offline_batch(
+        prepare_offline_batch(
+            tmp_path,
+            requested_limit=1,
+            selections=[(pdf.name, "2600000000")],
+        ),
+        "APLICAR OPCAO 4 EM 1 PROTOCOLOS",
+    )
+    monkeypatch.setattr(
+        module,
+        "run_preflight",
+        lambda *args, **kwargs: SimpleNamespace(ready=True),
+    )
+
+    def fake_processing(**kwargs: object) -> dict:
+        assert kwargs["lock_proof"].lock.acquired is True
+        assert lock_path.exists()
+        return {"status": OperationStatus.SUCESSO.value}
+
+    monkeypatch.setattr(module, "process_downloaded_pdfs", fake_processing)
+
+    payload = module.ProcessDownloadedPdfsUseCase(settings).execute(
+        dry_run=False,
+        authorization=authorization,
+    )
+
+    assert payload["status"] == OperationStatus.SUCESSO.value
+    assert not lock_path.exists()
+
+
 def test_full_pipeline_main_returns_nonzero_when_confirmation_is_refused(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

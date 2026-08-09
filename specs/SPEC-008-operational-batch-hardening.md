@@ -67,7 +67,11 @@ Erro:
 
 ### RF-003 — Mutex global
 
-O pipeline compartilhado deve adquirir `data/locks/option5_execution.lock`
+Esta seção foi substituída pela SPEC-009 RF-003A. O pipeline compartilhado deve adquirir
+o lock semântico neutro `data/locks/real_run_execution.lock`; o nome histórico
+`option5_execution.lock` não é mais a fonte canônica do contrato.
+
+O pipeline compartilhado deve adquirir o mutex global
 antes de preflight externo, Portal, workbook, PDF, download, backup ou
 arquivamento.
 

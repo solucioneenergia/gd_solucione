@@ -107,6 +107,27 @@ segura ou encerram bloqueados com codigo nao zero.
 Mesmo com `DRY_RUN=true`, a opcao 5 exige confirmacao forte antes de acessar Portal/CDP ou
 baixar PDFs. O dry-run integrado totalmente offline nao usa essa rota externa.
 
+### RF-003A — Lock global de execucao real
+
+O mutex compartilhado por opcoes 4, 5 e rotas reais deve usar nome semantico neutro
+`data/locks/real_run_execution.lock`. O nome historico `option5_execution.lock` permanece apenas
+como alias de compatibilidade de configuracao, sem ser a fonte semantica do contrato.
+
+O arquivo marcador do lock deve existir somente enquanto a execucao detem o lock. Ao sair do
+contexto, em sucesso, erro, bloqueio controlado, retorno antecipado ou excecao de relatorio/backup,
+o marcador pertencente ao `execution_id` deve ser removido por `finally` ou mecanismo equivalente.
+
+Se um marcador persistente for encontrado antes da aquisicao:
+
+- PID inexistente, invalido ou processo finalizado e tratado como lock orfao, removido com warning
+  operacional sanitizado e a nova execucao pode prosseguir;
+- PID ativo continua bloqueando a nova execucao com `GLOBAL_EXECUTION_LOCKED`;
+- lock ja detido no mesmo processo continua bloqueando reentrada com
+  `GLOBAL_EXECUTION_LOCK_REENTRANT`.
+
+O tratamento de orfao nao pode remover marcador de outro `execution_id` ativo nem permitir duas
+escritas reais simultaneas.
+
 ### RF-004 — Protocolo canonico extraido
 
 Antes de Excel, arquivamento ou state, o sistema compara o protocolo esperado pelo nome, o

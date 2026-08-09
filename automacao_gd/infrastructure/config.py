@@ -213,8 +213,12 @@ class Settings(BaseSettings):
         return self.resolve_path(Path("data/state/pipeline_cdp_state.json"))
 
     @property
+    def real_run_execution_lock_path(self) -> Path:
+        return self.resolve_path(Path("data/locks/real_run_execution.lock"))
+
+    @property
     def option5_execution_lock_path(self) -> Path:
-        return self.resolve_path(Path("data/locks/option5_execution.lock"))
+        return self.real_run_execution_lock_path
 
     @property
     def client_folder_cache_path(self) -> Path:
