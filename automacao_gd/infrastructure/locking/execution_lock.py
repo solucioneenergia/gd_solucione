@@ -111,14 +111,14 @@ if os.name == "nt":
     def _try_lock_file(handle: IO[str]) -> None:
         handle.seek(0)
         try:
-            msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
+            getattr(msvcrt, "locking")(handle.fileno(), getattr(msvcrt, "LK_NBLCK"), 1)
         except OSError as exc:
             raise BlockingIOError(str(exc)) from exc
 
     def _unlock_file(handle: IO[str]) -> None:
         handle.seek(0)
         try:
-            msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
+            getattr(msvcrt, "locking")(handle.fileno(), getattr(msvcrt, "LK_UNLCK"), 1)
         except OSError:
             pass
 
@@ -127,9 +127,11 @@ else:
 
     def _try_lock_file(handle: IO[str]) -> None:
         try:
-            fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)  # type: ignore[attr-defined]
+            getattr(fcntl, "flock")(
+                handle.fileno(), getattr(fcntl, "LOCK_EX") | getattr(fcntl, "LOCK_NB")
+            )
         except BlockingIOError:
             raise
 
     def _unlock_file(handle: IO[str]) -> None:
-        fcntl.flock(handle.fileno(), fcntl.LOCK_UN)  # type: ignore[attr-defined]
+        getattr(fcntl, "flock")(handle.fileno(), getattr(fcntl, "LOCK_UN"))
