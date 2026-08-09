@@ -424,6 +424,15 @@ def test_release_generator_rechecks_cleanliness_after_privacy_scan(
 def test_ci_keeps_build_artifacts_outside_workspace_and_scans_all_packages() -> None:
     workflow = (PROJECT_ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
 
+    assert "os: [ubuntu-latest, windows-latest]" in workflow
+    assert 'python-version: ["3.12", "3.13"]' in workflow
+    assert "runs-on: ${{ matrix.os }}" in workflow
+    assert (
+        "python scripts/privacy_scan.py . automacao_gd apps tests scripts src "
+        "frontend specs docs .agents .github AGENTS.md README.md CHANGELOG.md "
+        "pyproject.toml requirements.txt requirements-dev.txt desktop_app.py app.py "
+        "start_desktop_app_silent.ps1"
+    ) in workflow
     assert '--wheel-dir "${RUNNER_TEMP}/wheelhouse"' in workflow
     assert 'python -m venv "${RUNNER_TEMP}/smoke-venv"' in workflow
     assert "python scripts/privacy_scan.py . ." in workflow

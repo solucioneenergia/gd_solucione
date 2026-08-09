@@ -6,9 +6,10 @@ on:
 
 jobs:
   quality:
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.os }}
     strategy:
       matrix:
+        os: [ubuntu-latest, windows-latest]
         python-version: ["3.12", "3.13"]
     steps:
       - uses: actions/checkout@v4
@@ -46,6 +47,8 @@ jobs:
         run: python -m mypy automacao_gd
       - name: Validate engineering foundation
         run: python scripts/validate_engineering_foundation.py
+      - name: Privacy scan source tree and frontends
+        run: python scripts/privacy_scan.py . automacao_gd apps tests scripts src frontend specs docs .agents .github AGENTS.md README.md CHANGELOG.md pyproject.toml requirements.txt requirements-dev.txt desktop_app.py app.py start_desktop_app_silent.ps1
       - name: Tests
         run: python -m pytest -q --cov=automacao_gd --cov-report=term-missing
       - name: Dependency audit

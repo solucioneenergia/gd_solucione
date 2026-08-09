@@ -177,7 +177,7 @@ workbook, pastas e state sinteticos e prova ausencia de escrita real.
 
 ## Requisitos nao funcionais
 
-- Compatibilidade Python 3.12 e 3.13 no CI; Windows deve ter job ou comando objetivo pendente.
+- Compatibilidade Python 3.12 e 3.13 no CI em `ubuntu-latest` e `windows-latest`.
 - Operacoes repetiveis devem ser idempotentes.
 - Erros conhecidos nao exibem dados sensiveis nem traceback no console do operador.
 - Mudancas devem ser minimas e nao evoluir o desktop.
