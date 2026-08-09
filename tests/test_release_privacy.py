@@ -99,7 +99,8 @@ def test_privacy_scanner_hashes_each_detected_match_independently(tmp_path: Path
 
 
 def test_privacy_scanner_accepts_only_official_synthetic_markers(tmp_path: Path) -> None:
-    fixture = tmp_path / "synthetic_fixture.txt"
+    fixture = tmp_path / "tests" / "fixtures" / "synthetic" / "synthetic_fixture.txt"
+    fixture.parent.mkdir(parents=True)
     fixture.write_text(
         "\n".join(
             (
@@ -129,6 +130,24 @@ def test_test_path_does_not_authorize_undeclared_identifier() -> None:
 
     assert report["valid"] is False
     assert identifier not in json.dumps(report, ensure_ascii=False)
+
+
+@pytest.mark.parametrize(
+    "path",
+    (
+        "apps/desktop/frontend/dist/assets/index.js",
+        "automacao_gd/runtime.py",
+        "release-manifest.json",
+    ),
+)
+def test_official_fixture_identifier_is_blocked_outside_fixture_context(
+    path: str,
+) -> None:
+    report = privacy_scan.scan_entries(
+        {path: b'protocol = "2600001048"'}
+    )
+
+    assert report["valid"] is False
 
 
 def test_privacy_scanner_blocks_embedded_client_name(tmp_path: Path) -> None:

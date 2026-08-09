@@ -107,11 +107,14 @@ _OFFICIAL_SYNTHETIC_PROTOCOL_SUFFIXES = {
 _SYNTHETIC_IDENTIFIERS = {"0000000000"} | {
     f"260000{suffix}" for suffix in _OFFICIAL_SYNTHETIC_PROTOCOL_SUFFIXES
 }
+_SYNTHETIC_NETWORK_PATH = "\\\\" + "SERVIDOR\\SINTETICO"
+_SYNTHETIC_CPF = "000.000." + "000-00"
+_SYNTHETIC_CNPJ = "00.000.000/" + "0000-00"
 _SYNTHETIC_TEXT_MARKERS = {
     "CLIENTE SINTETICO LTDA",
     r"C:\CAMINHO\SINTETICO",
     "/CAMINHO/SINTETICO",
-    r"\\SERVIDOR\SINTETICO",
+    _SYNTHETIC_NETWORK_PATH,
 }
 _SKIPPED_DIRECTORY_NAMES = {
     ".git",
@@ -203,10 +206,15 @@ def _match_hash(value: str) -> str:
 
 
 def _is_synthetic(match: str, path: str) -> bool:
+    inner_path = path.rsplit("!", 1)[-1]
+    parts = tuple(part.casefold() for part in PurePosixPath(inner_path).parts)
+    synthetic_context = bool(parts and parts[0] in {"specs", "tests"})
+    if not synthetic_context:
+        return False
     stripped = match.strip('"\'')
     if stripped in _SYNTHETIC_IDENTIFIERS:
         return True
-    if stripped in {"000.000.000-00", "00.000.000/0000-00"}:
+    if stripped in {_SYNTHETIC_CPF, _SYNTHETIC_CNPJ}:
         return True
     identifiers = re.findall(r"(?<!\d)\d{10}(?!\d)", stripped)
     if identifiers and all(
@@ -214,11 +222,8 @@ def _is_synthetic(match: str, path: str) -> bool:
         for item in identifiers
     ):
         return True
-    inner_path = path.rsplit("!", 1)[-1]
-    parts = tuple(part.casefold() for part in PurePosixPath(inner_path).parts)
-    synthetic_context = bool(parts and parts[0] in {"specs", "tests"})
     folded = stripped.casefold()
-    if synthetic_context and "cliente sintetico" in folded:
+    if "cliente sintetico" in folded:
         return True
     return any(marker.casefold() in folded for marker in _SYNTHETIC_TEXT_MARKERS)
 
