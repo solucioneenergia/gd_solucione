@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from typing import Any
 from urllib.parse import urlparse
 
@@ -8,16 +9,19 @@ from automacao_gd.presentation.desktop.web_bridge import AutomationBridge
 
 
 _PYSIDE_IMPORT_ERROR: ImportError | None
-try:
-    from PySide6.QtCore import QUrl
-    from PySide6.QtWebChannel import QWebChannel
-    from PySide6.QtWebEngineCore import QWebEnginePage, QWebEngineSettings
-    from PySide6.QtWebEngineWidgets import QWebEngineView
-    from PySide6.QtWidgets import QApplication, QMainWindow
-except ImportError as exc:
-    _PYSIDE_IMPORT_ERROR = exc
+if os.environ.get("AUTOMACAO_GD_QT_FALLBACK") == "1":
+    _PYSIDE_IMPORT_ERROR = ImportError("PySide6 desabilitado por fallback headless.")
 else:
-    _PYSIDE_IMPORT_ERROR = None
+    try:
+        from PySide6.QtCore import QUrl
+        from PySide6.QtWebChannel import QWebChannel
+        from PySide6.QtWebEngineCore import QWebEnginePage, QWebEngineSettings
+        from PySide6.QtWebEngineWidgets import QWebEngineView
+        from PySide6.QtWidgets import QApplication, QMainWindow
+    except ImportError as exc:
+        _PYSIDE_IMPORT_ERROR = exc
+    else:
+        _PYSIDE_IMPORT_ERROR = None
 
 
 if _PYSIDE_IMPORT_ERROR is None:

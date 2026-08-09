@@ -6,8 +6,12 @@ apresentação importável em ambientes de CLI e testes sem dependências gráfi
 
 from __future__ import annotations
 
+import os
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
+
+
+_FORCE_QT_FALLBACK = os.environ.get("AUTOMACAO_GD_QT_FALLBACK") == "1"
 
 
 if TYPE_CHECKING:
@@ -15,12 +19,17 @@ if TYPE_CHECKING:
 
     QT_AVAILABLE: bool
 else:
-    try:
-        from PySide6.QtCore import QObject, QThread, Signal, Slot
-
-        QT_AVAILABLE = True
-    except ImportError:
+    if _FORCE_QT_FALLBACK:
         QT_AVAILABLE = False
+    else:
+        try:
+            from PySide6.QtCore import QObject, QThread, Signal, Slot
+
+            QT_AVAILABLE = True
+        except ImportError:
+            QT_AVAILABLE = False
+
+    if not QT_AVAILABLE:
         QThread = None
 
         class _BoundSignal:

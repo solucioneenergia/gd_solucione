@@ -8,6 +8,7 @@ jobs:
   quality:
     runs-on: ${{ matrix.os }}
     env:
+      AUTOMACAO_GD_QT_FALLBACK: "1"
       QT_QPA_PLATFORM: offscreen
       QTWEBENGINE_DISABLE_SANDBOX: "1"
       QTWEBENGINE_CHROMIUM_FLAGS: --no-sandbox

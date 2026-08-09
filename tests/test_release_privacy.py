@@ -428,6 +428,7 @@ def test_ci_keeps_build_artifacts_outside_workspace_and_scans_all_packages() -> 
     assert 'python-version: ["3.12", "3.13"]' in workflow
     assert "runs-on: ${{ matrix.os }}" in workflow
     assert "fail-fast: false" in workflow
+    assert "AUTOMACAO_GD_QT_FALLBACK: \"1\"" in workflow
     assert "QT_QPA_PLATFORM: offscreen" in workflow
     assert "QTWEBENGINE_DISABLE_SANDBOX: \"1\"" in workflow
     assert "sudo apt-get install -y xvfb" in workflow

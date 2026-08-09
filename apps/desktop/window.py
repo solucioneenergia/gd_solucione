@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
@@ -19,20 +20,9 @@ _QWebEngineSettings: Any
 _QWebEngineUrlRequestInterceptor: Any
 _QWebEngineView: Any
 
-try:
-    from PySide6.QtCore import QUrl as _ImportedQUrl
-    from PySide6.QtWebChannel import QWebChannel as _ImportedQWebChannel
-    from PySide6.QtWebEngineCore import (
-        QWebEnginePage as _ImportedQWebEnginePage,
-        QWebEngineSettings as _ImportedQWebEngineSettings,
-        QWebEngineUrlRequestInterceptor as _ImportedQWebEngineUrlRequestInterceptor,
-    )
-    from PySide6.QtWebEngineWidgets import QWebEngineView as _ImportedQWebEngineView
-    from PySide6.QtWidgets import (
-        QApplication as _ImportedQApplication,
-        QMainWindow as _ImportedQMainWindow,
-    )
-except ImportError:
+_FORCE_QT_FALLBACK = os.environ.get("AUTOMACAO_GD_QT_FALLBACK") == "1"
+
+if _FORCE_QT_FALLBACK:
     QT_AVAILABLE = False
     WEBENGINE_AVAILABLE = False
     _QApplication = None
@@ -44,16 +34,41 @@ except ImportError:
     _QWebEngineUrlRequestInterceptor = object
     _QWebEngineView = None
 else:
-    QT_AVAILABLE = True
-    WEBENGINE_AVAILABLE = True
-    _QApplication = _ImportedQApplication
-    _QMainWindow = _ImportedQMainWindow
-    _QUrl = _ImportedQUrl
-    _QWebChannel = _ImportedQWebChannel
-    _QWebEnginePage = _ImportedQWebEnginePage
-    _QWebEngineSettings = _ImportedQWebEngineSettings
-    _QWebEngineUrlRequestInterceptor = _ImportedQWebEngineUrlRequestInterceptor
-    _QWebEngineView = _ImportedQWebEngineView
+    try:
+        from PySide6.QtCore import QUrl as _ImportedQUrl
+        from PySide6.QtWebChannel import QWebChannel as _ImportedQWebChannel
+        from PySide6.QtWebEngineCore import (
+            QWebEnginePage as _ImportedQWebEnginePage,
+            QWebEngineSettings as _ImportedQWebEngineSettings,
+            QWebEngineUrlRequestInterceptor as _ImportedQWebEngineUrlRequestInterceptor,
+        )
+        from PySide6.QtWebEngineWidgets import QWebEngineView as _ImportedQWebEngineView
+        from PySide6.QtWidgets import (
+            QApplication as _ImportedQApplication,
+            QMainWindow as _ImportedQMainWindow,
+        )
+    except ImportError:
+        QT_AVAILABLE = False
+        WEBENGINE_AVAILABLE = False
+        _QApplication = None
+        _QMainWindow = object
+        _QUrl = None
+        _QWebChannel = None
+        _QWebEnginePage = object
+        _QWebEngineSettings = None
+        _QWebEngineUrlRequestInterceptor = object
+        _QWebEngineView = None
+    else:
+        QT_AVAILABLE = True
+        WEBENGINE_AVAILABLE = True
+        _QApplication = _ImportedQApplication
+        _QMainWindow = _ImportedQMainWindow
+        _QUrl = _ImportedQUrl
+        _QWebChannel = _ImportedQWebChannel
+        _QWebEnginePage = _ImportedQWebEnginePage
+        _QWebEngineSettings = _ImportedQWebEngineSettings
+        _QWebEngineUrlRequestInterceptor = _ImportedQWebEngineUrlRequestInterceptor
+        _QWebEngineView = _ImportedQWebEngineView
 
 
 FRONTEND_ROOT = Path(__file__).resolve().parent / "frontend"

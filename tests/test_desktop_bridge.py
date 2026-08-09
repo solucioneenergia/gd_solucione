@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import os
+import subprocess
+import sys
 import threading
 from pathlib import Path
 from typing import Any
@@ -222,3 +225,44 @@ def test_file_bridge_uses_platform_default_opener_outside_windows(
     file_bridge._open_with_platform_default(target)
 
     assert opened == [["xdg-open", str(target)]]
+
+
+def test_qt_fallback_can_be_forced_for_headless_ci() -> None:
+    env = os.environ.copy()
+    env["AUTOMACAO_GD_QT_FALLBACK"] = "1"
+
+    completed = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            (
+                "from automacao_gd.presentation.desktop import _qt; "
+                "print(_qt.QT_AVAILABLE)"
+            ),
+        ],
+        check=True,
+        capture_output=True,
+        env=env,
+        text=True,
+    )
+
+    assert completed.stdout.strip() == "False"
+
+
+def test_desktop_window_fallback_can_be_forced_for_headless_ci() -> None:
+    env = os.environ.copy()
+    env["AUTOMACAO_GD_QT_FALLBACK"] = "1"
+
+    completed = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            "from apps.desktop import window; print(window.QT_AVAILABLE)",
+        ],
+        check=True,
+        capture_output=True,
+        env=env,
+        text=True,
+    )
+
+    assert completed.stdout.strip() == "False"
