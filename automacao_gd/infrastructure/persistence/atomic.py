@@ -17,6 +17,7 @@ from typing import Any
 
 
 _WINDOWS_REPLACE_RETRY_DELAYS = (0.05, 0.1, 0.2, 0.4, 0.8)
+_IS_WINDOWS = os.name == "nt"
 
 
 def atomic_write_text(
@@ -108,7 +109,7 @@ def _replace_with_retry(source: Path, target: Path) -> None:
         os.replace(source, target)
         return
     except PermissionError:
-        if os.name != "nt":
+        if not _IS_WINDOWS:
             raise
 
     for delay in _WINDOWS_REPLACE_RETRY_DELAYS:

@@ -52,7 +52,7 @@ def test_atomic_write_json_retries_transient_windows_replace_denial(
             raise PermissionError(5, "Acesso negado", str(destination))
         original_replace(source, destination)
 
-    monkeypatch.setattr(atomic.os, "name", "nt", raising=False)
+    monkeypatch.setattr(atomic, "_IS_WINDOWS", True)
     monkeypatch.setattr(atomic.os, "replace", flaky_replace)
     monkeypatch.setattr(atomic, "_WINDOWS_REPLACE_RETRY_DELAYS", (0,))
 

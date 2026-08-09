@@ -35,6 +35,11 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements-dev.txt
+      - name: Install Linux headless display
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y xvfb
       - name: Install frontend
         working-directory: apps/desktop/frontend
         run: pnpm install --frozen-lockfile
@@ -54,7 +59,11 @@ jobs:
         run: python scripts/validate_engineering_foundation.py
       - name: Privacy scan source tree and frontends
         run: python scripts/privacy_scan.py . automacao_gd apps tests scripts src frontend specs docs .agents .github AGENTS.md README.md CHANGELOG.md pyproject.toml requirements.txt requirements-dev.txt desktop_app.py app.py start_desktop_app_silent.ps1
-      - name: Tests
+      - name: Tests (Linux)
+        if: runner.os == 'Linux'
+        run: xvfb-run -a python -m pytest -q --cov=automacao_gd --cov-report=term-missing
+      - name: Tests (Windows)
+        if: runner.os == 'Windows'
         run: python -m pytest -q --cov=automacao_gd --cov-report=term-missing
       - name: Dependency audit
         run: python -m pip_audit -r requirements.txt

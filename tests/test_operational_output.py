@@ -168,10 +168,11 @@ def test_pipeline_summary_shows_limited_operational_protocol_details() -> None:
     output = format_operation_summary("pipeline", result)
 
     assert "Protocolos:" in output
+    normalized_output = output.replace("\\", "/")
     assert (
         "260000001 | Cliente 1 | PDF reutilizado | "
-        "Excel: simulação/update_existing | Arquivo: simulação/clientes\\Cliente 1"
-    ) in output
+        "Excel: simulação/update_existing | Arquivo: simulação/clientes/Cliente 1"
+    ) in normalized_output
     assert "260000005" in output
     assert "260000006" not in output
     assert (

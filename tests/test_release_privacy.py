@@ -430,6 +430,9 @@ def test_ci_keeps_build_artifacts_outside_workspace_and_scans_all_packages() -> 
     assert "fail-fast: false" in workflow
     assert "QT_QPA_PLATFORM: offscreen" in workflow
     assert "QTWEBENGINE_DISABLE_SANDBOX: \"1\"" in workflow
+    assert "sudo apt-get install -y xvfb" in workflow
+    assert "xvfb-run -a python -m pytest -q --cov=automacao_gd" in workflow
+    assert "if: runner.os == 'Windows'" in workflow
     assert (
         "python scripts/privacy_scan.py . automacao_gd apps tests scripts src "
         "frontend specs docs .agents .github AGENTS.md README.md CHANGELOG.md "
