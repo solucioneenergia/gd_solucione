@@ -19,16 +19,16 @@ Start-Process "msedge.exe" -ArgumentList `
   '--user-data-dir=<V2>\data\edge_cdp_profile', `
   '--no-first-run', `
   '--no-default-browser-check', `
-  'about:blank'
+  '--new-window', `
+  'https://gdneoenergiapernambuco.neoenergia.com/'
 ```
 
 Faça login manual no Portal GD e abra a página **Minhas Solicitações**. Depois,
 execute `python app.py` e use a opção 2 ou 5.
 
-Abra o Edge CDP em pagina neutra (`about:blank`). Depois navegue manualmente
-para o Portal GD, faca login e abra **Minhas Solicitacoes**. Nao passe a URL do
-Portal GD como argumento inicial do Edge CDP; isso reduz o risco de bloqueio
-`Access Denied` na primeira abertura do perfil.
+Abra o Edge CDP diretamente na URL HTTPS canônica do Portal GD. Não use `http://`
+e não abra o perfil CDP em `about:blank`, pois o Edge pode restaurar uma sessão
+anterior bloqueada em HTTP e exibir `Access Denied`.
 
 Com `CDP_MODE=true`, todos os fluxos usam `create_portal_automation(settings)`,
 que seleciona `CDPPortalGDAutomation`. A aplicação conecta com

@@ -119,6 +119,54 @@ def test_cdp_close_does_not_close_manual_browser() -> None:
     assert calls == ["playwright.stop"]
 
 
+def test_cdp_mode_opens_https_portal_tab_when_only_http_blocked_tab_exists(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    navigations: list[str] = []
+
+    class FakePage:
+        def __init__(self, url: str) -> None:
+            self.url = url
+            self.context = None
+
+        def goto(self, url: str, **_kwargs) -> None:
+            navigations.append(url)
+            self.url = url
+
+    blocked = FakePage("http://gdneoenergiapernambuco.neoenergia.com/")
+    created = FakePage("about:blank")
+
+    class FakeContext:
+        def __init__(self) -> None:
+            self.pages = [blocked]
+
+        def new_page(self):
+            self.pages.append(created)
+            created.context = self
+            return created
+
+    context = FakeContext()
+    blocked.context = context
+
+    class Chromium:
+        def connect_over_cdp(self, endpoint: str):
+            assert endpoint == "http://127.0.0.1:9222"
+            return SimpleNamespace(contexts=[context])
+
+    playwright = SimpleNamespace(chromium=Chromium(), stop=lambda: None)
+    monkeypatch.setattr(cdp_browser, "_start_sync_playwright", lambda: playwright)
+    settings = _settings(
+        CDP_MODE=True,
+        PORTAL_GD_URL="https://gdneoenergiapernambuco.neoenergia.com/",
+    )
+    automation = CDPPortalGDAutomation(settings)
+
+    automation.start_browser()
+
+    assert automation.page is created
+    assert navigations == ["https://gdneoenergiapernambuco.neoenergia.com/"]
+
+
 def test_find_portal_page_ignores_access_denied_tab() -> None:
     class FakeLocator:
         def __init__(self, text: str) -> None:
@@ -184,6 +232,61 @@ def test_find_portal_page_rejects_http_index_access_denied_tab_without_body() ->
 
     page = find_portal_page_from_cdp(
         browser,
+        "https://gdneoenergiapernambuco.neoenergia.com/",
+    )
+
+    assert page is valid
+
+
+def test_find_portal_page_rejects_any_http_portal_tab_without_body() -> None:
+    class BrokenLocator:
+        def inner_text(self, timeout: int = 0) -> str:
+            raise RuntimeError("body indisponivel")
+
+    class FakePage:
+        def __init__(self, url: str, title: str = "") -> None:
+            self.url = url
+            self._title = title
+
+        def title(self) -> str:
+            return self._title
+
+        def locator(self, _selector: str) -> BrokenLocator:
+            return BrokenLocator()
+
+    blocked = FakePage("http://gdneoenergiapernambuco.neoenergia.com/minhas-solicitacoes")
+    valid = FakePage(
+        "https://gdneoenergiapernambuco.neoenergia.com/pages/acompanhamento/index.jsf",
+        "Portal GD",
+    )
+    browser = SimpleNamespace(contexts=[SimpleNamespace(pages=[blocked, valid])])
+
+    page = find_portal_page_from_cdp(
+        browser,
+        "https://gdneoenergiapernambuco.neoenergia.com/",
+    )
+
+    assert page is valid
+
+
+@pytest.mark.parametrize(
+    ("module_name",),
+    [
+        ("connect_existing_edge",),
+        ("process_first_solicitation_cdp",),
+    ],
+)
+def test_legacy_cdp_page_finders_reject_http_portal_tabs(module_name: str) -> None:
+    module = __import__(f"scripts.{module_name}", fromlist=["_find_portal_page"])
+    blocked = SimpleNamespace(
+        url="http://gdneoenergiapernambuco.neoenergia.com/minhas-solicitacoes"
+    )
+    valid = SimpleNamespace(
+        url="https://gdneoenergiapernambuco.neoenergia.com/pages/acompanhamento/index.jsf"
+    )
+
+    page = module._find_portal_page(
+        [blocked, valid],
         "https://gdneoenergiapernambuco.neoenergia.com/",
     )
 

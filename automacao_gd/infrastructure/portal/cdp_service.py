@@ -52,6 +52,7 @@ INCOMPLETE_PAGINATION_STOP_REASONS = {
     "pagination_duplicate_page_content",
     "cannot_confirm_active_page",
 }
+PORTAL_GD_HOST = "gdneoenergiapernambuco.neoenergia.com"
 
 
 class DownloadNotProducedError(RuntimeError):
@@ -104,11 +105,7 @@ def find_portal_page_from_cdp(browser, portal_url: str):
 def _page_looks_access_denied(page) -> bool:
     url = (page.url or "").lower()
     parsed = urlparse(url)
-    if (
-        parsed.scheme == "http"
-        and parsed.netloc == "gdneoenergiapernambuco.neoenergia.com"
-        and parsed.path.rstrip("/").endswith("/index.jsf")
-    ):
+    if is_insecure_portal_http_url(url):
         return True
     if "errors.edgesuite.net" in url:
         return True
@@ -120,6 +117,11 @@ def _page_looks_access_denied(page) -> bool:
         return "access denied" in body_text or "you don't have permission" in body_text
     except Exception:
         return False
+
+
+def is_insecure_portal_http_url(url: str) -> bool:
+    parsed = urlparse(url or "")
+    return parsed.scheme == "http" and parsed.netloc.lower() == PORTAL_GD_HOST
 
 
 def read_current_page_table_with_row_handles(page) -> list[dict]:

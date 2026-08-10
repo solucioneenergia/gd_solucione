@@ -4,6 +4,8 @@ import errno
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock, mock_open
+import hashlib
+import json
 
 import pytest
 from openpyxl import Workbook
@@ -280,6 +282,252 @@ def test_preflight_block_occurs_before_state_and_portal(monkeypatch, tmp_path: P
     state_store.assert_not_called()
     playwright.assert_not_called()
     processing.assert_not_called()
+
+
+def test_option5_real_run_reuses_frozen_dry_run_plan_without_cdp_selection(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    settings = _settings(
+        tmp_path,
+        DRY_RUN=False,
+        APPLY_ARCHIVE=False,
+        MAX_COMPLETED_TO_PROCESS=2,
+        OPTION5_AUTHORIZED_MAX_PROTOCOLS=60,
+        LOGS_DIR=tmp_path / "logs",
+        DOWNLOADS_DIR=tmp_path / "downloads",
+    )
+    pdfs: list[Path] = []
+    artifacts: list[dict[str, str]] = []
+    results: list[dict[str, object]] = []
+    selected_protocols: list[dict[str, str]] = []
+    for offset, protocol in enumerate(("2600000000", "2600000001"), start=1):
+        pdf = settings.downloads_dir_path / protocol / f"Orcamento_de_Conexao_{protocol}.pdf"
+        pdf.parent.mkdir(parents=True, exist_ok=True)
+        pdf.write_bytes(b"%PDF-1.4 synthetic " + protocol.encode("ascii"))
+        sha256 = hashlib.sha256(pdf.read_bytes()).hexdigest()
+        pdfs.append(pdf)
+        artifacts.append(
+            {
+                "protocol": protocol,
+                "path": str(pdf),
+                "sha256": sha256,
+            }
+        )
+        selected_protocols.append(
+            {
+                "protocol": protocol,
+                "client_name": f"CLIENTE SINTETICO {offset}",
+            }
+        )
+        results.append(
+            {
+                "protocol": protocol,
+                "client_name": f"CLIENTE SINTETICO {offset}",
+                "download_status": "existing_pdf_after_skip",
+                "process_pdf_path": str(pdf),
+                "selected_for_processing": True,
+                "selected_by_global_limit": True,
+                "global_limit_status": "selected",
+            }
+        )
+    digest_source = "\n".join(f"{item['protocol']}:{item['sha256']}" for item in artifacts)
+    dry_run_payload = {
+        "dry_run": True,
+        "status": "SUCESSO",
+        "requested_batch_limit": 2,
+        "authorized_batch_limit": 60,
+        "authorization_scope": full_pipeline.CONTROLLED_PRODUCTION_UP_TO_60_AUTHORIZATION_SCOPE,
+        "total_errors": 0,
+        "run_error": None,
+        "download": {
+            "run_error": None,
+            "total_selected": 2,
+            "total_for_processing": 2,
+            "total_sent_to_processing": 2,
+            "total_existing_reused": 2,
+            "total_downloaded": 0,
+            "total_cdp_errors": 0,
+            "total_errors": 0,
+            "selected_protocols": selected_protocols,
+            "results": results,
+            "frozen_batch_created": True,
+            "frozen_batch": {
+                "requested_limit": 2,
+                "authorized_limit": 60,
+                "authorization_scope": full_pipeline.CONTROLLED_PRODUCTION_UP_TO_60_AUTHORIZATION_SCOPE,
+                "protocols": ["2600000000", "2600000001"],
+                "unique_before_limit": 2,
+                "dropped_by_limit": 0,
+                "duplicate_protocols_in_frozen_batch": 0,
+                "protocols_added_after_freeze": 0,
+            },
+            "frozen_pdf_scope": {
+                "digest": hashlib.sha256(digest_source.encode("utf-8")).hexdigest(),
+                "artifacts": artifacts,
+            },
+        },
+    }
+    settings.logs_dir_path.mkdir(parents=True, exist_ok=True)
+    (settings.logs_dir_path / full_pipeline.PIPELINE_JSON_REPORT_NAME).write_text(
+        json.dumps(dry_run_payload),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        full_pipeline,
+        "global_execution_lock_path",
+        lambda _settings: tmp_path / "locks" / "real_run_execution.lock",
+    )
+    monkeypatch.setattr(
+        full_pipeline,
+        "_run_download_step",
+        Mock(side_effect=AssertionError("CDP selection must not run")),
+    )
+    received: dict[str, object] = {}
+
+    def fake_process(**kwargs):
+        received.update(kwargs)
+        return {
+            "total_pdfs": 2,
+            "total_success": 2,
+            "total_errors": 0,
+            "total_excel_updated": 2,
+            "results": [
+                {
+                    "protocol": "2600000000",
+                    "success": True,
+                    "action": "update_existing",
+                    "excel_status": {"success": True, "action": "update_existing"},
+                    "archive_status": {"success": True, "action": "simulation_only"},
+                },
+                {
+                    "protocol": "2600000001",
+                    "success": True,
+                    "action": "insert_new_chronological",
+                    "excel_status": {"success": True, "action": "insert_new_chronological"},
+                    "archive_status": {"success": True, "action": "simulation_only"},
+                },
+            ],
+        }
+
+    monkeypatch.setattr(full_pipeline, "process_downloaded_pdfs", fake_process)
+
+    result = full_pipeline.run_full_cdp_pipeline(
+        settings,
+        confirmation=full_pipeline.build_option5_strong_confirmation(2),
+    )
+
+    assert result["download"]["reused_from_dry_run_plan"] is True
+    assert result["download"]["dry_run_plan_source"].endswith(
+        full_pipeline.PIPELINE_JSON_REPORT_NAME
+    )
+    assert received["pdf_paths"] == pdfs
+    assert received["allowed_protocols"] == {"2600000000", "2600000001"}
+
+
+def test_option5_real_run_blocks_without_frozen_dry_run_plan_before_cdp(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    settings = _settings(
+        tmp_path,
+        DRY_RUN=False,
+        APPLY_ARCHIVE=False,
+        MAX_COMPLETED_TO_PROCESS=2,
+        OPTION5_AUTHORIZED_MAX_PROTOCOLS=60,
+        LOGS_DIR=tmp_path / "logs",
+        DOWNLOADS_DIR=tmp_path / "downloads",
+    )
+    monkeypatch.setattr(
+        full_pipeline,
+        "global_execution_lock_path",
+        lambda _settings: tmp_path / "locks" / "real_run_execution.lock",
+    )
+    download = Mock(side_effect=AssertionError("CDP selection must not run"))
+    processing = Mock(side_effect=AssertionError("real processing must not run"))
+    monkeypatch.setattr(full_pipeline, "_run_download_step", download)
+    monkeypatch.setattr(full_pipeline, "process_downloaded_pdfs", processing)
+
+    with pytest.raises(PreflightBlockedError) as exc:
+        full_pipeline.run_full_cdp_pipeline(
+            settings,
+            confirmation=full_pipeline.build_option5_strong_confirmation(2),
+        )
+
+    assert exc.value.code == "FROZEN_DRY_RUN_PLAN_REQUIRED"
+    download.assert_not_called()
+    processing.assert_not_called()
+
+
+def test_option5_dry_run_records_frozen_pdf_scope_for_real_reuse(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    settings = _settings(
+        tmp_path,
+        DRY_RUN=True,
+        APPLY_ARCHIVE=False,
+        MAX_COMPLETED_TO_PROCESS=1,
+        OPTION5_AUTHORIZED_MAX_PROTOCOLS=60,
+        LOGS_DIR=tmp_path / "logs",
+        DOWNLOADS_DIR=tmp_path / "downloads",
+    )
+    protocol = "2600000000"
+    pdf = settings.downloads_dir_path / protocol / f"Orcamento_de_Conexao_{protocol}.pdf"
+    pdf.parent.mkdir(parents=True, exist_ok=True)
+    pdf.write_bytes(b"%PDF-1.4 synthetic frozen scope")
+    monkeypatch.setattr(
+        full_pipeline,
+        "global_execution_lock_path",
+        lambda _settings: tmp_path / "locks" / "real_run_execution.lock",
+    )
+    monkeypatch.setattr(
+        full_pipeline,
+        "_run_download_step",
+        lambda *_args: {
+            "run_error": None,
+            "total_selected": 1,
+            "total_for_processing": 1,
+            "total_sent_to_processing": 1,
+            "total_existing_reused": 1,
+            "total_downloaded": 0,
+            "total_cdp_errors": 0,
+            "total_errors": 0,
+            "selected_protocols": [{"protocol": protocol, "client_name": "CLIENTE SINTETICO"}],
+            "results": [
+                {
+                    "protocol": protocol,
+                    "client_name": "CLIENTE SINTETICO",
+                    "download_status": "existing_pdf_after_skip",
+                    "process_pdf_path": str(pdf),
+                    "selected_for_processing": True,
+                }
+            ],
+        },
+    )
+    monkeypatch.setattr(
+        full_pipeline,
+        "process_downloaded_pdfs",
+        lambda **_kwargs: {
+            "total_pdfs": 1,
+            "total_success": 1,
+            "total_errors": 0,
+            "total_excel_updated": 0,
+            "results": [{"protocol": protocol, "success": True, "action": "simulation_only"}],
+        },
+    )
+
+    result = full_pipeline.run_full_cdp_pipeline(
+        settings,
+        confirmation=full_pipeline.build_option5_strong_confirmation(1),
+    )
+    report = json.loads(
+        (settings.logs_dir_path / full_pipeline.PIPELINE_JSON_REPORT_NAME).read_text(
+            encoding="utf-8"
+        )
+    )
+
+    assert result["download"]["frozen_pdf_scope"]["artifacts"][0]["protocol"] == protocol
+    assert report["download"]["frozen_pdf_scope"]["artifacts"][0]["sha256"] == hashlib.sha256(
+        pdf.read_bytes()
+    ).hexdigest()
 
 
 def test_controller_catches_operational_block_without_traceback(

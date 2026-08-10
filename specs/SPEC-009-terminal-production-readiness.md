@@ -339,6 +339,13 @@ APLICAR OPÇÃO 5 COM CONCLUSÃO EM <N> PROTOCOLOS
   erro critico, erro real de aplicacao ou protocolo sem permissao de gravacao. A aplicacao real
   deve executar somente itens com escrita planejada (`insert_new_chronological` ou
   `update_existing`) e preservar os ja atualizados como `simulation_only`/no-change.
+- Na transicao de dry-run para execucao real da opcao 5, o lote congelado aprovado no ultimo
+  `pipeline_cdp_completo.json` dry-run deve ser reaplicado quando o relatorio tiver mesmo
+  `requested_batch_limit`, mesma `authorization_scope`, `frozen_batch_created=true`, zero
+  `run_error`, zero erro real, PDFs existentes e SHA-256 dos PDFs preservado. Nessa condicao, a
+  execucao real deve pular nova navegacao/selecao CDP e processar apenas os PDFs/protocolos do
+  plano congelado. Se o plano estiver ausente, divergente, expirado ou com PDF alterado/removido,
+  a execucao real deve bloquear antes da escrita e exigir novo dry-run.
 - Relatorios devem registrar `requested_batch_limit=N`, `authorized_batch_limit=M`,
   `authorization_scope=CONTROLLED_PRODUCTION_OPTION5_UP_TO_60` quando M for maior que 5,
   e totais de selecionados/excluidos.

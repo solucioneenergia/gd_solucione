@@ -18,6 +18,7 @@ from automacao_gd.infrastructure.files.file_service import ensure_directories
 from automacao_gd.infrastructure.logging import logger, setup_logger
 from automacao_gd.infrastructure.persistence.atomic import atomic_write_json
 from automacao_gd.infrastructure.portal.factory import create_portal_automation
+from automacao_gd.infrastructure.portal.cdp_service import is_insecure_portal_http_url
 
 
 OUTPUT_FILE_NAME = "registros_cdp_edge.json"
@@ -90,9 +91,11 @@ def _print_manual_instructions(cdp_endpoint: str) -> None:
     print("2. Abra o Edge manualmente com:")
     print(
         '   msedge.exe --remote-debugging-port=9222 '
-        '--user-data-dir="<PERFIL_CDP_DEDICADO>"'
+        '--user-data-dir="<PROJETO>\\data\\edge_cdp_profile" '
+        '--no-first-run --no-default-browser-check --new-window '
+        '"https://gdneoenergiapernambuco.neoenergia.com/"'
     )
-    print("3. Acesse o Portal GD normalmente.")
+    print("3. Confirme que a aba aberta usa HTTPS, nunca HTTP.")
     print("4. Faça login manual.")
     print('5. Vá para a tela "Minhas Solicitações".')
     print("6. Depois volte ao terminal e pressione ENTER.")
@@ -135,12 +138,16 @@ def _find_portal_page(pages: list, portal_url: str):
     expected_host = urlparse(portal_url).netloc.lower()
     for page in pages:
         page_url = page.url or ""
+        if is_insecure_portal_http_url(page_url):
+            continue
         parsed = urlparse(page_url)
         if expected_host and parsed.netloc.lower() == expected_host:
             return page
 
     for page in pages:
         page_url = (page.url or "").lower()
+        if is_insecure_portal_http_url(page_url):
+            continue
         if "gdneoenergiapernambuco.neoenergia.com" in page_url:
             return page
 

@@ -26,7 +26,7 @@ Este checklist deve ser executado manualmente pelo usuário responsável pela op
 Comando-base esperado:
 
 ```powershell
-Start-Process "msedge.exe" -ArgumentList '--remote-debugging-port=9222', '--user-data-dir=<projeto>\data\edge_cdp_profile', '--no-first-run', '--no-default-browser-check'
+Start-Process "msedge.exe" -ArgumentList '--remote-debugging-port=9222', '--user-data-dir=<projeto>\data\edge_cdp_profile', '--no-first-run', '--no-default-browser-check', '--new-window', 'https://gdneoenergiapernambuco.neoenergia.com/'
 ```
 
 ## Primeira validação em simulação

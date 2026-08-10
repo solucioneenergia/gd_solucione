@@ -9,7 +9,7 @@ A execução do pipeline pelo terminal apresentou falhas operacionais com ruído
 - planilha bloqueada gerou traceback bruto no terminal;
 - planilha gravável pode falhar no `os.replace()` em unidade de rede/sincronização, gerando falso diagnóstico de planilha aberta;
 - erros operacionais conhecidos apareceram com stack trace completo, dificultando a leitura do resumo.
-- uma aba bloqueada em `http://.../index.jsf` pode ser confundida com aba do portal se a detecção por título/corpo não conseguir ler a página a tempo.
+- uma aba bloqueada em `http://...` pode ser confundida com aba do portal se a detecção por título/corpo não conseguir ler a página a tempo.
 
 ## Comportamento atual
 
@@ -18,7 +18,7 @@ A execução do pipeline pelo terminal apresentou falhas operacionais com ruído
 - `update_excel_from_pdf_data()` e `update_excel_equipment_columns()` usam `logger.exception()` para `PermissionError`, exibindo traceback bruto para um erro operacional esperado.
 - `_save_workbook_atomically()` não tenta fallback quando o XLSX temporário foi validado mas a substituição atômica é negada pelo sistema operacional.
 - O download de orçamento sem arquivo gerado é tratado como `RuntimeError` genérico no loop de protocolos.
-- `find_portal_page_from_cdp()` ignora páginas com texto de Access Denied, mas ainda depende de leitura do título/corpo para alguns casos; a URL HTTP `/index.jsf` bloqueada deve ser rejeitada por heurística de URL.
+- `find_portal_page_from_cdp()` ignora páginas com texto de Access Denied, mas ainda depende de leitura do título/corpo para alguns casos; qualquer URL HTTP do host do Portal GD deve ser rejeitada por heurística de URL.
 
 ## Comportamento esperado
 
@@ -28,7 +28,8 @@ A execução do pipeline pelo terminal apresentou falhas operacionais com ruído
 - Se `os.replace()` for negado, mas uma cópia validada para o caminho oficial for permitida, o salvamento deve concluir com warning técnico controlado.
 - Se a gravação realmente for negada, a mensagem deve indicar arquivo bloqueado/permissão/sincronização, sem afirmar que Excel está aberto como única causa.
 - Falha conhecida de download sem arquivo deve ser registrada como erro operacional sem traceback, preservando o erro no resultado do protocolo.
-- A seleção de aba CDP deve rejeitar `http://gdneoenergiapernambuco.neoenergia.com/index.jsf` e preferir uma aba HTTPS já autenticada/listagem.
+- A seleção de aba CDP deve rejeitar qualquer `http://gdneoenergiapernambuco.neoenergia.com/...` e preferir uma aba HTTPS já autenticada/listagem.
+- Quando o Edge conectado tiver somente abas HTTP bloqueadas do Portal GD, o modo CDP deve abrir uma nova aba no mesmo Edge e navegar para a URL HTTPS canônica configurada.
 
 ## Critérios de aceite
 
@@ -39,8 +40,9 @@ A execução do pipeline pelo terminal apresentou falhas operacionais com ruído
 5. `PermissionError` em `os.replace()` tenta fallback por cópia validada antes de declarar falha.
 6. Falha definitiva de salvamento usa mensagem operacional precisa, citando bloqueio/permissão/sincronização.
 7. O pipeline continua registrando o erro no resumo do protocolo e segue para os próximos itens.
-8. Aba CDP com URL HTTP `/index.jsf` do Portal GD é ignorada mesmo se título/corpo não forem legíveis.
-9. Nenhum teste acessa Portal GD, Edge real, planilha real, `Z:\Clientes` ou dados reais.
+8. Aba CDP com URL HTTP do Portal GD é ignorada mesmo se título/corpo não forem legíveis.
+9. CDP abre uma nova aba HTTPS quando somente abas HTTP bloqueadas do Portal GD estão disponíveis.
+10. Nenhum teste acessa Portal GD, Edge real, planilha real, `Z:\Clientes` ou dados reais.
 
 ## Casos de teste
 
@@ -50,7 +52,8 @@ A execução do pipeline pelo terminal apresentou falhas operacionais com ruído
 - Excel: `PermissionError` em `_save_workbook_atomically()` retorna mensagem operacional e não chama `logger.exception`.
 - Excel: `PermissionError` em `os.replace()` com cópia permitida salva a planilha e valida o arquivo final.
 - Paginação: divergência de página ativa após clique numérico é warning operacional.
-- CDP: aba `http://.../index.jsf` bloqueada é ignorada na seleção de aba ativa.
+- CDP: aba `http://...` bloqueada é ignorada na seleção de aba ativa.
+- CDP: contexto fake com apenas aba HTTP bloqueada recebe `new_page().goto(PORTAL_GD_URL)` usando HTTPS.
 
 ## Arquivos permitidos
 

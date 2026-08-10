@@ -138,10 +138,10 @@ usando a factory existente. Com `CDP_MODE=true`, ela seleciona
 `CDPPortalGDAutomation`, conecta ao Edge externo autenticado e apenas encerra a
 conexão Playwright ao finalizar. O Edge não é fechado pela aplicação.
 
-O Edge CDP abre em pagina neutra (`about:blank`). A navegacao para o Portal GD
-deve ser manual: acesse o Portal, faca login e abra **Minhas Solicitacoes**.
-Isso evita que a aplicacao navegue automaticamente para o Portal na primeira
-abertura do perfil, reduzindo o risco de bloqueio `Access Denied`.
+O Edge CDP abre diretamente na URL HTTPS canonica do Portal GD. Nao use
+`http://` e nao abra o perfil CDP em `about:blank`, pois o Edge pode restaurar
+uma sessao anterior bloqueada em HTTP e exibir `Access Denied`. Depois faca
+login e abra **Minhas Solicitacoes**.
 
 ## Cena 3D e acessibilidade
 

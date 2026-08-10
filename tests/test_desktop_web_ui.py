@@ -216,7 +216,7 @@ def test_cli_option_six_opens_new_visual_desktop(monkeypatch) -> None:
     assert "tkinter_app" not in source
 
 
-def test_open_edge_cdp_command_does_not_open_portal_automatically(
+def test_open_edge_cdp_command_opens_canonical_https_portal(
     tmp_path: Path,
     monkeypatch,
 ) -> None:
@@ -234,5 +234,10 @@ def test_open_edge_cdp_command_does_not_open_portal_automatically(
 
     command = _build_edge_cdp_command(settings)
 
-    assert "about:blank" in command
-    assert settings.PORTAL_GD_URL not in command
+    assert "--new-window" in command
+    assert settings.PORTAL_GD_URL in command
+    assert "about:blank" not in command
+    assert not any(
+        part.startswith("http://gdneoenergiapernambuco.neoenergia.com")
+        for part in command
+    )

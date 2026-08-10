@@ -1,5 +1,6 @@
 import hashlib
 import json
+from copy import deepcopy
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -148,6 +149,14 @@ class FrozenPdfScope:
 class LimitedProtocolSelection:
     summary: dict
     frozen_batch: FrozenProtocolBatch
+
+
+@dataclass(frozen=True)
+class FrozenDryRunPlan:
+    summary: dict
+    frozen_batch: FrozenProtocolBatch
+    frozen_pdf_scope: FrozenPdfScope
+    source_path: Path
 
 
 def default_batch_authorization_policy() -> BatchAuthorizationPolicy:
@@ -387,12 +396,21 @@ def _run_full_cdp_pipeline_locked(
         stage_percent=100,
         message="Conexão CDP validada para início do download.",
     )
-    download_summary = _run_download_step(settings, state_store)
-    limited_selection = apply_authorized_global_protocol_limit(
-        download_summary,
-        authorization,
-    )
-    download_summary = limited_selection.summary
+    dry_run_plan: FrozenDryRunPlan | None = None
+    if settings.DRY_RUN:
+        download_summary = _run_download_step(settings, state_store)
+        limited_selection = apply_authorized_global_protocol_limit(
+            download_summary,
+            authorization,
+        )
+        download_summary = limited_selection.summary
+    else:
+        dry_run_plan = load_frozen_dry_run_plan(settings, authorization)
+        download_summary = dry_run_plan.summary
+        limited_selection = LimitedProtocolSelection(
+            summary=download_summary,
+            frozen_batch=dry_run_plan.frozen_batch,
+        )
     progress.advance(
         stage="portal_read",
         overall_percent=25,
@@ -402,12 +420,15 @@ def _run_full_cdp_pipeline_locked(
         total=download_summary.get("total_completed"),
     )
     pdf_paths = _pdf_paths_for_processing(download_summary)
-    frozen_pdf_scope = freeze_selected_pdf_scope(
-        download_summary,
-        limited_selection.frozen_batch,
+    frozen_pdf_scope = (
+        dry_run_plan.frozen_pdf_scope
+        if dry_run_plan is not None
+        else freeze_selected_pdf_scope(
+            download_summary,
+            limited_selection.frozen_batch,
+        )
     )
-    download_summary["frozen_pdf_scope_digest"] = frozen_pdf_scope.digest
-    download_summary["frozen_pdf_scope_count"] = len(frozen_pdf_scope.artifacts)
+    attach_frozen_pdf_scope(download_summary, frozen_pdf_scope)
     download_report_path = _save_download_summary(settings.logs_dir_path, download_summary)
     progress.advance(
         stage="protocol_selection",
@@ -755,6 +776,206 @@ def freeze_selected_pdf_scope(
     return FrozenPdfScope(
         artifacts=artifacts,
         digest=hashlib.sha256(digest_source.encode("utf-8")).hexdigest(),
+    )
+
+
+def attach_frozen_pdf_scope(download_summary: dict, scope: FrozenPdfScope) -> None:
+    download_summary["frozen_pdf_scope_digest"] = scope.digest
+    download_summary["frozen_pdf_scope_count"] = len(scope.artifacts)
+    download_summary["frozen_pdf_scope"] = {
+        "digest": scope.digest,
+        "artifacts": [
+            {
+                "protocol": artifact.protocol,
+                "path": str(artifact.path),
+                "sha256": artifact.sha256,
+            }
+            for artifact in scope.artifacts
+        ],
+    }
+
+
+def load_frozen_dry_run_plan(
+    settings: Settings,
+    authorization: BatchAuthorization,
+) -> FrozenDryRunPlan:
+    path = settings.logs_dir_path / PIPELINE_JSON_REPORT_NAME
+    if not path.is_file():
+        raise PreflightBlockedError(
+            code="FROZEN_DRY_RUN_PLAN_REQUIRED",
+            user_message=(
+                "Execução real da opção 5 exige dry-run anterior com lote congelado "
+                "validado. Rode primeiro em DRY_RUN=true."
+            ),
+            stage="plano congelado do dry-run",
+            technical_cause="missing_pipeline_dry_run_report",
+        )
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise PreflightBlockedError(
+            code="FROZEN_DRY_RUN_PLAN_INVALID",
+            user_message="Relatório dry-run da opção 5 não pôde ser lido com segurança.",
+            stage="plano congelado do dry-run",
+            technical_cause=type(exc).__name__,
+        ) from exc
+
+    _validate_dry_run_plan_payload(payload, authorization)
+    download_summary = deepcopy(payload.get("download") or {})
+    frozen_batch = _frozen_batch_from_dry_run_report(download_summary, authorization)
+    frozen_pdf_scope = _frozen_pdf_scope_from_dry_run_report(download_summary)
+    _validate_frozen_pdf_scope_from_plan(frozen_pdf_scope)
+    if tuple(artifact.protocol for artifact in frozen_pdf_scope.artifacts) != frozen_batch.protocols:
+        raise _dry_run_plan_block(
+            "Protocolos dos PDFs congelados divergem do lote aprovado no dry-run.",
+            technical_cause="pdf_scope_protocol_mismatch",
+        )
+
+    download_summary["reused_from_dry_run_plan"] = True
+    download_summary["dry_run_plan_source"] = str(path)
+    download_summary["cdp_selection_skipped"] = True
+    download_summary["run_error"] = None
+    _refresh_processing_selection_totals(download_summary)
+    return FrozenDryRunPlan(
+        summary=download_summary,
+        frozen_batch=frozen_batch,
+        frozen_pdf_scope=frozen_pdf_scope,
+        source_path=path,
+    )
+
+
+def _validate_dry_run_plan_payload(
+    payload: dict,
+    authorization: BatchAuthorization,
+) -> None:
+    if payload.get("dry_run") is not True:
+        raise _dry_run_plan_block(
+            "Relatório encontrado não é um dry-run da opção 5.",
+            technical_cause="not_dry_run",
+        )
+    if payload.get("run_error") or (payload.get("download") or {}).get("run_error"):
+        raise _dry_run_plan_block(
+            "Dry-run anterior terminou com erro operacional; gere novo dry-run limpo.",
+            technical_cause="dry_run_run_error",
+        )
+    if str(payload.get("status") or "") not in {"", OperationStatus.SUCESSO.value}:
+        raise _dry_run_plan_block(
+            "Dry-run anterior não terminou com status SUCESSO.",
+            technical_cause="dry_run_status_not_success",
+        )
+    if int(payload.get("total_errors", 0) or 0) != 0:
+        raise _dry_run_plan_block(
+            "Dry-run anterior contém erros; gere novo dry-run limpo.",
+            technical_cause="dry_run_errors",
+        )
+    if int(payload.get("requested_batch_limit", 0) or 0) != authorization.requested_batch_limit:
+        raise _dry_run_plan_block(
+            "Limite solicitado diverge do lote congelado no dry-run.",
+            technical_cause="requested_limit_mismatch",
+        )
+    if int(payload.get("authorized_batch_limit", 0) or 0) != authorization.authorized_batch_limit:
+        raise _dry_run_plan_block(
+            "Limite autorizado diverge do lote congelado no dry-run.",
+            technical_cause="authorized_limit_mismatch",
+        )
+    if str(payload.get("authorization_scope") or "") != authorization.authorization_scope:
+        raise _dry_run_plan_block(
+            "Escopo de autorização diverge do lote congelado no dry-run.",
+            technical_cause="authorization_scope_mismatch",
+        )
+
+
+def _frozen_batch_from_dry_run_report(
+    download_summary: dict,
+    authorization: BatchAuthorization,
+) -> FrozenProtocolBatch:
+    if not bool(download_summary.get("frozen_batch_created")):
+        raise _dry_run_plan_block(
+            "Dry-run anterior não contém lote congelado.",
+            technical_cause="frozen_batch_missing",
+        )
+    raw = download_summary.get("frozen_batch") or {}
+    protocols = tuple(str(protocol) for protocol in (raw.get("protocols") or []))
+    if (
+        int(raw.get("requested_limit") or 0) != authorization.requested_batch_limit
+        or int(raw.get("authorized_limit") or 0) != authorization.authorized_batch_limit
+        or str(raw.get("authorization_scope") or "") != authorization.authorization_scope
+    ):
+        raise _dry_run_plan_block(
+            "Lote congelado não corresponde à autorização atual.",
+            technical_cause="frozen_batch_authorization_mismatch",
+        )
+    try:
+        return FrozenProtocolBatch(
+            requested_limit=int(raw.get("requested_limit") or 0),
+            authorized_limit=int(raw.get("authorized_limit") or 0),
+            authorization_scope=str(raw.get("authorization_scope") or ""),
+            protocols=protocols,
+            unique_before_limit=int(raw.get("unique_before_limit") or len(protocols)),
+            dropped_by_limit=int(raw.get("dropped_by_limit") or 0),
+            duplicate_protocols_in_frozen_batch=int(
+                raw.get("duplicate_protocols_in_frozen_batch") or 0
+            ),
+            protocols_added_after_freeze=int(raw.get("protocols_added_after_freeze") or 0),
+        )
+    except (TypeError, ValueError, FrozenBatchScopeError) as exc:
+        raise _dry_run_plan_block(
+            "Lote congelado do dry-run é inválido.",
+            technical_cause=type(exc).__name__,
+        ) from exc
+
+
+def _frozen_pdf_scope_from_dry_run_report(download_summary: dict) -> FrozenPdfScope:
+    raw = download_summary.get("frozen_pdf_scope") or {}
+    raw_artifacts = raw.get("artifacts") or []
+    artifacts: list[FrozenPdfArtifact] = []
+    for item in raw_artifacts:
+        path = Path(str(item.get("path") or ""))
+        artifacts.append(
+            FrozenPdfArtifact(
+                protocol=str(item.get("protocol") or ""),
+                path=path.resolve(strict=False),
+                sha256=str(item.get("sha256") or ""),
+            )
+        )
+    digest = str(raw.get("digest") or download_summary.get("frozen_pdf_scope_digest") or "")
+    return FrozenPdfScope(artifacts=tuple(artifacts), digest=digest)
+
+
+def _validate_frozen_pdf_scope_from_plan(scope: FrozenPdfScope) -> None:
+    if not scope.artifacts or not scope.digest:
+        raise _dry_run_plan_block(
+            "Dry-run anterior não contém fingerprint completo dos PDFs.",
+            technical_cause="pdf_scope_missing",
+        )
+    try:
+        scope.validate()
+    except FrozenBatchScopeError as exc:
+        raise _dry_run_plan_block(
+            "PDF do lote congelado foi removido ou alterado desde o dry-run.",
+            technical_cause=exc.code,
+        ) from exc
+    digest_source = "\n".join(
+        f"{artifact.protocol}:{artifact.sha256}" for artifact in scope.artifacts
+    )
+    expected_digest = hashlib.sha256(digest_source.encode("utf-8")).hexdigest()
+    if expected_digest != scope.digest:
+        raise _dry_run_plan_block(
+            "Digest do lote de PDFs congelado não confere.",
+            technical_cause="pdf_scope_digest_mismatch",
+        )
+
+
+def _dry_run_plan_block(
+    message: str,
+    *,
+    technical_cause: str,
+) -> PreflightBlockedError:
+    return PreflightBlockedError(
+        code="FROZEN_DRY_RUN_PLAN_INVALID",
+        user_message=message,
+        stage="plano congelado do dry-run",
+        technical_cause=technical_cause,
     )
 
 

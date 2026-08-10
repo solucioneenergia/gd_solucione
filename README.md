@@ -123,7 +123,9 @@ Start-Process "msedge.exe" -ArgumentList `
   '--remote-debugging-port=9222', `
   "--user-data-dir=$PWD\data\edge_cdp_profile", `
   '--no-first-run', `
-  '--no-default-browser-check'
+  '--no-default-browser-check', `
+  '--new-window', `
+  'https://gdneoenergiapernambuco.neoenergia.com/'
 ```
 
 Faça login manual, abra **Minhas Solicitações** e execute o pipeline pelo CLI ou pela interface desktop. Não exponha a porta 9222 na rede. Uma sessão CDP permite controlar o navegador conectado.

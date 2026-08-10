@@ -17,6 +17,7 @@ from automacao_gd.infrastructure.files.file_service import ensure_directories, s
 from automacao_gd.infrastructure.logging import logger, setup_logger
 from automacao_gd.infrastructure.persistence.atomic import atomic_write_json
 from automacao_gd.infrastructure.pdf.service import extract_generation_data
+from automacao_gd.infrastructure.portal.cdp_service import is_insecure_portal_http_url
 from automacao_gd.infrastructure.portal.factory import create_portal_automation
 from automacao_gd.application.operational_guard import (
     DirectRouteAuthorization,
@@ -188,11 +189,15 @@ def _print_open_tabs(pages: list) -> None:
 def _find_portal_page(pages: list, portal_url: str):
     expected_host = urlparse(portal_url).netloc.lower()
     for page in pages:
+        if is_insecure_portal_http_url(page.url or ""):
+            continue
         parsed = urlparse(page.url or "")
         if expected_host and parsed.netloc.lower() == expected_host:
             return page
 
     for page in pages:
+        if is_insecure_portal_http_url(page.url or ""):
+            continue
         if "gdneoenergiapernambuco.neoenergia.com" in (page.url or "").lower():
             return page
     return None

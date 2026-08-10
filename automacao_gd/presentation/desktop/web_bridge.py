@@ -461,7 +461,8 @@ def _build_edge_cdp_command(settings: Settings) -> list[str]:
         f"--user-data-dir={profile}",
         "--no-first-run",
         "--no-default-browser-check",
-        "about:blank",
+        "--new-window",
+        settings.PORTAL_GD_URL,
     ]
 
 
