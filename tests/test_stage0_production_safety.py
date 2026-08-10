@@ -733,6 +733,111 @@ def test_option5_real_run_blocks_when_workbook_changed_after_explicit_plan(
     assert exc.value.code == "OP5_PLAN_WORKBOOK_CHANGED"
 
 
+def test_option5_real_run_uses_configured_explicit_plan_path(
+    tmp_path: Path,
+) -> None:
+    settings = _settings(
+        tmp_path,
+        DRY_RUN=False,
+        APPLY_ARCHIVE=False,
+        MAX_COMPLETED_TO_PROCESS=1,
+        OPTION5_AUTHORIZED_MAX_PROTOCOLS=60,
+        LOGS_DIR=tmp_path / "logs",
+        DOWNLOADS_DIR=tmp_path / "downloads",
+        OP5_PLAN_PATH=tmp_path / "logs" / "op5_plan_custom.json",
+    )
+    protocol = "2600000000"
+    pdf = settings.downloads_dir_path / protocol / f"Orcamento_de_Conexao_{protocol}.pdf"
+    pdf.parent.mkdir(parents=True, exist_ok=True)
+    pdf.write_bytes(b"%PDF-1.4 synthetic explicit op5 plan")
+    pdf_sha = hashlib.sha256(pdf.read_bytes()).hexdigest()
+    digest = hashlib.sha256(f"{protocol}:{pdf_sha}".encode("utf-8")).hexdigest()
+    valid_plan = {
+        "schema_version": 1,
+        "created_at": "2026-08-10T00:00:00",
+        "source_report_path": "pipeline_cdp_completo.json",
+        "dry_run": True,
+        "status": "SUCESSO",
+        "requested_batch_limit": 1,
+        "authorized_batch_limit": 60,
+        "authorization_scope": full_pipeline.CONTROLLED_PRODUCTION_UP_TO_60_AUTHORIZATION_SCOPE,
+        "strong_confirmation_contract": full_pipeline.build_option5_strong_confirmation(1),
+        "workbook_sha256": hashlib.sha256(settings.planilha_path.read_bytes()).hexdigest(),
+        "workbook_path": str(settings.planilha_path),
+        "apply_excel": True,
+        "apply_archive": False,
+        "total_errors": 0,
+        "frozen_batch": {
+            "requested_limit": 1,
+            "authorized_limit": 60,
+            "authorization_scope": full_pipeline.CONTROLLED_PRODUCTION_UP_TO_60_AUTHORIZATION_SCOPE,
+            "protocols": [protocol],
+            "unique_before_limit": 1,
+            "dropped_by_limit": 0,
+            "duplicate_protocols_in_frozen_batch": 0,
+            "protocols_added_after_freeze": 0,
+        },
+        "frozen_pdf_scope": {
+            "digest": digest,
+            "artifacts": [{"protocol": protocol, "path": str(pdf), "sha256": pdf_sha}],
+        },
+        "planned_excel_actions": [{"protocol": protocol, "action": "update_existing"}],
+        "download": {
+            "run_error": None,
+            "total_selected": 1,
+            "total_for_processing": 1,
+            "total_sent_to_processing": 1,
+            "total_existing_reused": 1,
+            "total_downloaded": 0,
+            "total_cdp_errors": 0,
+            "total_errors": 0,
+            "selected_protocols": [{"protocol": protocol, "client_name": "CLIENTE SINTETICO"}],
+            "results": [
+                {
+                    "protocol": protocol,
+                    "client_name": "CLIENTE SINTETICO",
+                    "download_status": "existing_pdf_after_skip",
+                    "process_pdf_path": str(pdf),
+                    "selected_for_processing": True,
+                    "selected_by_global_limit": True,
+                    "global_limit_status": "selected",
+                }
+            ],
+            "frozen_batch_created": True,
+            "frozen_batch": {
+                "requested_limit": 1,
+                "authorized_limit": 60,
+                "authorization_scope": full_pipeline.CONTROLLED_PRODUCTION_UP_TO_60_AUTHORIZATION_SCOPE,
+                "protocols": [protocol],
+                "unique_before_limit": 1,
+                "dropped_by_limit": 0,
+                "duplicate_protocols_in_frozen_batch": 0,
+                "protocols_added_after_freeze": 0,
+            },
+            "frozen_pdf_scope": {
+                "digest": digest,
+                "artifacts": [{"protocol": protocol, "path": str(pdf), "sha256": pdf_sha}],
+            },
+        },
+    }
+    settings.logs_dir_path.mkdir(parents=True, exist_ok=True)
+    (settings.logs_dir_path / "op5_plan_latest.json").write_text(
+        json.dumps({**valid_plan, "workbook_sha256": "0" * 64}),
+        encoding="utf-8",
+    )
+    Path(settings.OP5_PLAN_PATH).write_text(json.dumps(valid_plan), encoding="utf-8")
+    authorization = full_pipeline.validate_requested_batch_limit(
+        1,
+        full_pipeline.batch_authorization_policy_from_settings(settings),
+    )
+
+    plan = full_pipeline.load_frozen_dry_run_plan(settings, authorization)
+
+    assert plan.source_path == Path(settings.OP5_PLAN_PATH)
+    assert plan.summary["dry_run_plan_source_kind"] == "explicit_op5_plan"
+    assert plan.summary["cdp_selection_skipped"] is True
+
+
 def test_controller_catches_operational_block_without_traceback(
     tmp_path: Path, monkeypatch
 ) -> None:
