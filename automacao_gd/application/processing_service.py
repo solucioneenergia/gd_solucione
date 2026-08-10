@@ -4,6 +4,7 @@ import re
 from collections.abc import Iterable
 from datetime import datetime
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 from automacao_gd.application.contracts import OperationStatus
@@ -19,6 +20,7 @@ from automacao_gd.application.operational_guard import (
 from automacao_gd.application.shareable_reports import build_shareable_report
 from automacao_gd.domain.errors import OperationalBlockError
 from automacao_gd.infrastructure.files.client_folder_service import (
+    ArchiveDestinationResult,
     archive_pdf_to_client_folder,
     build_destination_pdf_path,
     clear_folder_cache,
@@ -752,29 +754,53 @@ def _process_single_pdf(
         completion_decision = _completion_value_from_metadata(portal_metadata)
         completion_date = completion_decision["value"]
 
-        match = find_client_folder(clientes_root, protocol, client_name)
-        if state_store:
-            state_store.update_section(
-                protocol,
-                "client_folder",
-                {
-                    "status": "found"
-                    if match.match_type in {"protocol", "fuzzy_name"}
-                    else match.match_type,
-                    "matched_path": match.matched_path,
-                    "match_type": match.match_type,
-                    "confidence": match.confidence,
-                    "cache_hit": match.cache_hit,
-                },
-                last_step="client_folder_found",
+        match: Any
+        archive_destination: Any
+        if apply_archive:
+            match = find_client_folder(clientes_root, protocol, client_name)
+            if state_store:
+                state_store.update_section(
+                    protocol,
+                    "client_folder",
+                    {
+                        "status": "found"
+                        if match.match_type in {"protocol", "fuzzy_name"}
+                        else match.match_type,
+                        "matched_path": match.matched_path,
+                        "match_type": match.match_type,
+                        "confidence": match.confidence,
+                        "cache_hit": match.cache_hit,
+                    },
+                    last_step="client_folder_found",
+                )
+            archive_destination = resolve_archive_destination_folder(
+                client_folder=Path(match.matched_path) if match.matched_path else None,
+                protocol=protocol,
+                entry_date=entry_date,
+                client_name=client_name,
+                clientes_root=clientes_root,
             )
-        archive_destination = resolve_archive_destination_folder(
-            client_folder=Path(match.matched_path) if match.matched_path else None,
-            protocol=protocol,
-            entry_date=entry_date,
-            client_name=client_name,
-            clientes_root=clientes_root,
-        )
+        else:
+            match = SimpleNamespace(
+                match_type=None,
+                matched_path=None,
+                confidence=None,
+                cache_hit=False,
+                cache_key=None,
+                reason="APPLY_ARCHIVE=false",
+                found_by=None,
+                protocol_search_hit=False,
+                search_elapsed_seconds=None,
+            )
+            archive_destination = ArchiveDestinationResult(
+                destination_folder=None,
+                match_type="not_applicable",
+                confidence=0.0,
+                reason="APPLY_ARCHIVE=false",
+                should_create_folder=False,
+                fallback_mode="disabled",
+                legacy_gd_ignored=False,
+            )
         target_folder = archive_destination.destination_folder
         target_pdf_path = (
             build_destination_pdf_path(target_folder, protocol)

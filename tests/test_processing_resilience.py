@@ -470,6 +470,48 @@ def test_state_failure_immediately_after_excel_preserves_excel_effect_and_skips_
     archive.assert_not_called()
 
 
+def test_apply_archive_false_skips_client_folder_lookup_and_allows_excel(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    pdf = tmp_path / "Orcamento_de_Conexao_2600000000.pdf"
+    pdf.write_bytes(b"%PDF-1.4\nCONTEUDO SINTETICO\n%%EOF")
+    excel, archive = _configure_successful_single_pdf_dependencies(
+        tmp_path,
+        pdf,
+        monkeypatch,
+    )
+    monkeypatch.setattr(
+        processing_service,
+        "find_client_folder",
+        Mock(side_effect=AssertionError("CLIENTES_ROOT nao deve ser varrido")),
+    )
+    monkeypatch.setattr(
+        processing_service,
+        "resolve_archive_destination_folder",
+        Mock(side_effect=AssertionError("destino de arquivo nao deve ser resolvido")),
+    )
+
+    result = processing_service._process_single_pdf(
+        pdf,
+        tmp_path / "planilha-sintetica.xlsx",
+        Path("Y:/"),
+        dry_run=False,
+        apply_excel=True,
+        apply_archive=False,
+    )
+
+    assert result["success"] is True
+    assert result["excel_effect"] == "applied"
+    assert result["archive_effect"] == "not_applied"
+    assert result["archive_reason"] == "APPLY_ARCHIVE=false"
+    assert result["archive_status"]["reason"] == "APPLY_ARCHIVE=false"
+    assert result["client_folder_match_type"] is None
+    assert result["client_folder_search_elapsed_seconds"] is None
+    excel.assert_called_once()
+    archive.assert_not_called()
+
+
 def test_state_failure_after_archive_preserves_applied_effects_without_false_success(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

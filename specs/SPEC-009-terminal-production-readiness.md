@@ -330,6 +330,10 @@ APLICAR OPÇÃO 5 COM CONCLUSÃO EM <N> PROTOCOLOS
 - O lock global neutro `data/locks/real_run_execution.lock` continua obrigatorio.
 - O lote congelado deve limitar exatamente aos N primeiros protocolos elegiveis unicos e marcar
   os demais como `excluded_by_global_limit`.
+- Quando `APPLY_ARCHIVE=false`, o processamento nao deve buscar nem exigir `CLIENTES_ROOT`, nao
+  deve consultar pastas de clientes e nao deve bloquear atualizacao de Excel por causa de pasta de
+  cliente. O resultado deve registrar `archive_effect=not_applied` e
+  `archive_reason=APPLY_ARCHIVE=false`.
 - Relatorios devem registrar `requested_batch_limit=N`, `authorized_batch_limit=M`,
   `authorization_scope=CONTROLLED_PRODUCTION_OPTION5_UP_TO_60` quando M for maior que 5,
   e totais de selecionados/excluidos.
