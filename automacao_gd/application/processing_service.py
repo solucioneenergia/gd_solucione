@@ -17,6 +17,7 @@ from automacao_gd.application.operational_guard import (
     validate_offline_authorization,
     validate_operational_lock_proof,
 )
+from automacao_gd.application.op5_optimization import run_limited_pdf_tasks
 from automacao_gd.application.shareable_reports import build_shareable_report
 from automacao_gd.domain.errors import OperationalBlockError
 from automacao_gd.infrastructure.files.client_folder_service import (
@@ -227,6 +228,7 @@ def _process_downloaded_pdfs_locked(
     )
 
     pdfs = _resolve_pdf_paths(downloads_root, pdf_paths)
+    pdf_workers = int(getattr(settings, "OP5_PDF_WORKERS", 1) or 1)
     if allowed_protocols is not None:
         unknown_protocols = sorted(
             {
@@ -265,8 +267,10 @@ def _process_downloaded_pdfs_locked(
         logger.error(preflight_error)
         results = [_blocked_result(pdf_path, preflight_error) for pdf_path in pdfs]
     elif not dry_run:
-        simulation_results = [
-            _process_single_pdf(
+        simulation_results = run_limited_pdf_tasks(
+            pdfs,
+            worker_count=pdf_workers,
+            task=lambda pdf_path: _process_single_pdf(
                 pdf_path,
                 workbook_path,
                 clientes_root,
@@ -275,9 +279,8 @@ def _process_downloaded_pdfs_locked(
                 apply_excel,
                 apply_archive,
                 None,
-            )
-            for pdf_path in pdfs
-        ]
+            ),
+        )
         extracted_scope_violations = _extracted_scope_violations(
             pdfs,
             simulation_results,
@@ -381,8 +384,11 @@ def _process_downloaded_pdfs_locked(
                         ),
                     )
     else:
-        results = [
-            _process_single_pdf(
+        worker_state_store = state_store if pdf_workers == 1 else None
+        results = run_limited_pdf_tasks(
+            pdfs,
+            worker_count=pdf_workers,
+            task=lambda pdf_path: _process_single_pdf(
                 pdf_path,
                 workbook_path,
                 clientes_root,
@@ -390,10 +396,9 @@ def _process_downloaded_pdfs_locked(
                 backup_path,
                 apply_excel,
                 apply_archive,
-                state_store,
-            )
-            for pdf_path in pdfs
-        ]
+                worker_state_store,
+            ),
+        )
         if apply_excel:
             results = project_dry_run_target_rows(results, workbook_path)
     finished_at = datetime.now()
@@ -432,6 +437,7 @@ def _process_downloaded_pdfs_locked(
         "workbook_path": str(workbook_path),
         "clientes_root": str(clientes_root),
         "total_pdfs": len(pdfs),
+        "pdf_workers": pdf_workers,
         **metrics,
         "total_success": total_success,
         "total_errors": total_errors,

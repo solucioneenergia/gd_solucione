@@ -1,4 +1,4 @@
-# SPEC-010 — OP5 Etapa A: plano congelado e lote rápido auditável
+# SPEC-010 — OP5 Etapas A/B: plano congelado e otimização central auditável
 
 Status: proposta para implementação
 Data: 2026-08-10
@@ -40,13 +40,17 @@ Para lotes controlados, o operador precisa de um fluxo mais rápido sem perder s
 
 ## Objetivo
 
-Implementar a Etapa A das otimizações da opção 5 com preservação dos gates já aceitos:
+Implementar as Etapas A e B das otimizações da opção 5 com preservação dos gates já aceitos:
 
 1. plano OP5 congelado explícito;
 2. separação entre auditoria global e execução de lote;
 3. seleção incremental que para ao atingir N elegíveis seguros;
 4. pré-seleção local de candidatos;
 5. reuso inteligente de PDFs/metadados.
+
+A Etapa B adiciona cache de elegibilidade do Portal, cache da reconciliação global por SHA,
+índice local da planilha, extração PDF paralela com limite controlado e comandos explícitos
+`op5-plan`, `op5-apply` e `op5-audit-global`.
 
 ## Escopo
 
@@ -61,12 +65,10 @@ Implementar a Etapa A das otimizações da opção 5 com preservação dos gates
 - Desktop.
 - Execução real de OP5.
 - Mudança do limite máximo de 60.
-- Paralelização de extração PDF.
-- Cache persistido de elegibilidade do Portal entre execuções.
-- Índice persistido da planilha.
-- Nova UX completa de subcomandos `op5-plan`, `op5-apply` e `op5-audit-global`.
-
-Esses itens ficam para Etapa B ou SPEC posterior.
+- Execução real dos novos comandos.
+- Tornar `batch_fast` padrão obrigatório.
+- Paralelizar Portal/CDP ou escrita Excel.
+- Cache distribuído/compartilhável.
 
 ## Glossário
 
@@ -169,6 +171,103 @@ O reuso de PDF/metadados técnicos só é válido quando o cache estiver vincula
 
 Cache legado sem protocolo e SHA do PDF deve ser reextraído.
 
+### RF-007 — Cache privado de elegibilidade do Portal
+
+Em `batch_fast`, o dry-run pode persistir um snapshot privado e sanitizado da elegibilidade do
+Portal em `LOGS_DIR/op5_portal_eligibility_cache.json`.
+
+O cache deve conter somente campos mínimos para pré-seleção:
+
+- protocolo;
+- página;
+- índice da linha;
+- status operacional;
+- motivo da elegibilidade;
+- data de captura;
+- hash estrutural do snapshot;
+- limite solicitado;
+- modo de reconciliação.
+
+O cache não pode conter nome de cliente, endereço, UC, texto bruto do Portal, cookies, tokens ou
+caminhos locais. Ele só pode ser reutilizado quando:
+
+- estiver dentro do TTL configurado;
+- o modo for `batch_fast`;
+- o limite solicitado for compatível;
+- o hash estrutural e a versão do schema forem compatíveis.
+
+Cache de elegibilidade não autoriza escrita real por si só. A escrita real continua exigindo
+plano OP5 congelado, lock global, confirmação forte, hashes de PDF e SHA da planilha.
+
+### RF-008 — Cache da reconciliação global por SHA
+
+A reconciliação Portal × planilha pode ser cacheada em
+`LOGS_DIR/portal_workbook_reconciliation_cache.json` quando executada em modo de auditoria ou
+`inline_global`.
+
+O cache só é válido quando todos os itens abaixo coincidirem:
+
+- SHA-256 atual da planilha;
+- hash do conjunto de protocolos concluídos do Portal;
+- versão do schema de reconciliação;
+- modo de reconciliação;
+- versão do índice local da planilha.
+
+Em hit válido, o fluxo pode reutilizar o resumo da reconciliação sem recomputar a leitura global
+da planilha. Em miss, deve recomputar e gravar novo cache. O cache é privado operacional.
+
+### RF-009 — Índice local da planilha
+
+O sistema deve manter um índice privado em `LOGS_DIR/workbook_index_cache.json`, vinculado ao
+SHA-256 da planilha.
+
+O índice deve mapear protocolo para metadados mínimos:
+
+- aba;
+- linha;
+- status de conclusão;
+- presença de equipamentos;
+- hash da linha quando disponível.
+
+O índice deve ser invalidado quando o SHA da planilha mudar. O índice não pode ser incluído em
+release, fixture permanente ou relatório compartilhável.
+
+### RF-010 — Extração de PDF paralela com limite controlado
+
+Após o lote estar congelado, a extração técnica dos PDFs pode executar em paralelo com limite
+controlado por `OP5_PDF_WORKERS`.
+
+Contrato:
+
+- valor permitido: `1` a `4`;
+- padrão: `1`, preservando comportamento serial;
+- Portal/CDP nunca é paralelizado;
+- escrita Excel, arquivamento, state e relatórios continuam seriais;
+- a ordem do resultado final deve seguir a ordem do lote congelado;
+- exceções de workers devem virar resultado por protocolo, sem abortar outros PDFs já em análise;
+- produção real só aplica efeitos depois da fase de extração/planejamento estar consolidada.
+
+### RF-011 — Comandos explícitos de UX operacional
+
+O terminal deve aceitar comandos explícitos sem depender do menu interativo:
+
+```text
+py app.py op5-plan --limit N
+py app.py op5-apply --plan <arquivo>
+py app.py op5-audit-global
+```
+
+Contratos:
+
+- `op5-plan --limit N` executa dry-run da opção 5 com `MAX_COMPLETED_TO_PROCESS=N`,
+  `OP5_RECONCILIATION_MODE=batch_fast`, gera plano OP5 e não aplica Excel;
+- `op5-apply --plan <arquivo>` executa produção somente a partir do plano informado, sem nova
+  navegação CDP, com confirmação forte vinculada à quantidade do plano;
+- `op5-audit-global` executa reconciliação global somente leitura, sem download, sem aplicação
+  Excel e sem gerar plano de aplicação;
+- todos os comandos devem retornar código não-zero em bloqueio/cancelamento/erro;
+- nenhum comando pode ler `.env` em teste nem acessar Portal/CDP sem autorização operacional.
+
 ## Requisitos não funcionais
 
 - Compatível com Windows e Linux.
@@ -184,6 +283,8 @@ Configuração:
 
 ```text
 OP5_RECONCILIATION_MODE=inline_global | batch_fast | audit_global
+OP5_ELIGIBILITY_CACHE_TTL_MINUTES=30
+OP5_PDF_WORKERS=1
 ```
 
 Valor padrão inicial: `inline_global`, para preservar compatibilidade. O lote rápido deve ser
@@ -193,6 +294,9 @@ Artefato:
 
 ```text
 LOGS_DIR/op5_plan_latest.json
+LOGS_DIR/op5_portal_eligibility_cache.json
+LOGS_DIR/workbook_index_cache.json
+LOGS_DIR/portal_workbook_reconciliation_cache.json
 ```
 
 ## Dados e persistência
@@ -210,6 +314,10 @@ Novos códigos:
 - `OP5_PLAN_WORKBOOK_CHANGED`;
 - `OP5_PLAN_PDF_CHANGED`;
 - `OP5_RECONCILIATION_MODE_INVALID`.
+- `OP5_PLAN_COMMAND_FAILED`;
+- `OP5_APPLY_PLAN_REQUIRED`;
+- `OP5_AUDIT_GLOBAL_FAILED`;
+- `OP5_CACHE_INVALIDATED`.
 
 ## Segurança e privacidade
 
@@ -234,6 +342,12 @@ Relatórios devem registrar:
 - `cdp_selection_skipped`;
 - `incremental_selection_enabled`;
 - `incremental_stop_reason`.
+- `eligibility_cache_hit`;
+- `eligibility_cache_path`;
+- `workbook_index_cache_hit`;
+- `workbook_index_path`;
+- `reconciliation_cache_hit`;
+- `pdf_workers`.
 
 ## Compatibilidade
 
@@ -252,6 +366,11 @@ temporariamente se passarem pelos validadores da SPEC-009.
 - RED para real que não bloqueia workbook alterado após plano.
 - RED para `batch_fast` chamando reconciliação global ou exigindo paginação completa.
 - RED para cache técnico sem SHA/protocolo sendo reutilizado.
+- RED para cache de elegibilidade contendo campos sensíveis ou sendo reutilizado fora do TTL.
+- RED para cache de reconciliação sendo reutilizado com SHA de planilha divergente.
+- RED para índice local da planilha sendo reutilizado após mudança do SHA.
+- RED para extração PDF paralela que perde a ordem do lote ou aceita mais de 4 workers.
+- RED para CLI sem os comandos `op5-plan`, `op5-apply` e `op5-audit-global`.
 
 ## Critérios de aceite
 
@@ -262,6 +381,11 @@ temporariamente se passarem pelos validadores da SPEC-009.
 - [ ] `batch_fast` permite lote limitado sem reconciliação global obrigatória.
 - [ ] Seleção incremental para ao atingir N elegíveis seguros.
 - [ ] Cache legado sem protocolo/SHA não é reutilizado.
+- [ ] Cache de elegibilidade é privado, sanitizado e invalidado por TTL/hash/modo.
+- [ ] Reconciliação global pode ser reutilizada por cache somente com SHA/hashes compatíveis.
+- [ ] Índice local da planilha é reutilizado por SHA e invalidado em mudança.
+- [ ] Extração PDF paralela respeita limite 1..4 e preserva ordem.
+- [ ] Comandos explícitos `op5-plan`, `op5-apply` e `op5-audit-global` existem e falham fechado.
 - [ ] Testes direcionados, Ruff, MyPy e scanner permanecem verdes.
 
 ## Rollout
@@ -285,7 +409,7 @@ rollback porque preserva o fluxo anterior.
 ## Decisões pendentes
 
 - Quando tornar `batch_fast` padrão.
-- Formato final dos subcomandos explícitos da Etapa B.
+- Quando tornar os caches padrão para execução operacional longa.
 
 ## Evidências de homologação
 

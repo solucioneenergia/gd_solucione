@@ -10,6 +10,7 @@ from playwright.sync_api import Error as PlaywrightError
 from playwright.sync_api import sync_playwright
 
 from automacao_gd.infrastructure.portal.cdp_service import (
+    _collect_completed_listing_rows_across_pages,
     connect_to_existing_edge,
     download_completed_budgets_from_current_page,
     find_portal_page_from_cdp,
@@ -29,6 +30,12 @@ from automacao_gd.application.preflight import run_preflight
 from automacao_gd.application.operational_guard import (
     OperationalLockProof,
     global_execution_lock_path,
+)
+from automacao_gd.application.op5_optimization import (
+    load_reconciliation_cache,
+    portal_protocols_hash,
+    write_eligibility_cache,
+    write_reconciliation_cache,
 )
 from automacao_gd.application.processing_service import process_downloaded_pdfs
 from automacao_gd.application.shareable_reports import build_shareable_report
@@ -406,6 +413,9 @@ def _run_full_cdp_pipeline_locked(
             authorization,
         )
         download_summary = limited_selection.summary
+        download_summary.update(
+            _persist_eligibility_cache_if_applicable(settings, download_summary)
+        )
     else:
         dry_run_plan = load_frozen_dry_run_plan(settings, authorization)
         download_summary = dry_run_plan.summary
@@ -609,6 +619,103 @@ def _run_download_step(settings, state_store=None) -> dict:
             playwright.stop()
 
 
+def run_op5_audit_global(settings: Settings | None = None) -> dict:
+    active_settings = settings or get_settings()
+    started_at = datetime.now()
+    ensure_directories()
+    if not active_settings.CDP_MODE:
+        raise PreflightBlockedError(
+            code="CDP_MODE_REQUIRED",
+            user_message="Auditoria global OP5 exige CDP_MODE=true.",
+            stage="pre-voo",
+        )
+    preflight = run_preflight(active_settings, real_run=False, require_cdp=True)
+    if not preflight.ready:
+        preflight.raise_if_blocked()
+    playwright = None
+    browser = None
+    try:
+        playwright = sync_playwright().start()
+        browser = connect_to_existing_edge(playwright, active_settings.CDP_ENDPOINT)
+        page = find_portal_page_from_cdp(browser, active_settings.PORTAL_GD_URL)
+        if page is None:
+            raise RuntimeError("Nenhuma aba do Portal GD foi encontrada via CDP.")
+        listing_summary = _collect_completed_listing_rows_across_pages(
+            page,
+            active_settings,
+            state_store=None,
+            max_completed=None,
+            skip_already_completed=False,
+        )
+        callback = _reconciliation_callback(active_settings)
+        reconciliation = callback(
+            "before_limit",
+            list(listing_summary.get("completed_records") or []),
+            [],
+            listing_summary,
+        )
+    except PlaywrightError as exc:
+        return {
+            "status": OperationStatus.FALHOU.value,
+            "operation_message": "Auditoria global OP5 falhou na conexao CDP.",
+            "error_code": "OP5_AUDIT_GLOBAL_FAILED",
+            "technical_cause": type(exc).__name__,
+            "total_downloaded": 0,
+            "total_updates_applied": 0,
+        }
+    finally:
+        if browser:
+            logger.info("Encerrando conexao CDP sem fechar o Edge aberto manualmente.")
+        if playwright:
+            playwright.stop()
+    return {
+        "started_at": started_at.isoformat(timespec="seconds"),
+        "finished_at": datetime.now().isoformat(timespec="seconds"),
+        "status": OperationStatus.SUCESSO.value,
+        "operation_message": "Auditoria global OP5 concluida em modo somente leitura.",
+        "dry_run": True,
+        "apply_excel": False,
+        "apply_archive": False,
+        "op5_reconciliation_mode": "audit_global",
+        "total_downloaded": 0,
+        "total_updates_applied": 0,
+        "total_pages_read": listing_summary.get("pages_read", 0),
+        "total_completed": listing_summary.get("total_completed", 0),
+        "reconciliation": reconciliation,
+    }
+
+
+def _persist_eligibility_cache_if_applicable(settings, download_summary: dict) -> dict:
+    mode = str(getattr(settings, "OP5_RECONCILIATION_MODE", "inline_global"))
+    if mode != "batch_fast":
+        return {"eligibility_cache_hit": None}
+    records = [
+        item
+        for item in download_summary.get("results") or []
+        if str(item.get("protocol") or "").strip()
+    ]
+    cache_path = settings.logs_dir_path / "op5_portal_eligibility_cache.json"
+    try:
+        payload = write_eligibility_cache(
+            cache_path,
+            records=records,
+            requested_limit=int(getattr(settings, "MAX_COMPLETED_TO_PROCESS", 0) or 0),
+            reconciliation_mode=mode,
+        )
+    except (OSError, TypeError, ValueError):
+        logger.warning("Cache privado de elegibilidade OP5 nao pode ser persistido.")
+        return {
+            "eligibility_cache_hit": False,
+            "eligibility_cache_error_code": "OP5_CACHE_INVALIDATED",
+        }
+    return {
+        "eligibility_cache_hit": False,
+        "eligibility_cache_path": _display_path(cache_path),
+        "eligibility_cache_record_count": len(payload.get("records") or []),
+        "eligibility_cache_structural_hash": payload.get("structural_hash"),
+    }
+
+
 def _reconciliation_callback(settings):
     state: dict[str, object] = {}
 
@@ -620,6 +727,24 @@ def _reconciliation_callback(settings):
     ) -> dict:
         if stage == "before_limit":
             logger.info("Calculando reconciliação global Portal x planilha.")
+            cache_path = settings.logs_dir_path / "portal_workbook_reconciliation_cache.json"
+            workbook_sha256 = _file_sha256(settings.planilha_path)
+            protocols_hash = portal_protocols_hash(
+                str(getattr(record, "protocol", "") or "") for record in completed_records
+            )
+            mode = str(getattr(settings, "OP5_RECONCILIATION_MODE", "inline_global"))
+            cached = load_reconciliation_cache(
+                cache_path,
+                workbook_sha256=workbook_sha256,
+                portal_protocols_hash=protocols_hash,
+                reconciliation_mode=mode,
+            )
+            if cached.get("cache_hit"):
+                summary = dict(cached.get("summary") or {})
+                summary["reconciliation_cache_hit"] = True
+                summary["reconciliation_cache_path"] = _display_path(cache_path)
+                state["summary"] = summary
+                return summary
             result = reconcile_portal_workbook(
                 completed_records,
                 settings.planilha_path,
@@ -644,6 +769,18 @@ def _reconciliation_callback(settings):
             summary["json_report_path"] = _display_path(json_path)
             summary["markdown_report_path"] = _display_path(markdown_path)
             summary["decision"] = result.decision
+            summary["reconciliation_cache_hit"] = False
+            summary["reconciliation_cache_path"] = _display_path(cache_path)
+            try:
+                write_reconciliation_cache(
+                    cache_path,
+                    workbook_sha256=workbook_sha256,
+                    portal_protocols_hash=protocols_hash,
+                    reconciliation_mode=mode,
+                    summary=summary,
+                )
+            except (OSError, TypeError, ValueError):
+                logger.warning("Cache privado de reconciliacao OP5 nao pode ser persistido.")
             return summary
         stored_result = state.get("result")
         cached_result = (
@@ -861,7 +998,8 @@ def load_frozen_dry_run_plan(
     settings: Settings,
     authorization: BatchAuthorization,
 ) -> FrozenDryRunPlan:
-    path = settings.logs_dir_path / OP5_PLAN_JSON_REPORT_NAME
+    configured_plan_path = getattr(settings, "op5_plan_path", None)
+    path = Path(configured_plan_path) if configured_plan_path is not None else settings.logs_dir_path / OP5_PLAN_JSON_REPORT_NAME
     source_kind = "explicit_op5_plan"
     if not path.is_file():
         path = settings.logs_dir_path / PIPELINE_JSON_REPORT_NAME

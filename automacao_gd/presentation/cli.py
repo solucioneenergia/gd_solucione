@@ -36,6 +36,7 @@ from automacao_gd.application.full_pipeline import (
     StrongConfirmationError,
     batch_authorization_policy_from_settings,
     build_option5_strong_confirmation,
+    run_op5_audit_global,
     validate_option5_strong_confirmation,
     validate_requested_batch_limit,
 )
@@ -77,7 +78,13 @@ def main(argv: Sequence[str] | None = None) -> int:
         setup_logger(verbose=args.verbose)
         if args.command == "backfill-audit":
             return _run_backfill_audit()
-        return _run_backfill_apply(args.plan)
+        if args.command == "backfill-apply":
+            return _run_backfill_apply(args.plan)
+        if args.command == "op5-plan":
+            return _run_op5_plan(args.limit)
+        if args.command == "op5-apply":
+            return _run_op5_apply(args.plan)
+        return _run_op5_audit_global()
 
     ensure_directories()
     setup_logger(verbose=args.verbose)
@@ -127,7 +134,15 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "command",
         nargs="?",
-        choices=("backfill-audit", "backfill-apply", "logs-audit", "logs-sanitize"),
+        choices=(
+            "backfill-audit",
+            "backfill-apply",
+            "logs-audit",
+            "logs-sanitize",
+            "op5-plan",
+            "op5-apply",
+            "op5-audit-global",
+        ),
         help="executa auditoria histórica ou aplica um plano previamente aprovado",
     )
     parser.add_argument(
@@ -135,12 +150,80 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         type=Path,
         help="plano JSON versionado exigido por backfill-apply",
     )
+    parser.add_argument(
+        "--limit",
+        type=int,
+        help="limite solicitado para op5-plan",
+    )
     parser.add_argument("--input", type=Path, help="arquivo para logs-sanitize")
     parser.add_argument(
         "--confirmation",
         help="confirmação forte exigida por logs-sanitize",
     )
     return parser.parse_args(argv)
+
+
+def _run_op5_plan(limit: int | None) -> int:
+    if limit is None or limit <= 0:
+        print("Status: BLOQUEADO")
+        print("op5-plan exige --limit N positivo.")
+        return 2
+    settings = get_settings().model_copy(
+        update={
+            "DRY_RUN": True,
+            "MAX_COMPLETED_TO_PROCESS": limit,
+            "OP5_RECONCILIATION_MODE": "batch_fast",
+            "APPLY_EXCEL": True,
+        }
+    )
+    authorization = validate_requested_batch_limit(
+        limit,
+        batch_authorization_policy_from_settings(settings),
+    )
+    confirmation = build_option5_strong_confirmation(authorization.requested_batch_limit)
+    result = ApplicationController(settings).run_pipeline(confirmation=confirmation)
+    print_operation_summary("pipeline", result)
+    return exit_code_for_status(result.status or OperationStatus.FALHOU)
+
+
+def _run_op5_apply(plan_path: Path | None) -> int:
+    if plan_path is None:
+        print("Status: BLOQUEADO")
+        print("op5-apply exige --plan <arquivo>.")
+        return 2
+    settings = get_settings().model_copy(
+        update={
+            "DRY_RUN": False,
+            "OP5_PLAN_PATH": plan_path,
+        }
+    )
+    controller = ApplicationController(settings)
+    return _confirmed_pipeline(controller)
+
+
+def _run_op5_audit_global() -> int:
+    settings = get_settings().model_copy(
+        update={
+            "DRY_RUN": True,
+            "APPLY_EXCEL": False,
+            "APPLY_ARCHIVE": False,
+            "OP5_RECONCILIATION_MODE": "audit_global",
+        }
+    )
+    try:
+        payload = run_op5_audit_global(settings)
+    except OperationalBlockError as exc:
+        print("Status: BLOQUEADO")
+        print(exc.user_message)
+        return 2
+    except Exception:
+        print("Status: FALHOU")
+        print("Auditoria global OP5 nao pode ser concluida com seguranca.")
+        return 1
+    status = payload.get("status", OperationStatus.FALHOU.value)
+    print(f"Status: {status}")
+    print(str(payload.get("operation_message") or "Auditoria global OP5 concluida."))
+    return exit_code_for_status(str(status))
 
 
 def _run_logs_audit() -> int:

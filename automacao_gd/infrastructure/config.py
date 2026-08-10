@@ -43,6 +43,9 @@ class Settings(BaseSettings):
     MAX_COMPLETED_TO_PROCESS: int = Field(default=5, ge=0)
     OPTION5_AUTHORIZED_MAX_PROTOCOLS: int = Field(default=5, ge=1, le=60)
     OP5_RECONCILIATION_MODE: str = Field(default="inline_global")
+    OP5_ELIGIBILITY_CACHE_TTL_MINUTES: int = Field(default=30, ge=1, le=1440)
+    OP5_PDF_WORKERS: int = Field(default=1, ge=1, le=4)
+    OP5_PLAN_PATH: Path | None = Field(default=None)
     ENABLE_PORTAL_PAGINATION: bool = Field(default=False)
     MAX_PORTAL_PAGES: int = Field(default=1, ge=0)
     MAX_PROTOCOL_NOT_FOUND_ERRORS: int = Field(default=3, ge=1)
@@ -207,6 +210,12 @@ class Settings(BaseSettings):
     @property
     def logs_dir_path(self) -> Path:
         return self.resolve_path(self.LOGS_DIR)
+
+    @property
+    def op5_plan_path(self) -> Path | None:
+        if self.OP5_PLAN_PATH is None:
+            return None
+        return self.resolve_path(self.OP5_PLAN_PATH)
 
     @property
     def auth_state_path(self) -> Path:
