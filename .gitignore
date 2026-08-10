@@ -49,3 +49,4 @@ Thumbs.db
 # Staging local auditável de candidatas; nunca versionar artefatos.
 /artifacts/release-candidate/
 /outputs/
+/lixeira/

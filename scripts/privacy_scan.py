@@ -134,6 +134,7 @@ _SKIPPED_ROOT_DIRECTORY_NAMES = {
     "build",
     "data",
     "downloads",
+    "lixeira",
     "logs",
     "outputs",
     "profiles",

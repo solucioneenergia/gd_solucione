@@ -31,6 +31,28 @@ Resultado terminal da Etapa 5.1C:
 
 Nenhuma exclusao, movimentacao, compactacao, renomeacao ou arquivamento foi autorizado pela Etapa 5.1. A Etapa 5.2 nao foi iniciada.
 
+## Adendo 2026-08-10 - Etapa 5.2: quarentena local reversivel
+
+Esta etapa autoriza somente a preparacao de refatoracao por auditoria e quarentena local
+reversivel em `lixeira/`, sem exclusao definitiva.
+
+Contratos adicionais:
+
+- `lixeira/` e uma pasta local ignorada pelo Git e nao deve entrar em release, wheel, ZIP ou
+  artefato compartilhavel;
+- scanners de fonte podem ignorar `lixeira/` quando ela estiver na raiz do projeto, pois seu
+  conteudo ja foi removido do caminho ativo e pode conter artefatos locais gerados;
+- scanners de ZIP/wheel continuam obrigados a bloquear qualquer entrada `lixeira/**` que contenha
+  dado operacional, credencial, caminho pessoal ou documento operacional;
+- somente itens regeneraveis e ignorados pelo Git podem ser movidos automaticamente nesta etapa;
+- codigo rastreado, testes, SPECs, ADRs, frontend legado, `src/`, dados operacionais, `.env`,
+  PDFs, planilhas, logs operacionais e perfis de navegador permanecem protegidos;
+- cada movimentacao deve ser registrada em manifesto com origem relativa, destino relativo,
+  classificacao e criterio de reversao.
+
+Itens duvidosos entram apenas como candidatos de refatoracao futura, nao como quarentena
+automatica.
+
 ## Escopo
 
 O inventario deve resolver a raiz canônica do projeto e percorrer somente o escopo interno autorizado. Em Windows, se `git rev-parse --show-toplevel` retornar um caminho com normalizacao Unicode que nao enumere o workspace real, o script operacional deve usar a raiz derivada do proprio arquivo em `scripts/..`, desde que `AGENTS.md` e `automacao_gd/` estejam presentes.

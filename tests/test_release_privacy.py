@@ -258,7 +258,7 @@ def test_privacy_scanner_blocks_unlabeled_protocol_in_markup(tmp_path: Path) -> 
     assert identifier not in json.dumps(report)
 
 
-@pytest.mark.parametrize("ignored_directory", ["node_modules", "data", "outputs"])
+@pytest.mark.parametrize("ignored_directory", ["node_modules", "data", "outputs", "lixeira"])
 def test_tree_privacy_scan_skips_non_source_directories(
     tmp_path: Path, ignored_directory: str
 ) -> None:
@@ -272,6 +272,20 @@ def test_tree_privacy_scan_skips_non_source_directories(
 
     assert report["valid"] is True
     assert report["scanned_files"] == 1
+
+
+def test_quarantined_files_are_still_blocked_inside_release_archive(
+    tmp_path: Path,
+) -> None:
+    identifier = "260" + "9876543"
+    artifact = tmp_path / "release.zip"
+    with zipfile.ZipFile(artifact, "w") as archive:
+        archive.writestr("lixeira/generated/bundle.js", identifier)
+
+    report = scan_archive(artifact)
+
+    assert report["valid"] is False
+    assert report["findings"][0]["path"] == "lixeira/generated/bundle.js"
 
 
 def test_tree_scan_inspects_nested_frontend_source_data_directory(
