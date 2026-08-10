@@ -270,6 +270,8 @@ def test_pipeline_accepts_progress_callback_and_emits_events(
 
 
 def _synthetic_settings(tmp_path: Path) -> SimpleNamespace:
+    workbook_path = tmp_path / "planilha.xlsx"
+    workbook_path.write_bytes(b"synthetic workbook bytes for OP5 plan hash")
     return SimpleNamespace(
         CDP_MODE=True,
         DRY_RUN=True,
@@ -289,7 +291,7 @@ def _synthetic_settings(tmp_path: Path) -> SimpleNamespace:
         pipeline_state_path=tmp_path / "state.json",
         logs_dir_path=tmp_path / "logs",
         downloads_dir_path=tmp_path / "downloads",
-        planilha_path=tmp_path / "planilha.xlsx",
+        planilha_path=workbook_path,
         clientes_root_path=tmp_path / "clientes",
     )
 
