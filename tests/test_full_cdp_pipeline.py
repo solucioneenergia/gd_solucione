@@ -1110,6 +1110,97 @@ def test_collect_across_pages_reports_numeric_target_not_found(monkeypatch) -> N
     assert summary["pagination_stop_reason"] == "last_page_reached"
 
 
+def test_numeric_navigation_to_previous_hidden_page_uses_previous_button(
+    monkeypatch,
+) -> None:
+    state = {"page": 3}
+    previous_clicks = []
+
+    monkeypatch.setattr(cdp_portal_service, "get_active_numeric_page", lambda page: state["page"])
+    monkeypatch.setattr(
+        cdp_portal_service,
+        "read_current_page_table_with_row_handles",
+        lambda page: _page(state["page"] * 10, 2),
+    )
+    monkeypatch.setattr(
+        cdp_portal_service,
+        "find_and_click_next_numeric_page",
+        lambda page, target: {
+            "found": False,
+            "enabled": False,
+            "clicked": False,
+            "target_page_number": target,
+            "numeric_page_links_found": ["2", "3"],
+            "stop_reason": "pagination_numeric_target_not_found",
+        },
+    )
+
+    def fake_previous(page, current_page_number: int) -> dict:
+        previous_clicks.append(current_page_number)
+        state["page"] = current_page_number - 1
+        return {
+            "found": True,
+            "enabled": True,
+            "clicked": True,
+            "current_page_number": current_page_number,
+            "target_page_number": state["page"],
+            "stop_reason": "pagination_previous_clicked",
+        }
+
+    monkeypatch.setattr(
+        cdp_portal_service,
+        "find_and_click_previous_listing_page",
+        fake_previous,
+        raising=False,
+    )
+    monkeypatch.setattr(cdp_portal_service, "_wait_after_pagination_click", lambda page: None)
+
+    result = navigate_to_numeric_page(FakePage(), 1)
+
+    assert result["success"] is True
+    assert result["active_page_after"] == 1
+    assert result["method"] == "recovered_listing_by_reverse_sequential_numeric_page"
+    assert previous_clicks == [3, 2]
+
+
+def test_numeric_navigation_accepts_changed_table_when_active_indicator_is_stale(
+    monkeypatch,
+) -> None:
+    state = {"after_click": False}
+
+    monkeypatch.setattr(cdp_portal_service, "get_active_numeric_page", lambda page: 1)
+    monkeypatch.setattr(
+        cdp_portal_service,
+        "read_current_page_table_with_row_handles",
+        lambda page: _page(50 if state["after_click"] else 0, 2),
+    )
+
+    def fake_click(page, target: int) -> dict:
+        state["after_click"] = True
+        return {
+            "found": True,
+            "enabled": True,
+            "clicked": True,
+            "target_page_number": target,
+            "numeric_page_links_found": ["1", "2"],
+            "stop_reason": "pagination_numeric_page_clicked",
+        }
+
+    monkeypatch.setattr(
+        cdp_portal_service,
+        "find_and_click_next_numeric_page",
+        fake_click,
+    )
+    monkeypatch.setattr(cdp_portal_service, "_wait_after_pagination_click", lambda page: None)
+
+    result = navigate_to_numeric_page(FakePage(), 2)
+
+    assert result["success"] is True
+    assert result["status"] == "recovered_listing_by_numeric_page_unconfirmed_active"
+    assert result["method"] == "recovered_listing_by_numeric_page_unconfirmed_active"
+    assert result["active_page_after"] == 1
+
+
 def test_origin_navigation_pagination_failure_is_logged_as_warning(monkeypatch) -> None:
     warning_calls = []
     error_calls = []

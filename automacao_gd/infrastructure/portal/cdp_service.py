@@ -2131,6 +2131,38 @@ def navigate_to_numeric_page(page, target_page_number: int) -> dict:
                     f"{target}. Motivo: {click_result.get('stop_reason')}"
                 )
                 return result
+            if target < active_before:
+                sequential = _navigate_to_numeric_page_backwards_sequentially(
+                    page,
+                    target_page_number=target,
+                    active_page_before=active_before,
+                    signature_before=signature_before,
+                )
+                result["sequential_navigation"] = sequential
+                result["url_after"] = sequential.get("url_after")
+                if sequential.get("success"):
+                    result.update(
+                        {
+                            "success": True,
+                            "status": "recovered_listing_by_numeric_page",
+                            "method": "recovered_listing_by_reverse_sequential_numeric_page",
+                            "active_page_after": sequential.get("active_page_after"),
+                            "signature_after": sequential.get("signature_after"),
+                            "error": None,
+                        }
+                    )
+                    return result
+                result["status"] = (
+                    sequential.get("status")
+                    or click_result.get("stop_reason")
+                    or "pagination_numeric_target_not_found"
+                )
+                result["error"] = (
+                    sequential.get("error")
+                    or "Pagina numerica de origem nao encontrada: "
+                    f"{target}. Motivo: {click_result.get('stop_reason')}"
+                )
+                return result
             result["error"] = (
                 "Pagina numerica de origem nao encontrada: "
                 f"{target}. Motivo: {click_result.get('stop_reason')}"
@@ -2166,6 +2198,16 @@ def navigate_to_numeric_page(page, target_page_number: int) -> dict:
         result["active_page_after"] = active_after
         result["url_after"] = _safe_page_url(page)
         if active_after != target:
+            if signature_after != signature_before:
+                result.update(
+                    {
+                        "success": True,
+                        "status": "recovered_listing_by_numeric_page_unconfirmed_active",
+                        "method": "recovered_listing_by_numeric_page_unconfirmed_active",
+                        "error": None,
+                    }
+                )
+                return result
             result["status"] = "pagination_active_page_mismatch"
             result["error"] = (
                 f"Pagina ativa apos clique: {active_after}; esperado: {target}."
@@ -2278,6 +2320,95 @@ def _navigate_to_numeric_page_sequentially(
         {
             "success": True,
             "status": "recovered_listing_by_sequential_numeric_page",
+            "error": None,
+        }
+    )
+    return result
+
+
+def _navigate_to_numeric_page_backwards_sequentially(
+    page,
+    *,
+    target_page_number: int,
+    active_page_before: int,
+    signature_before: tuple,
+) -> dict:
+    current_page_number = int(active_page_before)
+    previous_signature = signature_before
+    diagnostics: list[dict] = []
+    result = {
+        "success": False,
+        "status": "pagination_numeric_target_not_found",
+        "method": "reverse_sequential_numeric_page_navigation",
+        "target_page_number": int(target_page_number),
+        "active_page_before": current_page_number,
+        "active_page_after": current_page_number,
+        "signature_after": previous_signature,
+        "diagnostics": diagnostics,
+        "url_after": _safe_page_url(page),
+        "error": None,
+    }
+    while current_page_number > target_page_number:
+        click_result = find_and_click_previous_listing_page(page, current_page_number)
+        diagnostics.append(click_result)
+        if (
+            not click_result.get("found")
+            or not click_result.get("enabled")
+            or not click_result.get("clicked")
+        ):
+            result["status"] = (
+                click_result.get("stop_reason")
+                or "pagination_numeric_target_not_found"
+            )
+            result["error"] = (
+                "Nao foi possivel navegar sequencialmente ate a pagina "
+                f"{target_page_number}. Parou antes da pagina "
+                f"{current_page_number - 1}. Motivo: {result['status']}"
+            )
+            result["url_after"] = _safe_page_url(page)
+            return result
+        _wait_after_pagination_click(page)
+        rows_after = read_current_page_table_with_row_handles(page)
+        signature_after = _listing_rows_signature(rows_after)
+        active_after = get_active_numeric_page(page)
+        result["active_page_after"] = active_after
+        result["signature_after"] = signature_after
+        result["url_after"] = _safe_page_url(page)
+        if active_after is None:
+            result["status"] = "cannot_confirm_active_page"
+            result["error"] = (
+                "Nao foi possivel detectar a pagina ativa apos navegacao "
+                "sequencial reversa."
+            )
+            return result
+        if active_after >= current_page_number:
+            result["status"] = "pagination_active_page_mismatch"
+            result["error"] = (
+                f"Pagina ativa apos clique: {active_after}; esperado menor que "
+                f"{current_page_number}."
+            )
+            return result
+        if signature_after == previous_signature:
+            result["status"] = "pagination_click_no_change"
+            result["error"] = (
+                "Clique sequencial reverso na pagina numerica nao alterou a tabela: "
+                f"{active_after}."
+            )
+            return result
+        current_page_number = active_after
+        previous_signature = signature_after
+
+    if current_page_number != target_page_number:
+        result["status"] = "pagination_active_page_mismatch"
+        result["error"] = (
+            f"Pagina ativa apos navegacao sequencial reversa: {current_page_number}; "
+            f"esperado: {target_page_number}."
+        )
+        return result
+    result.update(
+        {
+            "success": True,
+            "status": "recovered_listing_by_reverse_sequential_numeric_page",
             "error": None,
         }
     )
@@ -2900,6 +3031,31 @@ def find_and_click_next_listing_page(page, current_page_number: int) -> dict:
     return result
 
 
+def find_and_click_previous_listing_page(page, current_page_number: int) -> dict:
+    previous_button = _click_previous_listing_page_diagnostic(page)
+    result = {
+        **previous_button,
+        "mode": "previous_button",
+        "current_page_number": current_page_number,
+        "target_page_number": max(1, int(current_page_number or 1) - 1),
+    }
+    if previous_button.get("clicked"):
+        result["found"] = True
+        result["enabled"] = True
+        result["previous_page_available"] = True
+        result["stop_reason"] = "pagination_previous_clicked"
+        return result
+    if not previous_button.get("found") or not previous_button.get("enabled"):
+        result["found"] = False
+        result["enabled"] = False
+        result["previous_page_available"] = False
+        result["stop_reason"] = (
+            previous_button.get("stop_reason") or "first_page_reached"
+        )
+        return result
+    return result
+
+
 def inspect_next_page_availability(page, current_page_number: int) -> dict:
     target_page_number = int(current_page_number or 0) + 1
     try:
@@ -3165,6 +3321,159 @@ def _click_next_listing_page_diagnostic(page) -> dict:
             "text": None,
             "class_name": None,
             "stop_reason": f"pagination_click_error: {exc}",
+        }
+
+
+def _click_previous_listing_page_diagnostic(page) -> dict:
+    try:
+        result = page.evaluate(
+            """
+            () => {
+              const normalize = (value) => (value || "")
+                .normalize("NFD")
+                .replace(/[\\u0300-\\u036f]/g, "")
+                .toUpperCase()
+                .replace(/\\s+/g, " ")
+                .trim();
+              const labelFor = (element) => [
+                element?.innerText,
+                element?.textContent,
+                element?.value,
+                element?.getAttribute?.("aria-label"),
+                element?.getAttribute?.("title")
+              ].filter(Boolean).join(" ").replace(/\\s+/g, " ").trim();
+              const isDisabled = (element) => {
+                if (!element) return false;
+                const classes = normalize(String(element.className || ""));
+                return Boolean(
+                  element.disabled ||
+                  element.getAttribute("aria-disabled") === "true" ||
+                  element.getAttribute("disabled") !== null ||
+                  classes.includes("DISABLED") ||
+                  classes.includes("UI STATE DISABLED")
+                );
+              };
+              const clickableFor = (element) =>
+                element?.closest?.("a,button,input,[role='button']") || element;
+              const selectors = [
+                ".ui-paginator-prev",
+                ".ui-paginator-previous",
+                "a.ui-paginator-prev",
+                "span.ui-paginator-prev",
+                ".paginate_button.previous",
+                "li.previous a",
+                "a[aria-label*='Anterior']",
+                "a[aria-label*='Previous']",
+                "button[aria-label*='Anterior']",
+                "button[aria-label*='Previous']",
+                "a[title*='Anterior']",
+                "a[title*='Previous']",
+                "button[title*='Anterior']",
+                "button[title*='Previous']",
+                "[class*='paginator'][class*='prev']",
+                "[class*='pagination'][class*='prev']",
+                "[class*='previous']",
+                "[class*='prev']"
+              ];
+              const candidates = [];
+              for (const selector of selectors) {
+                for (const element of Array.from(document.querySelectorAll(selector))) {
+                  candidates.push({ raw: element, selector });
+                }
+              }
+              for (const element of Array.from(document.querySelectorAll(
+                "a,button,input,[role='button'],li,span"
+              ))) {
+                candidates.push({ raw: element, selector: "text-fallback" });
+              }
+              const seen = new Set();
+              let disabledCandidate = null;
+              for (const candidate of candidates) {
+                const raw = candidate.raw;
+                const element = clickableFor(raw);
+                if (!element || seen.has(element)) continue;
+                seen.add(element);
+                const rawText = labelFor(element) || labelFor(raw);
+                const text = normalize(rawText);
+                const classText = normalize(String(element.className || "") + " " + String(raw.className || ""));
+                const isPrevious = text.includes("ANTERIOR") ||
+                  text.includes("PREVIOUS") ||
+                  classText.includes("PREV") ||
+                  classText.includes("PREVIOUS") ||
+                  rawText === "<" ||
+                  rawText === "‹" ||
+                  rawText === "«";
+                if (!isPrevious) continue;
+                const disabled = isDisabled(element) || isDisabled(element.closest("li")) || isDisabled(raw);
+                const details = {
+                  found: true,
+                  enabled: !disabled,
+                  clicked: false,
+                  selector: candidate.selector,
+                  text: rawText,
+                  class_name: String(element.className || raw.className || ""),
+                  stop_reason: disabled ? "pagination_previous_disabled" : null
+                };
+                if (disabled) {
+                  disabledCandidate = disabledCandidate || details;
+                  continue;
+                }
+                element.scrollIntoView({ block: "center", inline: "center" });
+                element.click();
+                details.clicked = true;
+                return details;
+              }
+              if (disabledCandidate) return disabledCandidate;
+              return {
+                found: false,
+                enabled: false,
+                clicked: false,
+                selector: null,
+                text: null,
+                class_name: null,
+                stop_reason: "pagination_previous_not_found"
+              };
+            }
+            """
+        )
+        if isinstance(result, bool):
+            result = {
+                "found": result,
+                "enabled": result,
+                "clicked": result,
+                "selector": "legacy-boolean-evaluate",
+                "text": None,
+                "class_name": None,
+                "stop_reason": None if result else "pagination_previous_not_found",
+            }
+        if not isinstance(result, dict):
+            result = {
+                "found": False,
+                "enabled": False,
+                "clicked": False,
+                "selector": None,
+                "text": None,
+                "class_name": None,
+                "stop_reason": "pagination_previous_not_found",
+            }
+        if result.get("clicked"):
+            logger.info(
+                "Retornando para a pagina anterior da listagem "
+                f"(selector={result.get('selector')}, text={result.get('text')})."
+            )
+        else:
+            logger.info(f"Pagina anterior nao clicada: {result}")
+        return result
+    except (PlaywrightError, AttributeError) as exc:
+        logger.warning(f"Falha ao clicar na pagina anterior: {exc}")
+        return {
+            "found": False,
+            "enabled": False,
+            "clicked": False,
+            "selector": None,
+            "text": None,
+            "class_name": None,
+            "stop_reason": f"pagination_previous_click_error: {exc}",
         }
 
 
