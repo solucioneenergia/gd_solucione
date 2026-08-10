@@ -407,6 +407,55 @@ def test_numeric_pagination_click_uses_exact_visible_locator() -> None:
     assert active_one.clicked is False
 
 
+def test_numeric_pagination_locator_fallback_uses_generic_paginator_selector() -> None:
+    class FakeLink:
+        def __init__(self, text: str, class_name: str = ""):
+            self.text = text
+            self.class_name = class_name
+            self.clicked = False
+
+        def inner_text(self, timeout: int) -> str:
+            return self.text
+
+        def get_attribute(self, name: str, timeout: int) -> str:
+            assert name == "class"
+            return self.class_name
+
+        def click(self, timeout: int) -> None:
+            self.clicked = True
+
+    class FakeLocator:
+        def __init__(self, links: list[FakeLink]):
+            self.links = links
+
+        def count(self) -> int:
+            return len(self.links)
+
+        def nth(self, index: int) -> FakeLink:
+            return self.links[index]
+
+    class FakePage:
+        def __init__(self, target: FakeLink):
+            self.target = target
+            self.selectors: list[str] = []
+
+        def locator(self, selector: str) -> FakeLocator:
+            self.selectors.append(selector)
+            if selector == "[class*='paginator'] span":
+                return FakeLocator([FakeLink("14", "ui-paginator-page"), self.target])
+            return FakeLocator([])
+
+    target_fifteen = FakeLink("15", "ui-paginator-page")
+    page = FakePage(target_fifteen)
+
+    result = _click_numeric_paginator_with_playwright(page, target_page_number=15)
+
+    assert result["clicked"] is True
+    assert result["selector"] == "[class*='paginator'] span"
+    assert target_fifteen.clicked is True
+    assert ".ui-paginator a.ui-paginator-page" in page.selectors
+
+
 def test_download_connection_budget_click_does_not_wait_for_navigation(tmp_path: Path) -> None:
     class FakeDownload:
         suggested_filename = "orcamento.pdf"
@@ -1248,6 +1297,78 @@ def test_navigate_to_numeric_page_returns_already_on_target(monkeypatch) -> None
     assert result["success"] is True
     assert result["status"] == "already_on_target_page"
     assert reads == []
+
+
+def test_navigate_to_numeric_page_steps_until_target_when_direct_link_is_hidden(
+    monkeypatch,
+) -> None:
+    active_page = {"value": 1}
+    clicks = []
+
+    def fake_active_page(page):
+        return active_page["value"]
+
+    def fake_rows(page):
+        return [_row(f"26000010{active_page['value']:02d}")]
+
+    def fake_direct_numeric_click(page, current_page_number: int):
+        assert current_page_number == 3
+        return {
+            "found": False,
+            "enabled": False,
+            "clicked": False,
+            "selector": None,
+            "text": "4",
+            "mode": "numeric",
+            "current_page_number": 3,
+            "target_page_number": 4,
+            "numeric_page_links_found": ["1", "2", "3"],
+            "numeric_page_links_count": 3,
+            "stop_reason": "pagination_numeric_target_not_found",
+        }
+
+    def fake_next_page(page, current_page_number: int):
+        clicks.append(current_page_number + 1)
+        active_page["value"] = current_page_number + 1
+        return {
+            "found": True,
+            "enabled": True,
+            "clicked": True,
+            "selector": "div.paginator > a",
+            "text": str(current_page_number + 1),
+            "mode": "numeric",
+            "current_page_number": current_page_number,
+            "target_page_number": current_page_number + 1,
+            "numeric_page_links_found": ["1", "2", "3", "4"],
+            "numeric_page_links_count": 4,
+            "stop_reason": "pagination_numeric_page_clicked",
+        }
+
+    monkeypatch.setattr(cdp_portal_service, "get_active_numeric_page", fake_active_page)
+    monkeypatch.setattr(
+        cdp_portal_service,
+        "read_current_page_table_with_row_handles",
+        fake_rows,
+    )
+    monkeypatch.setattr(
+        cdp_portal_service,
+        "find_and_click_next_numeric_page",
+        fake_direct_numeric_click,
+    )
+    monkeypatch.setattr(
+        cdp_portal_service,
+        "find_and_click_next_listing_page",
+        fake_next_page,
+    )
+    monkeypatch.setattr(cdp_portal_service, "_wait_after_pagination_click", lambda page: None)
+
+    result = navigate_to_numeric_page(FakePage(), 4)
+
+    assert result["success"] is True
+    assert result["status"] == "recovered_listing_by_numeric_page"
+    assert result["method"] == "recovered_listing_by_sequential_numeric_page"
+    assert result["active_page_after"] == 4
+    assert clicks == [2, 3, 4]
 
 
 def test_origin_page_navigates_to_numeric_page_when_protocol_is_not_visible(

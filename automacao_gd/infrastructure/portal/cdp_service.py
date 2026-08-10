@@ -2099,6 +2099,38 @@ def navigate_to_numeric_page(page, target_page_number: int) -> dict:
         result["url_after"] = _safe_page_url(page)
 
         if not click_result.get("found"):
+            if target > active_before:
+                sequential = _navigate_to_numeric_page_sequentially(
+                    page,
+                    target_page_number=target,
+                    active_page_before=active_before,
+                    signature_before=signature_before,
+                )
+                result["sequential_navigation"] = sequential
+                result["url_after"] = sequential.get("url_after")
+                if sequential.get("success"):
+                    result.update(
+                        {
+                            "success": True,
+                            "status": "recovered_listing_by_numeric_page",
+                            "method": "recovered_listing_by_sequential_numeric_page",
+                            "active_page_after": sequential.get("active_page_after"),
+                            "signature_after": sequential.get("signature_after"),
+                            "error": None,
+                        }
+                    )
+                    return result
+                result["status"] = (
+                    sequential.get("status")
+                    or click_result.get("stop_reason")
+                    or "pagination_numeric_target_not_found"
+                )
+                result["error"] = (
+                    sequential.get("error")
+                    or "Pagina numerica de origem nao encontrada: "
+                    f"{target}. Motivo: {click_result.get('stop_reason')}"
+                )
+                return result
             result["error"] = (
                 "Pagina numerica de origem nao encontrada: "
                 f"{target}. Motivo: {click_result.get('stop_reason')}"
@@ -2161,6 +2193,95 @@ def navigate_to_numeric_page(page, target_page_number: int) -> dict:
         result["error"] = str(exc)
         result["url_after"] = _safe_page_url(page)
         return result
+
+
+def _navigate_to_numeric_page_sequentially(
+    page,
+    *,
+    target_page_number: int,
+    active_page_before: int,
+    signature_before: tuple,
+) -> dict:
+    current_page_number = int(active_page_before)
+    previous_signature = signature_before
+    diagnostics: list[dict] = []
+    result = {
+        "success": False,
+        "status": "pagination_numeric_target_not_found",
+        "method": "sequential_numeric_page_navigation",
+        "target_page_number": int(target_page_number),
+        "active_page_before": current_page_number,
+        "active_page_after": current_page_number,
+        "signature_after": previous_signature,
+        "diagnostics": diagnostics,
+        "url_after": _safe_page_url(page),
+        "error": None,
+    }
+    while current_page_number < target_page_number:
+        click_result = find_and_click_next_listing_page(page, current_page_number)
+        diagnostics.append(click_result)
+        if (
+            not click_result.get("found")
+            or not click_result.get("enabled")
+            or not click_result.get("clicked")
+        ):
+            result["status"] = (
+                click_result.get("stop_reason")
+                or "pagination_numeric_target_not_found"
+            )
+            result["error"] = (
+                "Nao foi possivel navegar sequencialmente ate a pagina "
+                f"{target_page_number}. Parou antes da pagina "
+                f"{current_page_number + 1}. Motivo: {result['status']}"
+            )
+            result["url_after"] = _safe_page_url(page)
+            return result
+        _wait_after_pagination_click(page)
+        rows_after = read_current_page_table_with_row_handles(page)
+        signature_after = _listing_rows_signature(rows_after)
+        active_after = get_active_numeric_page(page)
+        result["active_page_after"] = active_after
+        result["signature_after"] = signature_after
+        result["url_after"] = _safe_page_url(page)
+        if active_after is None:
+            result["status"] = "cannot_confirm_active_page"
+            result["error"] = (
+                "Nao foi possivel detectar a pagina ativa apos navegacao "
+                "sequencial."
+            )
+            return result
+        if active_after <= current_page_number:
+            result["status"] = "pagination_active_page_mismatch"
+            result["error"] = (
+                f"Pagina ativa apos clique: {active_after}; esperado maior que "
+                f"{current_page_number}."
+            )
+            return result
+        if signature_after == previous_signature:
+            result["status"] = "pagination_click_no_change"
+            result["error"] = (
+                "Clique sequencial na pagina numerica nao alterou a tabela: "
+                f"{active_after}."
+            )
+            return result
+        current_page_number = active_after
+        previous_signature = signature_after
+
+    if current_page_number != target_page_number:
+        result["status"] = "pagination_active_page_mismatch"
+        result["error"] = (
+            f"Pagina ativa apos navegacao sequencial: {current_page_number}; "
+            f"esperado: {target_page_number}."
+        )
+        return result
+    result.update(
+        {
+            "success": True,
+            "status": "recovered_listing_by_sequential_numeric_page",
+            "error": None,
+        }
+    )
+    return result
 
 
 def ensure_request_origin_page(
@@ -2691,41 +2812,58 @@ def find_and_click_next_numeric_page(page, current_page_number: int) -> dict:
 
 def _click_numeric_paginator_with_playwright(page, *, target_page_number: int) -> dict:
     target_text = str(target_page_number)
+    selectors = (
+        ".ui-paginator a.ui-paginator-page",
+        "[class*='paginator'] a",
+        "[class*='paginator'] button",
+        "[class*='paginator'] [role='button']",
+        "[class*='paginator'] span",
+        "[class*='pagination'] a",
+        "[class*='pagination'] button",
+        "[class*='pagination'] [role='button']",
+        "[class*='pagination'] span",
+    )
+    last_selector = selectors[0]
     try:
-        links = page.locator(".ui-paginator a.ui-paginator-page")
-        count = links.count()
-        for index in range(count):
-            link = links.nth(index)
-            try:
-                text = (link.inner_text(timeout=1_000) or "").strip()
-                class_name = str(
-                    link.get_attribute("class", timeout=1_000) or ""
-                )
-            except (PlaywrightError, AttributeError):
-                continue
-            if text != target_text:
-                continue
-            if "ui-state-active" in class_name or "ui-state-disabled" in class_name:
-                continue
-            link.click(timeout=DETAIL_TIMEOUT_MS)
-            return {
-                "clicked": True,
-                "selector": ".ui-paginator a.ui-paginator-page",
-                "index": index,
-                "text": text,
-                "class_name": class_name,
-                "stop_reason": "pagination_numeric_page_clicked",
-            }
+        for selector in selectors:
+            last_selector = selector
+            links = page.locator(selector)
+            count = links.count()
+            for index in range(count):
+                link = links.nth(index)
+                try:
+                    text = (link.inner_text(timeout=1_000) or "").strip()
+                    class_name = str(
+                        link.get_attribute("class", timeout=1_000) or ""
+                    )
+                except (PlaywrightError, AttributeError):
+                    continue
+                if text != target_text:
+                    continue
+                if (
+                    "ui-state-active" in class_name
+                    or "ui-state-disabled" in class_name
+                ):
+                    continue
+                link.click(timeout=DETAIL_TIMEOUT_MS)
+                return {
+                    "clicked": True,
+                    "selector": selector,
+                    "index": index,
+                    "text": text,
+                    "class_name": class_name,
+                    "stop_reason": "pagination_numeric_page_clicked",
+                }
         return {
             "clicked": False,
-            "selector": ".ui-paginator a.ui-paginator-page",
+            "selector": last_selector,
             "text": target_text,
             "stop_reason": "pagination_numeric_locator_target_not_found",
         }
     except (PlaywrightError, AttributeError) as exc:
         return {
             "clicked": False,
-            "selector": ".ui-paginator a.ui-paginator-page",
+            "selector": last_selector,
             "text": target_text,
             "stop_reason": f"pagination_numeric_locator_click_error: {exc}",
         }
