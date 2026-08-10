@@ -43,6 +43,7 @@ from automacao_gd.domain.errors import PreflightBlockedError
 
 PIPELINE_JSON_REPORT_NAME = "pipeline_cdp_completo.json"
 PIPELINE_MARKDOWN_REPORT_NAME = "pipeline_cdp_completo.md"
+OP5_PLAN_JSON_REPORT_NAME = "op5_plan_latest.json"
 DOWNLOAD_JSON_REPORT_NAME = "downloads_orcamentos_concluidos_cdp.json"
 PIPELINE_SHAREABLE_JSON_REPORT_NAME = "pipeline_cdp_shareable.json"
 PIPELINE_SHAREABLE_MARKDOWN_REPORT_NAME = "pipeline_cdp_shareable.md"
@@ -157,6 +158,7 @@ class FrozenDryRunPlan:
     frozen_batch: FrozenProtocolBatch
     frozen_pdf_scope: FrozenPdfScope
     source_path: Path
+    source_kind: str = "legacy_pipeline_report"
 
 
 def default_batch_authorization_policy() -> BatchAuthorizationPolicy:
@@ -505,6 +507,13 @@ def _run_full_cdp_pipeline_locked(
         payload["markdown_report_path"] = str(markdown_path)
         logger.info(f"Relatorio consolidado JSON salvo em: {json_path}")
         logger.info(f"Relatorio consolidado Markdown salvo em: {markdown_path}")
+    if settings.DRY_RUN and payload["status"] == OperationStatus.SUCESSO.value:
+        plan_path = _persist_op5_plan(settings.logs_dir_path, payload)
+        payload["op5_plan_path"] = str(plan_path)
+        payload["op5_plan_source_kind"] = "explicit_op5_plan"
+        payload["op5_plan_digest"] = _file_sha256(plan_path)
+        logger.info(f"Plano OP5 congelado salvo em: {plan_path}")
+        _persist_pipeline_reports(settings.logs_dir_path, payload)
     if payload["status"] == OperationStatus.SUCESSO.value:
         progress.finish_success("Pipeline concluído.")
     else:
@@ -689,6 +698,9 @@ def _download_error_summary(settings, message: str) -> dict:
         "max_completed_to_process": settings.MAX_COMPLETED_TO_PROCESS,
         "enable_portal_pagination": settings.ENABLE_PORTAL_PAGINATION,
         "max_portal_pages": settings.MAX_PORTAL_PAGES,
+        "op5_reconciliation_mode": getattr(
+            settings, "OP5_RECONCILIATION_MODE", "inline_global"
+        ),
         "reprocess_existing_pdfs": settings.REPROCESS_EXISTING_PDFS,
         "process_existing_after_skip": settings.PROCESS_EXISTING_AFTER_SKIP,
         "total_pages_read": 0,
@@ -795,11 +807,65 @@ def attach_frozen_pdf_scope(download_summary: dict, scope: FrozenPdfScope) -> No
     }
 
 
+def _persist_op5_plan(logs_dir: Path, payload: dict) -> Path:
+    plan = _build_op5_plan_payload(payload)
+    path = logs_dir / OP5_PLAN_JSON_REPORT_NAME
+    atomic_write_json(path, plan)
+    return path
+
+
+def _build_op5_plan_payload(payload: dict) -> dict:
+    download = deepcopy(payload.get("download") or {})
+    processing = payload.get("processing") or {}
+    return {
+        "schema_version": 1,
+        "created_at": datetime.now().isoformat(timespec="seconds"),
+        "source_report_path": payload.get("json_report_path")
+        or str(Path(str(payload.get("download_report_path") or ""))),
+        "dry_run": True,
+        "status": payload.get("status"),
+        "requested_batch_limit": payload.get("requested_batch_limit"),
+        "authorized_batch_limit": payload.get("authorized_batch_limit"),
+        "authorization_scope": payload.get("authorization_scope"),
+        "strong_confirmation_contract": payload.get("strong_confirmation_contract"),
+        "workbook_sha256": _file_sha256(Path(str(payload.get("workbook_path") or ""))),
+        "workbook_path": payload.get("workbook_path"),
+        "apply_excel": payload.get("apply_excel"),
+        "apply_archive": payload.get("apply_archive"),
+        "total_selected": payload.get("total_selected", 0),
+        "total_updates_planned": payload.get("total_updates_planned", 0),
+        "total_updates_applied": payload.get("total_updates_applied", 0),
+        "total_errors": payload.get("total_errors", 0),
+        "frozen_batch": download.get("frozen_batch"),
+        "frozen_pdf_scope": download.get("frozen_pdf_scope"),
+        "planned_excel_actions": _planned_excel_actions(processing),
+        "download": download,
+    }
+
+
+def _planned_excel_actions(processing_summary: dict) -> list[dict[str, str]]:
+    actions: list[dict[str, str]] = []
+    for item in processing_summary.get("results") or []:
+        if not isinstance(item, dict):
+            continue
+        protocol = str(item.get("protocol") or "")
+        excel_status = item.get("excel_status")
+        excel_status = excel_status if isinstance(excel_status, dict) else {}
+        action = str(item.get("action") or excel_status.get("action") or "")
+        if protocol and action:
+            actions.append({"protocol": protocol, "action": action})
+    return actions
+
+
 def load_frozen_dry_run_plan(
     settings: Settings,
     authorization: BatchAuthorization,
 ) -> FrozenDryRunPlan:
-    path = settings.logs_dir_path / PIPELINE_JSON_REPORT_NAME
+    path = settings.logs_dir_path / OP5_PLAN_JSON_REPORT_NAME
+    source_kind = "explicit_op5_plan"
+    if not path.is_file():
+        path = settings.logs_dir_path / PIPELINE_JSON_REPORT_NAME
+        source_kind = "legacy_pipeline_report"
     if not path.is_file():
         raise PreflightBlockedError(
             code="FROZEN_DRY_RUN_PLAN_REQUIRED",
@@ -821,6 +887,8 @@ def load_frozen_dry_run_plan(
         ) from exc
 
     _validate_dry_run_plan_payload(payload, authorization)
+    if source_kind == "explicit_op5_plan":
+        _validate_explicit_op5_plan_payload(payload, settings)
     download_summary = deepcopy(payload.get("download") or {})
     frozen_batch = _frozen_batch_from_dry_run_report(download_summary, authorization)
     frozen_pdf_scope = _frozen_pdf_scope_from_dry_run_report(download_summary)
@@ -833,6 +901,7 @@ def load_frozen_dry_run_plan(
 
     download_summary["reused_from_dry_run_plan"] = True
     download_summary["dry_run_plan_source"] = str(path)
+    download_summary["dry_run_plan_source_kind"] = source_kind
     download_summary["cdp_selection_skipped"] = True
     download_summary["run_error"] = None
     _refresh_processing_selection_totals(download_summary)
@@ -841,6 +910,7 @@ def load_frozen_dry_run_plan(
         frozen_batch=frozen_batch,
         frozen_pdf_scope=frozen_pdf_scope,
         source_path=path,
+        source_kind=source_kind,
     )
 
 
@@ -882,6 +952,42 @@ def _validate_dry_run_plan_payload(
         raise _dry_run_plan_block(
             "Escopo de autorização diverge do lote congelado no dry-run.",
             technical_cause="authorization_scope_mismatch",
+        )
+
+
+def _validate_explicit_op5_plan_payload(payload: dict, settings: Settings) -> None:
+    if int(payload.get("schema_version") or 0) != 1:
+        raise _op5_plan_block(
+            "Plano OP5 possui versao de schema invalida.",
+            code="OP5_PLAN_INVALID",
+            technical_cause="schema_version_invalid",
+        )
+    if not isinstance(payload.get("planned_excel_actions"), list):
+        raise _op5_plan_block(
+            "Plano OP5 nao contem acoes Excel planejadas.",
+            code="OP5_PLAN_INVALID",
+            technical_cause="planned_actions_missing",
+        )
+    expected_workbook_sha = str(payload.get("workbook_sha256") or "")
+    if len(expected_workbook_sha) != 64:
+        raise _op5_plan_block(
+            "Plano OP5 nao contem SHA-256 valido da planilha.",
+            code="OP5_PLAN_INVALID",
+            technical_cause="workbook_sha_missing",
+        )
+    try:
+        current_workbook_sha = _file_sha256(settings.planilha_path)
+    except OSError as exc:
+        raise _op5_plan_block(
+            "Planilha do plano OP5 nao pode ser lida para validacao.",
+            code="OP5_PLAN_INVALID",
+            technical_cause=type(exc).__name__,
+        ) from exc
+    if current_workbook_sha != expected_workbook_sha:
+        raise _op5_plan_block(
+            "Planilha mudou desde o dry-run; gere novo plano antes da execucao real.",
+            code="OP5_PLAN_WORKBOOK_CHANGED",
+            technical_cause="workbook_sha_mismatch",
         )
 
 
@@ -964,6 +1070,20 @@ def _validate_frozen_pdf_scope_from_plan(scope: FrozenPdfScope) -> None:
             "Digest do lote de PDFs congelado não confere.",
             technical_cause="pdf_scope_digest_mismatch",
         )
+
+
+def _op5_plan_block(
+    message: str,
+    *,
+    code: str,
+    technical_cause: str,
+) -> PreflightBlockedError:
+    return PreflightBlockedError(
+        code=code,
+        user_message=message,
+        stage="plano OP5 congelado",
+        technical_cause=technical_cause,
+    )
 
 
 def _dry_run_plan_block(

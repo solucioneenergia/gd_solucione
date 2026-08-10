@@ -262,7 +262,14 @@ def collect_completed_requests_across_pages(page, settings) -> list[PortalSolici
     ]
 
 
-def _collect_completed_listing_rows_across_pages(page, settings) -> dict:
+def _collect_completed_listing_rows_across_pages(
+    page,
+    settings,
+    *,
+    state_store=None,
+    max_completed: int | None = None,
+    skip_already_completed: bool = True,
+) -> dict:
     pagination_enabled = bool(getattr(settings, "ENABLE_PORTAL_PAGINATION", False))
     max_pages = int(getattr(settings, "MAX_PORTAL_PAGES", 0) or 0)
     logger.info(
@@ -390,6 +397,18 @@ def _collect_completed_listing_rows_across_pages(page, settings) -> dict:
             f"Pagina {current_active_page} lida no portal: "
             f"{len(rows)} linhas, assinatura={signature}."
         )
+        if _incremental_batch_limit_reached(
+            page_rows,
+            settings,
+            state_store=state_store,
+            max_completed=max_completed,
+            skip_already_completed=skip_already_completed,
+        ):
+            pagination_stop_reason = "incremental_batch_limit_reached"
+            pagination_complete = False
+            last_page_confirmed = False
+            next_page_available_after_stop = True
+            break
 
         if max_pages > 0 and len(page_rows) >= max_pages:
             availability = inspect_next_page_availability(page, current_active_page)
@@ -496,6 +515,39 @@ def _collect_completed_listing_rows_across_pages(page, settings) -> dict:
         }
     )
     return summary
+
+
+def _op5_reconciliation_mode(settings) -> str:
+    return str(getattr(settings, "OP5_RECONCILIATION_MODE", "inline_global") or "inline_global").strip().lower()
+
+
+def _is_batch_fast_mode(settings) -> bool:
+    return _op5_reconciliation_mode(settings) == "batch_fast"
+
+
+def _incremental_batch_limit_reached(
+    page_rows: list[list[dict]],
+    settings,
+    *,
+    state_store=None,
+    max_completed: int | None = None,
+    skip_already_completed: bool = True,
+) -> bool:
+    if not _is_batch_fast_mode(settings):
+        return False
+    limit = int(max_completed if max_completed is not None else getattr(settings, "MAX_COMPLETED_TO_PROCESS", 0) or 0)
+    if limit <= 0:
+        return False
+    completed_records = consolidate_listing_page_rows(page_rows)["completed_records"]
+    selection = select_eligible_completed_requests(
+        completed_requests=completed_records,
+        pipeline_state=state_store,
+        max_completed_to_process=limit,
+        skip_already_completed=skip_already_completed,
+        force_reprocess_protocols=getattr(settings, "force_reprocess_protocols", set()),
+        settings=settings,
+    )
+    return len(selection["selected_records"]) >= limit
 
 
 def consolidate_listing_page_rows(
@@ -1134,7 +1186,18 @@ def download_completed_budgets_from_current_page(
             _refresh_download_totals(summary)
             return summary
 
-    collection = _collect_completed_listing_rows_across_pages(page, settings)
+    batch_fast_mode = _is_batch_fast_mode(settings)
+    active_reconciliation_callback = None if batch_fast_mode else reconciliation_callback
+    if batch_fast_mode:
+        collection = _collect_completed_listing_rows_across_pages(
+            page,
+            settings,
+            state_store=state_store,
+            max_completed=limit,
+            skip_already_completed=skip_already_completed,
+        )
+    else:
+        collection = _collect_completed_listing_rows_across_pages(page, settings)
     if collection["pages_read"] == 0 or collection["total_rows"] == 0:
         raise RuntimeError("A pagina atual nao contem a tabela 'Minhas Solicitacoes'.")
     listing_url = listing_url or page.url
@@ -1157,19 +1220,22 @@ def download_completed_budgets_from_current_page(
         "pagination_mode": collection.get("pagination_mode"),
     }
     reconciliation_pre_limit = None
-    if reconciliation_callback is not None:
+    if active_reconciliation_callback is not None:
         logger.info(
             "Reconciliação global Portal x planilha iniciada antes do limite: "
             f"{len(completed_records)} registros concluídos."
         )
-        reconciliation_pre_limit = reconciliation_callback(
+        reconciliation_pre_limit = active_reconciliation_callback(
             "before_limit",
             completed_records,
             [],
             reconciliation_context,
         )
         logger.info("Reconciliação global Portal x planilha concluída antes do limite.")
-    if collection.get("pagination_complete") is False:
+    if collection.get("pagination_complete") is False and not (
+        batch_fast_mode
+        and collection.get("pagination_stop_reason") == "incremental_batch_limit_reached"
+    ):
         summary.update(
             {
                 "finished_at": datetime.now().isoformat(timespec="seconds"),
@@ -1238,14 +1304,20 @@ def download_completed_budgets_from_current_page(
         settings=settings,
     )
     selected_records = selection["selected_records"]
-    if reconciliation_callback is not None:
-        summary["reconciliation"] = reconciliation_callback(
+    if active_reconciliation_callback is not None:
+        summary["reconciliation"] = active_reconciliation_callback(
             "after_selection",
             completed_records,
             [record.protocol for record in selected_records],
             reconciliation_context,
         )
         summary["reconciliation_pre_limit"] = reconciliation_pre_limit
+    elif batch_fast_mode:
+        summary["reconciliation_mode"] = "batch_fast"
+        summary["reconciliation"] = {
+            "metrics_scope": "BATCH_FAST",
+            "set_reconciliation_authoritative": False,
+        }
     skipped_completed = selection["skipped_completed"]
     eligible_records = selection["eligible_records"]
     duplicate_skips = [

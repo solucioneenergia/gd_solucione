@@ -42,6 +42,7 @@ class Settings(BaseSettings):
     ALLOW_REMOTE_CDP: bool = Field(default=False)
     MAX_COMPLETED_TO_PROCESS: int = Field(default=5, ge=0)
     OPTION5_AUTHORIZED_MAX_PROTOCOLS: int = Field(default=5, ge=1, le=60)
+    OP5_RECONCILIATION_MODE: str = Field(default="inline_global")
     ENABLE_PORTAL_PAGINATION: bool = Field(default=False)
     MAX_PORTAL_PAGES: int = Field(default=1, ge=0)
     MAX_PROTOCOL_NOT_FOUND_ERRORS: int = Field(default=3, ge=1)
@@ -139,6 +140,16 @@ class Settings(BaseSettings):
         if normalized not in {"visual_only", "full", "validate_only"}:
             raise ValueError(
                 "WORKBOOK_REPAIR_MODE deve ser visual_only, full ou validate_only."
+            )
+        return normalized
+
+    @field_validator("OP5_RECONCILIATION_MODE", mode="before")
+    @classmethod
+    def validate_op5_reconciliation_mode(cls, value: str | None) -> str:
+        normalized = str(value or "inline_global").strip().lower()
+        if normalized not in {"inline_global", "batch_fast", "audit_global"}:
+            raise ValueError(
+                "OP5_RECONCILIATION_MODE deve ser inline_global, batch_fast ou audit_global."
             )
         return normalized
 

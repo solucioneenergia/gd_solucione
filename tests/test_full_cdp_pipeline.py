@@ -806,6 +806,124 @@ def test_download_blocks_operational_lot_when_reconciliation_pagination_incomple
     assert reconciliation_calls and reconciliation_calls[0][0] == "before_limit"
 
 
+def test_batch_fast_collect_stops_when_requested_limit_is_reached(monkeypatch) -> None:
+    class Settings(DummySettings):
+        ENABLE_PORTAL_PAGINATION = True
+        MAX_PORTAL_PAGES = 15
+        MAX_COMPLETED_TO_PROCESS = 2
+        OP5_RECONCILIATION_MODE = "batch_fast"
+
+    active_pages = iter([1, 2])
+    reads: list[int] = []
+    clicks: list[int] = []
+
+    monkeypatch.setattr(cdp_portal_service, "get_active_numeric_page", lambda page: next(active_pages))
+
+    def fake_read(page):
+        page_number = len(reads) + 1
+        reads.append(page_number)
+        return _page(1 if page_number == 1 else 3, 2)
+
+    monkeypatch.setattr(cdp_portal_service, "read_current_page_table_with_row_handles", fake_read)
+
+    def fake_next(page, current_page_number: int):
+        clicks.append(current_page_number)
+        return {
+            "found": True,
+            "enabled": True,
+            "clicked": True,
+            "selector": ".ui-paginator-next",
+            "text": str(current_page_number + 1),
+            "class_name": "",
+            "stop_reason": None,
+        }
+
+    monkeypatch.setattr(cdp_portal_service, "find_and_click_next_listing_page", fake_next)
+    monkeypatch.setattr(cdp_portal_service, "_wait_after_pagination_click", lambda page: None)
+
+    summary = _collect_completed_listing_rows_across_pages(FakePage(), Settings())
+
+    assert summary["pages_read"] == 1
+    assert summary["total_completed"] == 2
+    assert summary["pagination_stop_reason"] == "incremental_batch_limit_reached"
+    assert summary["pagination_complete"] is False
+    assert clicks == []
+
+
+def test_batch_fast_does_not_require_global_reconciliation_before_lot(monkeypatch) -> None:
+    class Settings(DummySettings):
+        ENABLE_PORTAL_PAGINATION = True
+        MAX_PORTAL_PAGES = 15
+        MAX_COMPLETED_TO_PROCESS = 2
+        OP5_RECONCILIATION_MODE = "batch_fast"
+
+    records = [PortalSolicitation(protocol="2601", status="CONCLUIDA", page_number=1)]
+    reconciliation_calls = []
+
+    monkeypatch.setattr(cdp_portal_service, "get_settings", lambda: Settings())
+    monkeypatch.setattr(
+        cdp_portal_service,
+        "ensure_listing_starts_on_page_one",
+        lambda page: {
+            "success": True,
+            "status": "already_on_first_page",
+            "initial_active_page": 1,
+            "active_page_after": 1,
+        },
+    )
+    monkeypatch.setattr(
+        cdp_portal_service,
+        "_collect_completed_listing_rows_across_pages",
+        lambda page, settings, **_kwargs: {
+            "pages_read": 1,
+            "total_rows": 2,
+            "total_completed": 1,
+            "completed_records": records,
+            "duplicates_skipped": [],
+            "pagination_warnings": [],
+            "pagination_enabled": True,
+            "pagination_complete": False,
+            "last_page_confirmed": False,
+            "last_page_number": None,
+            "pages_visited": [1],
+            "next_page_available_after_stop": True,
+            "pagination_stop_reason": "incremental_batch_limit_reached",
+            "pagination_next_found": True,
+            "pagination_safety_cap": 15,
+            "pagination_click_attempts": 0,
+            "pagination_mode": "numeric",
+            "pagination_current_page": 1,
+            "pagination_target_page": 2,
+            "pagination_numeric_links_found": ["2"],
+            "pagination_diagnostics": [],
+        },
+    )
+    monkeypatch.setattr(
+        cdp_portal_service,
+        "ensure_request_origin_page",
+        lambda *args, **kwargs: {
+            "success": False,
+            "error": "synthetic stop before real portal detail",
+            "status": "protocol_not_found_on_origin_page",
+            "row": None,
+        },
+    )
+
+    summary = download_completed_budgets_from_current_page(
+        FakePage(),
+        reconciliation_callback=lambda *args: reconciliation_calls.append(args) or {},
+    )
+
+    assert summary.get("aborted") is not True
+    assert summary["pagination_stop_reason"] == "incremental_batch_limit_reached"
+    assert summary["reconciliation_mode"] == "batch_fast"
+    assert summary["reconciliation"] == {
+        "metrics_scope": "BATCH_FAST",
+        "set_reconciliation_authoritative": False,
+    }
+    assert reconciliation_calls == []
+
+
 def test_collect_uses_real_active_page_number(monkeypatch) -> None:
     class Settings(DummySettings):
         ENABLE_PORTAL_PAGINATION = True
