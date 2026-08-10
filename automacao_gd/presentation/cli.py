@@ -36,6 +36,7 @@ from automacao_gd.application.full_pipeline import (
     StrongConfirmationError,
     batch_authorization_policy_from_settings,
     build_option5_strong_confirmation,
+    run_op5_archive_plan,
     run_op5_audit_global,
     validate_option5_strong_confirmation,
     validate_requested_batch_limit,
@@ -84,6 +85,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             return _run_op5_plan(args.limit, protocols=args.protocols)
         if args.command == "op5-apply":
             return _run_op5_apply(args.plan)
+        if args.command == "op5-archive-plan":
+            return _run_op5_archive_plan(args.plan)
         return _run_op5_audit_global()
 
     ensure_directories()
@@ -141,6 +144,7 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
             "logs-sanitize",
             "op5-plan",
             "op5-apply",
+            "op5-archive-plan",
             "op5-audit-global",
         ),
         help="executa auditoria histórica ou aplica um plano previamente aprovado",
@@ -222,6 +226,24 @@ def _run_op5_apply(plan_path: Path | None) -> int:
     )
     controller = ApplicationController(settings)
     result = _confirmed_pipeline(controller)
+    print_operation_summary("pipeline", result)
+    return exit_code_for_status(result.status or OperationStatus.FALHOU)
+
+
+def _run_op5_archive_plan(plan_path: Path | None) -> int:
+    if plan_path is None:
+        print("Status: BLOQUEADO")
+        print("op5-archive-plan exige --plan <arquivo>.")
+        return 2
+    settings = get_settings().model_copy(
+        update={
+            "DRY_RUN": True,
+            "APPLY_EXCEL": True,
+            "APPLY_ARCHIVE": True,
+            "OP5_RECONCILIATION_MODE": "archive_only_local",
+        }
+    )
+    result = run_op5_archive_plan(settings, source_plan_path=plan_path)
     print_operation_summary("pipeline", result)
     return exit_code_for_status(result.status or OperationStatus.FALHOU)
 

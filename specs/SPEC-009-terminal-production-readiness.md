@@ -352,6 +352,32 @@ APLICAR OPÇÃO 5 COM CONCLUSÃO EM <N> PROTOCOLOS
 - Esta preparacao nao autoriza executar producao; a execucao real acima de 5 exige nova autorizacao
   humana apos gates verdes e preflight/dry-run operacional.
 
+## Plano local de arquivamento OP5
+
+Status: aceito para otimizar retomadas de arquivamento apos um plano OP5 ja congelado.
+
+Quando a fase de Excel ja foi validada/aplicada e o operador precisar validar ou aplicar apenas
+arquivamento de PDFs ja selecionados, o sistema deve oferecer um comando explicito:
+
+```text
+python app.py op5-archive-plan --plan <arquivo-op5>
+```
+
+Contrato verificavel:
+
+- O comando deve ser sempre dry-run e local.
+- O comando nao deve abrir Portal, CDP ou Edge, nao deve baixar PDF e nao deve reselecionar lote.
+- O comando deve reutilizar exclusivamente o lote congelado e o escopo de PDFs do plano informado.
+- O SHA-256 de cada PDF congelado deve ser revalidado antes de gerar novo plano.
+- O SHA-256 da planilha deve ser recalculado no momento do novo plano, porque a planilha pode ter
+  mudado apos a fase de Excel anterior.
+- O novo plano deve registrar `apply_archive=true`, `archive_only_local=true`,
+  `cdp_selection_skipped=true` e a origem do plano anterior.
+- Se houver erro real, pendencia de pasta, PDF ausente/alterado ou lote divergente, o comando deve
+  terminar bloqueado/parcial e nao deve gerar plano aplicavel.
+- A execucao real continua sendo feita por `op5-apply --plan <plano-gerado>`, com confirmacao forte
+  vinculada ao mesmo limite do lote e lock global real.
+
 ## Evidencias de homologacao
 
 Devem registrar baseline Git, RED/GREEN, comandos, versoes Python, scanners, SHA final, estado

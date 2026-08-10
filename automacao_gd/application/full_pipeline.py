@@ -4,6 +4,7 @@ from copy import deepcopy
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
+from types import SimpleNamespace
 from uuid import uuid4
 
 from playwright.sync_api import Error as PlaywrightError
@@ -22,6 +23,7 @@ from automacao_gd.infrastructure.locking import ExecutionLock, ExecutionLockErro
 from automacao_gd.infrastructure.persistence.atomic import atomic_write_json, atomic_write_text
 from automacao_gd.infrastructure.state.pipeline_state import PipelineStateStore
 from automacao_gd.application.contracts import (
+    OperationResult,
     OperationStatus,
     ProgressCallback,
     ProgressTracker,
@@ -334,6 +336,196 @@ def run_full_cdp_pipeline(
             stage="lock global de execução",
             technical_cause=exc.code,
         ) from exc
+
+
+def run_op5_archive_plan(
+    settings: Settings,
+    *,
+    source_plan_path: Path | None = None,
+) -> OperationResult:
+    """Build a local archive-only OP5 plan from an existing frozen dry-run plan."""
+    started_at = datetime.now()
+    try:
+        source_payload, resolved_source_path = _read_op5_source_plan(
+            settings,
+            source_plan_path=source_plan_path,
+        )
+        requested_limit = _requested_limit_from_plan(source_payload)
+        authorization = validate_requested_batch_limit(
+            requested_limit,
+            batch_authorization_policy_from_settings(settings),
+        )
+        plan = _load_archive_only_source_plan(
+            settings=settings,
+            source_payload=source_payload,
+            source_path=resolved_source_path,
+            authorization=authorization,
+        )
+        archive_settings = _archive_plan_settings(settings, authorization)
+        pdf_paths = _pdf_paths_for_processing(plan.summary)
+        plan.frozen_pdf_scope.validate()
+        processing_summary = process_downloaded_pdfs(
+            downloads_root=archive_settings.downloads_dir_path,
+            workbook_path=archive_settings.planilha_path,
+            clientes_root=archive_settings.clientes_root_path,
+            dry_run=True,
+            pdf_paths=pdf_paths,
+            apply_excel=True,
+            apply_archive=True,
+            allowed_protocols=set(plan.frozen_batch.protocols),
+        )
+        download_report_path = _save_download_summary(
+            archive_settings.logs_dir_path,
+            plan.summary,
+        )
+        payload = build_pipeline_payload(
+            settings=archive_settings,
+            started_at=started_at,
+            finished_at=datetime.now(),
+            download_summary=plan.summary,
+            processing_summary=processing_summary,
+            download_report_path=download_report_path,
+            pdf_paths=pdf_paths,
+            authorization=authorization,
+            execution_id=None,
+            global_lock_acquired=False,
+        )
+        payload["archive_only_local"] = True
+        payload["source_plan_path"] = str(resolved_source_path)
+        payload["op5_plan_source_kind"] = "archive_only_local_source_plan"
+        if _archive_only_plan_has_blockers(processing_summary):
+            payload["status"] = OperationStatus.BLOQUEADO.value
+            payload["operation_message"] = (
+                "Plano local de arquivamento bloqueado; resolva pendencias antes "
+                "da execucao real."
+            )
+        _persist_pipeline_reports(archive_settings.logs_dir_path, payload)
+        if payload["status"] == OperationStatus.SUCESSO.value:
+            plan_path = _persist_op5_plan(archive_settings.logs_dir_path, payload)
+            payload["op5_plan_path"] = str(plan_path)
+            payload["op5_plan_digest"] = _file_sha256(plan_path)
+            _persist_pipeline_reports(archive_settings.logs_dir_path, payload)
+        return OperationResult(
+            success=payload["status"] == OperationStatus.SUCESSO.value,
+            message=str(payload.get("operation_message") or ""),
+            payload=payload,
+            status=payload["status"],
+        )
+    except PreflightBlockedError as exc:
+        payload = {
+            "status": OperationStatus.BLOQUEADO.value,
+            "operation_message": exc.user_message,
+            "error_code": exc.code,
+            "stage": exc.stage,
+            "archive_only_local": True,
+        }
+        return OperationResult(
+            success=False,
+            message=exc.user_message,
+            payload=payload,
+            status=OperationStatus.BLOQUEADO,
+        )
+
+
+def _read_op5_source_plan(
+    settings: Settings,
+    *,
+    source_plan_path: Path | None,
+) -> tuple[dict, Path]:
+    path = Path(source_plan_path) if source_plan_path is not None else settings.logs_dir_path / OP5_PLAN_JSON_REPORT_NAME
+    if not path.is_file():
+        raise _op5_plan_block(
+            "Plano OP5 de origem nao encontrado.",
+            code="OP5_PLAN_INVALID",
+            technical_cause="source_plan_missing",
+        )
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise _op5_plan_block(
+            "Plano OP5 de origem nao pode ser lido com seguranca.",
+            code="OP5_PLAN_INVALID",
+            technical_cause=type(exc).__name__,
+        ) from exc
+    return payload, path
+
+
+def _requested_limit_from_plan(payload: dict) -> int:
+    download = payload.get("download") or {}
+    frozen_batch = download.get("frozen_batch") or payload.get("frozen_batch") or {}
+    return int(
+        payload.get("requested_batch_limit")
+        or frozen_batch.get("requested_limit")
+        or payload.get("total_selected")
+        or 0
+    )
+
+
+def _load_archive_only_source_plan(
+    *,
+    settings: Settings,
+    source_payload: dict,
+    source_path: Path,
+    authorization: BatchAuthorization,
+) -> FrozenDryRunPlan:
+    _validate_dry_run_plan_payload(source_payload, authorization)
+    download_summary = deepcopy(source_payload.get("download") or {})
+    frozen_batch = _frozen_batch_from_dry_run_report(download_summary, authorization)
+    frozen_pdf_scope = _frozen_pdf_scope_from_dry_run_report(download_summary)
+    _validate_frozen_pdf_scope_from_plan(frozen_pdf_scope)
+    if tuple(artifact.protocol for artifact in frozen_pdf_scope.artifacts) != frozen_batch.protocols:
+        raise _dry_run_plan_block(
+            "Protocolos dos PDFs congelados divergem do lote aprovado no dry-run.",
+            technical_cause="pdf_scope_protocol_mismatch",
+        )
+    download_summary["archive_only_local"] = True
+    download_summary["reused_from_dry_run_plan"] = True
+    download_summary["dry_run_plan_source"] = str(source_path)
+    download_summary["dry_run_plan_source_kind"] = "archive_only_local_source_plan"
+    download_summary["cdp_selection_skipped"] = True
+    download_summary["download_step_skipped"] = True
+    download_summary["run_error"] = None
+    _refresh_processing_selection_totals(download_summary)
+    return FrozenDryRunPlan(
+        summary=download_summary,
+        frozen_batch=frozen_batch,
+        frozen_pdf_scope=frozen_pdf_scope,
+        source_path=source_path,
+        source_kind="archive_only_local_source_plan",
+    )
+
+
+def _archive_plan_settings(settings: Settings, authorization: BatchAuthorization):
+    updates = {
+        "DRY_RUN": True,
+        "APPLY_EXCEL": True,
+        "APPLY_ARCHIVE": True,
+        "MAX_COMPLETED_TO_PROCESS": authorization.requested_batch_limit,
+        "OP5_RECONCILIATION_MODE": "archive_only_local",
+    }
+    if hasattr(settings, "model_copy"):
+        return settings.model_copy(update=updates)
+    data = {
+        name: getattr(settings, name)
+        for name in dir(settings)
+        if not name.startswith("_") and not callable(getattr(settings, name))
+    }
+    data.update(updates)
+    return SimpleNamespace(**data)
+
+
+def _archive_only_plan_has_blockers(processing_summary: dict) -> bool:
+    return any(
+        int(processing_summary.get(key, 0) or 0) > 0
+        for key in (
+            "total_errors",
+            "total_pending_review",
+            "total_updates_planned",
+            "total_updates_applied",
+            "total_real_extraction_errors",
+            "total_real_application_errors",
+        )
+    )
 
 
 def _run_full_cdp_pipeline_locked(
@@ -994,6 +1186,8 @@ def _build_op5_plan_payload(payload: dict) -> dict:
         "workbook_path": payload.get("workbook_path"),
         "apply_excel": payload.get("apply_excel"),
         "apply_archive": payload.get("apply_archive"),
+        "archive_only_local": bool(payload.get("archive_only_local")),
+        "source_plan_path": payload.get("source_plan_path"),
         "total_selected": payload.get("total_selected", 0),
         "total_updates_planned": payload.get("total_updates_planned", 0),
         "total_updates_applied": payload.get("total_updates_applied", 0),

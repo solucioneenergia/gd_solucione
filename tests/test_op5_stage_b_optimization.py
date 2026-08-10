@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import hashlib
+import json
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from types import SimpleNamespace
@@ -193,6 +195,9 @@ def test_cli_accepts_explicit_option5_commands() -> None:
     plan = _parse_args(["op5-plan", "--limit", "20", "--protocols", "2600001048,2600001049"])
     apply = _parse_args(["op5-apply", "--plan", "data/logs/op5_plan_latest.json"])
     audit = _parse_args(["op5-audit-global"])
+    archive_plan = _parse_args(
+        ["op5-archive-plan", "--plan", "data/logs/op5_plan_latest.json"]
+    )
 
     assert plan.command == "op5-plan"
     assert plan.limit == 20
@@ -200,6 +205,165 @@ def test_cli_accepts_explicit_option5_commands() -> None:
     assert apply.command == "op5-apply"
     assert apply.plan == Path("data/logs/op5_plan_latest.json")
     assert audit.command == "op5-audit-global"
+    assert archive_plan.command == "op5-archive-plan"
+    assert archive_plan.plan == Path("data/logs/op5_plan_latest.json")
+
+
+def test_op5_archive_plan_reuses_frozen_scope_without_cdp_and_refreshes_workbook_sha(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    logs = tmp_path / "logs"
+    downloads = tmp_path / "downloads"
+    workbook = tmp_path / "planilha.xlsx"
+    clientes = tmp_path / "clientes"
+    logs.mkdir()
+    downloads.mkdir()
+    clientes.mkdir()
+    workbook.write_bytes(b"planilha-atual-apos-excel")
+    protocols = ("2600001048", "2600001049")
+    pdfs = []
+    for protocol in protocols:
+        pdf = downloads / protocol / f"Orcamento_de_Conexao_{protocol}.pdf"
+        pdf.parent.mkdir(parents=True)
+        pdf.write_bytes(f"%PDF-1.4 sintético {protocol}".encode("utf-8"))
+        pdfs.append(pdf)
+    artifacts = [
+        {
+            "protocol": protocol,
+            "path": str(pdf.resolve(strict=True)),
+            "sha256": hashlib.sha256(pdf.read_bytes()).hexdigest(),
+        }
+        for protocol, pdf in zip(protocols, pdfs, strict=True)
+    ]
+    digest = hashlib.sha256(
+        "\n".join(f"{item['protocol']}:{item['sha256']}" for item in artifacts).encode(
+            "utf-8"
+        )
+    ).hexdigest()
+    frozen_batch = {
+        "requested_limit": 2,
+        "authorized_limit": 60,
+        "authorization_scope": full_pipeline.CONTROLLED_PRODUCTION_UP_TO_60_AUTHORIZATION_SCOPE,
+        "protocols": list(protocols),
+        "unique_before_limit": 2,
+        "dropped_by_limit": 0,
+        "duplicate_protocols_in_frozen_batch": 0,
+        "protocols_added_after_freeze": 0,
+    }
+    source_plan = {
+        "schema_version": 1,
+        "dry_run": True,
+        "status": OperationStatus.SUCESSO.value,
+        "requested_batch_limit": 2,
+        "authorized_batch_limit": 60,
+        "authorization_scope": full_pipeline.CONTROLLED_PRODUCTION_UP_TO_60_AUTHORIZATION_SCOPE,
+        "workbook_sha256": "0" * 64,
+        "workbook_path": str(workbook),
+        "apply_excel": True,
+        "apply_archive": False,
+        "total_errors": 0,
+        "download": {
+            "run_error": None,
+            "total_selected": 2,
+            "total_completed": 2,
+            "selected_protocols": [{"protocol": protocol} for protocol in protocols],
+            "results": [
+                {
+                    "protocol": protocol,
+                    "download_status": "existing_pdf_after_skip",
+                    "process_pdf_path": str(pdf),
+                    "selected_by_global_limit": True,
+                    "selected_for_processing": True,
+                }
+                for protocol, pdf in zip(protocols, pdfs, strict=True)
+            ],
+            "frozen_batch_created": True,
+            "frozen_batch": frozen_batch,
+            "frozen_pdf_scope": {"digest": digest, "artifacts": artifacts},
+        },
+    }
+    source_plan_path = logs / "op5_source_plan.json"
+    source_plan_path.write_text(json.dumps(source_plan), encoding="utf-8")
+    settings = SimpleNamespace(
+        DRY_RUN=True,
+        APPLY_EXCEL=True,
+        APPLY_ARCHIVE=True,
+        MAX_COMPLETED_TO_PROCESS=2,
+        OPTION5_AUTHORIZED_MAX_PROTOCOLS=60,
+        OP5_RECONCILIATION_MODE="archive_only_local",
+        ENABLE_PORTAL_PAGINATION=True,
+        MAX_PORTAL_PAGES=15,
+        REPROCESS_EXISTING_PDFS=False,
+        PROCESS_EXISTING_AFTER_SKIP=True,
+        RESUME_PIPELINE=True,
+        SKIP_ALREADY_COMPLETED=True,
+        CACHE_CLIENT_FOLDER_LOOKUP=True,
+        force_reprocess_protocols=set(),
+        RESET_PIPELINE_STATE=False,
+        CDP_ENDPOINT="http://127.0.0.1:9222",
+        downloads_dir_path=downloads,
+        logs_dir_path=logs,
+        planilha_path=workbook,
+        clientes_root_path=clientes,
+    )
+    captured: list[dict] = []
+
+    def forbidden_download(*_args, **_kwargs):
+        raise AssertionError("op5-archive-plan nao pode chamar CDP/download")
+
+    def fake_processing(**kwargs):
+        captured.append(kwargs)
+        return {
+            "dry_run": True,
+            "apply_excel": True,
+            "apply_archive": True,
+            "total_pdfs": 2,
+            "total_pdfs_analyzed": 2,
+            "total_technically_approved": 2,
+            "total_safe_protocols": 2,
+            "total_success": 2,
+            "total_errors": 0,
+            "total_updates_planned": 0,
+            "total_updates_applied": 0,
+            "total_excel_updated": 0,
+            "total_archived": 0,
+            "total_pending_review": 0,
+            "results": [
+                {
+                    "success": True,
+                    "protocol": protocol,
+                    "pdf_path": str(pdf),
+                    "excel_status": {"success": True, "action": "skipped_excel_already_updated"},
+                    "archive_status": {
+                        "success": True,
+                        "skipped": True,
+                        "simulated": True,
+                        "action": "simulation_only",
+                    },
+                    "archive_match_type": "entrada_date_folder",
+                }
+                for protocol, pdf in zip(protocols, pdfs, strict=True)
+            ],
+        }
+
+    monkeypatch.setattr(full_pipeline, "_run_download_step", forbidden_download)
+    monkeypatch.setattr(full_pipeline, "process_downloaded_pdfs", fake_processing)
+
+    result = full_pipeline.run_op5_archive_plan(settings, source_plan_path=source_plan_path)
+
+    assert result.status is OperationStatus.SUCESSO
+    assert captured
+    assert captured[0]["dry_run"] is True
+    assert captured[0]["apply_archive"] is True
+    assert captured[0]["allowed_protocols"] == set(protocols)
+    plan = json.loads((logs / full_pipeline.OP5_PLAN_JSON_REPORT_NAME).read_text(encoding="utf-8"))
+    assert plan["apply_archive"] is True
+    assert plan["archive_only_local"] is True
+    assert plan["workbook_sha256"] == hashlib.sha256(workbook.read_bytes()).hexdigest()
+    assert plan["download"]["archive_only_local"] is True
+    assert plan["download"]["cdp_selection_skipped"] is True
+    assert plan["download"]["dry_run_plan_source"] == str(source_plan_path)
 
 
 def test_cli_op5_plan_passes_target_protocols_to_settings(
