@@ -221,7 +221,9 @@ def _run_op5_apply(plan_path: Path | None) -> int:
         }
     )
     controller = ApplicationController(settings)
-    return _confirmed_pipeline(controller)
+    result = _confirmed_pipeline(controller)
+    print_operation_summary("pipeline", result)
+    return exit_code_for_status(result.status or OperationStatus.FALHOU)
 
 
 def _run_op5_audit_global() -> int:

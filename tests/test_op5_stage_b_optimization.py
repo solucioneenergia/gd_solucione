@@ -229,6 +229,30 @@ def test_cli_op5_plan_passes_target_protocols_to_settings(
     assert captured[0].OP5_TARGET_PROTOCOLS == "2600001048,2600001049"
 
 
+def test_cli_op5_apply_returns_numeric_exit_code_and_prints_summary(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    settings = SimpleNamespace(
+        model_copy=lambda update: SimpleNamespace(**update),
+    )
+    result = SimpleNamespace(status=OperationStatus.SUCESSO, payload={})
+    printed: list[tuple[str, object]] = []
+
+    monkeypatch.setattr(cli, "get_settings", lambda: settings)
+    monkeypatch.setattr(cli, "_confirmed_pipeline", lambda _controller: result)
+    monkeypatch.setattr(
+        cli,
+        "print_operation_summary",
+        lambda label, operation_result: printed.append((label, operation_result)),
+    )
+
+    exit_code = cli._run_op5_apply(tmp_path / "op5-plan.json")
+
+    assert exit_code == 0
+    assert printed == [("pipeline", result)]
+
+
 def test_pipeline_download_step_passes_effective_settings(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
