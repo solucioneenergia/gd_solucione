@@ -361,3 +361,31 @@ def test_reconciliation_callback_reuses_cache_for_same_workbook_and_portal_set(
     assert calls == ["recompute"]
     assert first["reconciliation_cache_hit"] is False
     assert second["reconciliation_cache_hit"] is True
+
+
+def test_audit_global_portal_context_excludes_model_objects() -> None:
+    from automacao_gd.domain.models import PortalSolicitation
+
+    context = full_pipeline._audit_global_portal_context(
+        {
+            "pages_read": 1,
+            "total_rows": 50,
+            "total_completed": 1,
+            "pagination_stop_reason": "last_page_reached",
+            "completed_records": [
+                PortalSolicitation(
+                    protocol="2600001048",
+                    client_name="CLIENTE SINTETICO LTDA",
+                    status="CONCLUIDA",
+                )
+            ],
+            "results": [{"protocol": "2600001048"}],
+        }
+    )
+
+    assert context == {
+        "pages_read": 1,
+        "total_rows": 50,
+        "total_completed": 1,
+        "pagination_stop_reason": "last_page_reached",
+    }

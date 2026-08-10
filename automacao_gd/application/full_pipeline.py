@@ -652,7 +652,7 @@ def run_op5_audit_global(settings: Settings | None = None) -> dict:
             "before_limit",
             list(listing_summary.get("completed_records") or []),
             [],
-            listing_summary,
+            _audit_global_portal_context(listing_summary),
         )
     except PlaywrightError as exc:
         return {
@@ -714,6 +714,30 @@ def _persist_eligibility_cache_if_applicable(settings, download_summary: dict) -
         "eligibility_cache_record_count": len(payload.get("records") or []),
         "eligibility_cache_structural_hash": payload.get("structural_hash"),
     }
+
+
+def _audit_global_portal_context(listing_summary: dict) -> dict:
+    allowed_keys = {
+        "pages_read",
+        "total_rows",
+        "total_completed",
+        "pagination_enabled",
+        "pagination_complete",
+        "last_page_confirmed",
+        "last_page_number",
+        "next_page_available_after_stop",
+        "pagination_safety_cap",
+        "pages_visited",
+        "pagination_stop_reason",
+        "pagination_next_found",
+        "pagination_click_attempts",
+        "pagination_mode",
+        "pagination_current_page",
+        "pagination_target_page",
+        "pagination_numeric_links_found",
+        "pagination_warnings",
+    }
+    return {key: listing_summary[key] for key in allowed_keys if key in listing_summary}
 
 
 def _reconciliation_callback(settings):
