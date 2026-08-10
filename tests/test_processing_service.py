@@ -64,6 +64,38 @@ def test_critical_simulation_issues_ignores_individual_technical_pending() -> No
     assert critical == [results[1]]
 
 
+def test_critical_simulation_issues_ignores_excel_already_updated_noop() -> None:
+    results = [
+        {
+            "success": True,
+            "action": "skipped_excel_already_updated",
+            "error": "Protocolo ja estava atualizado na planilha.",
+            "excel_status": {
+                "success": False,
+                "can_write": False,
+                "skipped": False,
+                "action": "skipped_excel_already_updated",
+                "error": "Protocolo ja estava atualizado na planilha.",
+            },
+        },
+        {
+            "success": True,
+            "action": "update_existing",
+            "error": None,
+            "excel_status": {
+                "success": True,
+                "can_write": True,
+                "skipped": False,
+                "action": "update_existing",
+            },
+        },
+    ]
+
+    critical = _critical_simulation_issues(results, apply_excel=True)
+
+    assert critical == []
+
+
 def test_skipped_excel_status_is_success_without_write_permission() -> None:
     status = _skipped_excel_status("123", dry_run=True)
 
@@ -83,6 +115,92 @@ def test_count_archived_ignores_dry_run_and_skipped_status() -> None:
     assert _count_archived(results, dry_run=True, apply_archive=True) == 0
     assert _count_archived(results, dry_run=False, apply_archive=False) == 0
     assert _count_archived(results, dry_run=False, apply_archive=True) == 1
+
+
+def test_real_application_subset_skips_excel_already_updated_noops(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    noop_pdf = tmp_path / "Orcamento_de_Conexao_2600000001.pdf"
+    write_pdf = tmp_path / "Orcamento_de_Conexao_2600000002.pdf"
+    noop_pdf.write_bytes(b"%PDF-1.4\n%%EOF")
+    write_pdf.write_bytes(b"%PDF-1.4\n%%EOF")
+    simulation_results = [
+        {
+            "success": True,
+            "pdf_path": str(noop_pdf),
+            "protocol": "2600000001",
+            "action": "skipped_excel_already_updated",
+            "error": "Protocolo ja estava atualizado na planilha.",
+            "excel_status": {
+                "success": False,
+                "can_write": False,
+                "skipped": False,
+                "action": "skipped_excel_already_updated",
+                "error": "Protocolo ja estava atualizado na planilha.",
+            },
+        },
+        {
+            "success": True,
+            "pdf_path": str(write_pdf),
+            "protocol": "2600000002",
+            "action": "update_existing",
+            "error": None,
+            "excel_status": {
+                "success": True,
+                "can_write": True,
+                "skipped": False,
+                "action": "update_existing",
+            },
+        },
+    ]
+    applied: list[Path] = []
+
+    def fake_process_single_pdf(
+        pdf_path: Path,
+        *_args: object,
+        **_kwargs: object,
+    ) -> dict:
+        applied.append(pdf_path)
+        return {
+            "success": True,
+            "pdf_path": str(pdf_path),
+            "protocol": "2600000002",
+            "action": "update_existing",
+            "excel_status": {
+                "success": True,
+                "can_write": True,
+                "skipped": False,
+                "action": "update_existing",
+            },
+            "excel_effect": "applied",
+            "archive_effect": "not_applied",
+            "state_effect": "persisted",
+        }
+
+    monkeypatch.setattr(
+        processing_service,
+        "_process_single_pdf",
+        fake_process_single_pdf,
+    )
+
+    results = processing_service._apply_processable_subset_from_simulation(
+        pdfs=[noop_pdf, write_pdf],
+        simulation_results=simulation_results,
+        workbook_path=tmp_path / "planilha-sintetica.xlsx",
+        clientes_root=tmp_path / "clientes-sinteticos",
+        backup_path=tmp_path / "backup-sintetico.xlsx",
+        apply_excel=True,
+        apply_archive=False,
+        state_store=None,
+    )
+
+    assert applied == [write_pdf]
+    assert results[0]["protocol"] == "2600000001"
+    assert results[0]["processing_phase"] == "simulation_only"
+    assert results[0]["real_run_skipped_reason"] == "excel_already_updated"
+    assert results[1]["protocol"] == "2600000002"
+    assert results[1]["processing_phase"] == "application"
 
 
 def test_processing_uses_per_model_equipment_quantities(

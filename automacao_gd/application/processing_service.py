@@ -1549,6 +1549,8 @@ def _critical_simulation_issues(results: list[dict], apply_excel: bool) -> list[
     for item in results:
         if _is_protocol_pending_review(item):
             continue
+        if _is_protocol_no_change(item):
+            continue
         excel_status = item.get("excel_status", {})
         if item.get("error"):
             critical.append(item)
@@ -1575,7 +1577,11 @@ def _is_protocol_no_change(item: dict) -> bool:
 
 
 def _is_protocol_safe_or_no_change(item: dict, apply_excel: bool) -> bool:
-    if _is_protocol_pending_review(item) or item.get("error"):
+    if _is_protocol_pending_review(item):
+        return False
+    if _is_protocol_no_change(item):
+        return True
+    if item.get("error"):
         return False
     if not apply_excel:
         return True
@@ -1618,11 +1624,11 @@ def _apply_processable_subset_from_simulation(
     for pdf_path in pdfs:
         key = str(Path(pdf_path).resolve(strict=False))
         simulation_item = simulation_by_path.get(key)
-        if simulation_item is not None and not _is_protocol_safe_or_no_change(
-            simulation_item,
-            apply_excel,
-        ):
-            continue
+        if simulation_item is not None:
+            if _is_protocol_no_change(simulation_item):
+                continue
+            if not _is_protocol_safe_or_no_change(simulation_item, apply_excel):
+                continue
         real_result = _process_single_pdf(
             pdf_path,
             workbook_path,
@@ -1647,7 +1653,11 @@ def _apply_processable_subset_from_simulation(
             "Resultado de simulacao nao localizado para o protocolo.",
         ))
         simulation_item["processing_phase"] = "simulation_only"
-        simulation_item["real_run_skipped_reason"] = "protocol_not_safe_to_apply"
+        simulation_item["real_run_skipped_reason"] = (
+            "excel_already_updated"
+            if _is_protocol_no_change(simulation_item)
+            else "protocol_not_safe_to_apply"
+        )
         results.append(simulation_item)
     return results
 
@@ -1761,6 +1771,7 @@ def _processing_metrics(results: list[dict], dry_run: bool, apply_excel: bool) -
         for item in results
         if item.get("error")
         and not _is_protocol_pending_review(item)
+        and not _is_protocol_no_change(item)
         and not _is_protocol_blocked_by_batch_policy(item)
         and not _is_protocol_application_error(item)
     ]
@@ -1769,6 +1780,7 @@ def _processing_metrics(results: list[dict], dry_run: bool, apply_excel: bool) -
         for item in results
         if item.get("error")
         and not _is_protocol_pending_review(item)
+        and not _is_protocol_no_change(item)
         and not _is_protocol_blocked_by_batch_policy(item)
         and not _is_protocol_safe_or_no_change(item, apply_excel)
     ]
@@ -1813,6 +1825,8 @@ def _is_protocol_blocked_by_batch_policy(item: dict) -> bool:
 
 
 def _is_protocol_application_error(item: dict) -> bool:
+    if _is_protocol_no_change(item):
+        return False
     excel_status = item.get("excel_status") or {}
     archive_status = item.get("archive_status") or {}
     return bool(excel_status.get("error") or archive_status.get("error"))

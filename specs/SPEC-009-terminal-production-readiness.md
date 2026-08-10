@@ -334,6 +334,11 @@ APLICAR OPÇÃO 5 COM CONCLUSÃO EM <N> PROTOCOLOS
   deve consultar pastas de clientes e nao deve bloquear atualizacao de Excel por causa de pasta de
   cliente. O resultado deve registrar `archive_effect=not_applied` e
   `archive_reason=APPLY_ARCHIVE=false`.
+- Na transicao de dry-run para execucao real, itens com `action=skipped_excel_already_updated`
+  ou `excel_status.action=skipped_excel_already_updated` sao no-op seguro: nao devem contar como
+  erro critico, erro real de aplicacao ou protocolo sem permissao de gravacao. A aplicacao real
+  deve executar somente itens com escrita planejada (`insert_new_chronological` ou
+  `update_existing`) e preservar os ja atualizados como `simulation_only`/no-change.
 - Relatorios devem registrar `requested_batch_limit=N`, `authorized_batch_limit=M`,
   `authorization_scope=CONTROLLED_PRODUCTION_OPTION5_UP_TO_60` quando M for maior que 5,
   e totais de selecionados/excluidos.
