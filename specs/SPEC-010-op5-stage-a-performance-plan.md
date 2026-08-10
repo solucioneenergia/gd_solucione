@@ -148,6 +148,13 @@ Se a paginação terminar antes de N elegíveis, o lote menor pode prosseguir em
 o relatório registre o motivo e a quantidade efetiva. Em execução real, o plano congelado define
 o escopo; não há nova seleção.
 
+Ao processar um lote congelado, a navegação de retorno para a página/linha de origem deve
+reaplicar a página registrada no item selecionado. Se o diagnóstico JavaScript da paginação
+retornar `pagination_numeric_target_not_found`, mas listar o número alvo em
+`numeric_page_links_found`, o adaptador CDP deve tentar o clique exato via locator Playwright antes
+de declarar falha. A falha só pode ser registrada como `pagination_numeric_target_not_found` depois
+desse fallback.
+
 ### RF-005 — Pré-seleção local
 
 Antes de abrir detalhe ou baixar PDF, o lote rápido deve usar estado local disponível para

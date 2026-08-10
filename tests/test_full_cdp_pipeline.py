@@ -313,6 +313,53 @@ def test_numeric_pagination_click_reports_target_page() -> None:
     assert diagnostic["numeric_page_links_found"] == ["1", "2", "3"]
 
 
+def test_numeric_pagination_uses_locator_fallback_when_target_link_was_seen(
+    monkeypatch,
+) -> None:
+    fallback_calls = []
+
+    class NumericPage:
+        def evaluate(self, script: str, target_page_number: int) -> dict:
+            return {
+                "found": False,
+                "enabled": False,
+                "clicked": False,
+                "selector": None,
+                "text": str(target_page_number),
+                "class_name": None,
+                "mode": "numeric",
+                "current_page_number": target_page_number - 1,
+                "target_page_number": target_page_number,
+                "numeric_page_links_found": ["6", "7", "8", "9", "10", "11", "12", "13", "14", "15"],
+                "numeric_page_links_count": 10,
+                "stop_reason": "pagination_numeric_target_not_found",
+            }
+
+    def fake_locator_click(page, *, target_page_number: int) -> dict:
+        fallback_calls.append(target_page_number)
+        return {
+            "clicked": True,
+            "selector": ".ui-paginator a.ui-paginator-page",
+            "index": 9,
+            "text": str(target_page_number),
+            "stop_reason": "pagination_numeric_page_clicked",
+        }
+
+    monkeypatch.setattr(
+        cdp_portal_service,
+        "_click_numeric_paginator_with_playwright",
+        fake_locator_click,
+    )
+
+    diagnostic = find_and_click_next_numeric_page(NumericPage(), 14)
+
+    assert fallback_calls == [15]
+    assert diagnostic["found"] is True
+    assert diagnostic["enabled"] is True
+    assert diagnostic["clicked"] is True
+    assert diagnostic["stop_reason"] == "pagination_numeric_page_clicked"
+
+
 def test_numeric_pagination_click_uses_exact_visible_locator() -> None:
     class FakeLink:
         def __init__(self, text: str, class_name: str = ""):

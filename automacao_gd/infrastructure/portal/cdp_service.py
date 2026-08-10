@@ -2623,6 +2623,30 @@ def find_and_click_next_numeric_page(page, current_page_number: int) -> dict:
                     or result.get("stop_reason")
                     or "pagination_numeric_click_failed"
                 )
+        if (
+            isinstance(result, dict)
+            and not result.get("found")
+            and str(target_page_number)
+            in {str(link) for link in result.get("numeric_page_links_found", [])}
+        ):
+            locator_click = _click_numeric_paginator_with_playwright(
+                page,
+                target_page_number=target_page_number,
+            )
+            result["locator_click"] = locator_click
+            result["clicked"] = bool(locator_click.get("clicked"))
+            if result["clicked"]:
+                result["found"] = True
+                result["enabled"] = True
+                result["stop_reason"] = "pagination_numeric_page_clicked"
+                result["selector"] = locator_click.get("selector") or result.get("selector")
+                result["text"] = locator_click.get("text") or result.get("text")
+            else:
+                result["stop_reason"] = (
+                    locator_click.get("stop_reason")
+                    or result.get("stop_reason")
+                    or "pagination_numeric_target_not_found"
+                )
         if not isinstance(result, dict):
             result = {
                 "found": False,
