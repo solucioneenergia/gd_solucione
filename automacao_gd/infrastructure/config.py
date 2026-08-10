@@ -41,6 +41,7 @@ class Settings(BaseSettings):
     CDP_ENDPOINT: str = Field(default="http://127.0.0.1:9222")
     ALLOW_REMOTE_CDP: bool = Field(default=False)
     MAX_COMPLETED_TO_PROCESS: int = Field(default=5, ge=0)
+    OPTION5_AUTHORIZED_MAX_PROTOCOLS: int = Field(default=5, ge=1, le=60)
     ENABLE_PORTAL_PAGINATION: bool = Field(default=False)
     MAX_PORTAL_PAGES: int = Field(default=1, ge=0)
     MAX_PROTOCOL_NOT_FOUND_ERRORS: int = Field(default=3, ge=1)

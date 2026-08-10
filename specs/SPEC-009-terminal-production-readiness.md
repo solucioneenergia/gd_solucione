@@ -302,6 +302,40 @@ arquivado automaticamente.
 - Job Windows remoto e assinatura de artefato dependem de infraestrutura externa.
 - Piloto real depende de autorizacao posterior e operador responsavel.
 
+## Extensao controlada OP5 ate 60 — preparacao, sem execucao automatica
+
+Status: proposta para preparacao tecnica apos validacao operacional de lotes 1, 3 e 5.
+
+O limite padrao de producao da opcao 5 permanece 5 protocolos. A ampliacao para qualquer
+quantidade ate 60 protocolos deve ser opt-in por configuracao explicita e nao pode ocorrer por
+alteracao silenciosa de `MAX_COMPLETED_TO_PROCESS`.
+
+Contrato verificavel:
+
+- `OPTION5_AUTHORIZED_MAX_PROTOCOLS` default = 5.
+- `OPTION5_AUTHORIZED_MAX_PROTOCOLS` pode autorizar no maximo 60.
+- `MAX_COMPLETED_TO_PROCESS` pode solicitar qualquer valor entre 1 e
+  `OPTION5_AUTHORIZED_MAX_PROTOCOLS`.
+- `MAX_COMPLETED_TO_PROCESS=50` sem `OPTION5_AUTHORIZED_MAX_PROTOCOLS>=50` deve continuar
+  bloqueado antes de preflight, Portal/CDP, download, workbook ou backup.
+- `MAX_COMPLETED_TO_PROCESS=61` deve permanecer bloqueado mesmo com configuracao explicita.
+- Com autorizacao explicita, a frase forte deve ser exatamente:
+
+```text
+APLICAR OPÇÃO 5 COM CONCLUSÃO EM <N> PROTOCOLOS
+```
+
+- `N` deve ser o limite solicitado validado, nao o maximo autorizado.
+- `SIM`, frase parcial ou frase de outro limite permanecem bloqueadas.
+- O lock global neutro `data/locks/real_run_execution.lock` continua obrigatorio.
+- O lote congelado deve limitar exatamente aos N primeiros protocolos elegiveis unicos e marcar
+  os demais como `excluded_by_global_limit`.
+- Relatorios devem registrar `requested_batch_limit=N`, `authorized_batch_limit=M`,
+  `authorization_scope=CONTROLLED_PRODUCTION_OPTION5_UP_TO_60` quando M for maior que 5,
+  e totais de selecionados/excluidos.
+- Esta preparacao nao autoriza executar producao; a execucao real acima de 5 exige nova autorizacao
+  humana apos gates verdes e preflight/dry-run operacional.
+
 ## Evidencias de homologacao
 
 Devem registrar baseline Git, RED/GREEN, comandos, versoes Python, scanners, SHA final, estado

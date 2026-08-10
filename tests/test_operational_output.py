@@ -270,6 +270,7 @@ def test_cli_never_prints_complete_payload(
     expected_verbose: bool,
 ) -> None:
     configured: list[bool] = []
+    prompts: list[str] = []
     answers = iter(
         ["5", cli.build_option5_strong_confirmation(5), "0"]
     )
@@ -288,12 +289,18 @@ def test_cli_never_prints_complete_payload(
         lambda *, verbose=False: configured.append(verbose),
     )
     monkeypatch.setattr(cli, "ApplicationController", FakeController)
-    monkeypatch.setattr("builtins.input", lambda prompt="": next(answers))
+    monkeypatch.setattr(
+        "builtins.input",
+        lambda prompt="": prompts.append(prompt) or next(answers),
+    )
 
     cli.main(argv)
 
     output = capsys.readouterr().out
     assert configured == [expected_verbose]
+    assert "Confirme simulacao com acesso ao Portal/CDP" in output
+    assert "Digite APLICAR OPÇÃO 5 COM CONCLUSÃO EM 5 PROTOCOLOS" in output
+    assert "Confirmar: " in prompts
     assert "raw_text" not in output
     assert "protocol_results" not in output
     assert "generation_data" not in output

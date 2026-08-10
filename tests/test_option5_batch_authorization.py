@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 import pytest
 
 from automacao_gd.domain.errors import PreflightBlockedError
@@ -98,6 +100,101 @@ def test_entry_point_normal_policy_cannot_load_synthetic_batch10() -> None:
         full_pipeline.validate_requested_batch_limit(10, policy)
 
 
+def test_option5_batch50_requires_explicit_authorized_max_setting() -> None:
+    default_policy = full_pipeline.batch_authorization_policy_from_settings(
+        SimpleNamespace(OPTION5_AUTHORIZED_MAX_PROTOCOLS=5)
+    )
+    batch50_policy = full_pipeline.batch_authorization_policy_from_settings(
+        SimpleNamespace(OPTION5_AUTHORIZED_MAX_PROTOCOLS=50)
+    )
+
+    with pytest.raises(full_pipeline.BatchAuthorizationError) as exc:
+        full_pipeline.validate_requested_batch_limit(50, default_policy)
+    assert exc.value.code == "BATCH_LIMIT_NOT_AUTHORIZED"
+
+    authorization = full_pipeline.validate_requested_batch_limit(50, batch50_policy)
+
+    assert authorization.requested_batch_limit == 50
+    assert authorization.authorized_batch_limit == 50
+    assert authorization.authorization_scope == "CONTROLLED_PRODUCTION_OPTION5_UP_TO_60"
+    assert full_pipeline.build_option5_strong_confirmation(50) == (
+        "APLICAR OPÇÃO 5 COM CONCLUSÃO EM 50 PROTOCOLOS"
+    )
+
+
+def test_option5_authorized_max60_accepts_any_requested_limit_up_to_60() -> None:
+    policy = full_pipeline.batch_authorization_policy_from_settings(
+        SimpleNamespace(OPTION5_AUTHORIZED_MAX_PROTOCOLS=60)
+    )
+
+    for requested in [1, 5, 17, 50, 60]:
+        authorization = full_pipeline.validate_requested_batch_limit(
+            requested,
+            policy,
+        )
+        assert authorization.requested_batch_limit == requested
+        assert authorization.authorized_batch_limit == 60
+        assert (
+            authorization.authorization_scope
+            == "CONTROLLED_PRODUCTION_OPTION5_UP_TO_60"
+        )
+        assert full_pipeline.build_option5_strong_confirmation(requested).endswith(
+            f"EM {requested} PROTOCOLOS"
+        )
+
+
+@pytest.mark.parametrize("authorized_max", [0, 61])
+def test_option5_authorized_max_above_60_or_invalid_is_rejected(
+    authorized_max: int,
+) -> None:
+    with pytest.raises(full_pipeline.BatchAuthorizationError) as exc:
+        full_pipeline.batch_authorization_policy_from_settings(
+            SimpleNamespace(OPTION5_AUTHORIZED_MAX_PROTOCOLS=authorized_max)
+        )
+
+    assert exc.value.code == "BATCH_LIMIT_NOT_AUTHORIZED"
+
+
+def test_option5_requested_61_blocks_before_external_resources(monkeypatch) -> None:
+    calls: list[str] = []
+    settings = SimpleNamespace(
+        MAX_COMPLETED_TO_PROCESS=61,
+        OPTION5_AUTHORIZED_MAX_PROTOCOLS=60,
+        option5_execution_lock_path=None,
+    )
+    monkeypatch.setattr(full_pipeline, "run_preflight", lambda *a, **k: calls.append("preflight"))
+    monkeypatch.setattr(full_pipeline, "_run_download_step", lambda *a, **k: calls.append("download"))
+
+    with pytest.raises(PreflightBlockedError) as exc:
+        full_pipeline.run_full_cdp_pipeline(
+            settings,
+            confirmation=full_pipeline.build_option5_strong_confirmation(61),
+        )
+
+    assert exc.value.code == "BATCH_LIMIT_NOT_AUTHORIZED"
+    assert calls == []
+
+
+def test_option5_batch50_rejects_plain_sim_and_limit5_phrase() -> None:
+    authorization = full_pipeline.validate_requested_batch_limit(
+        50,
+        full_pipeline.batch_authorization_policy_from_settings(
+            SimpleNamespace(OPTION5_AUTHORIZED_MAX_PROTOCOLS=60)
+        ),
+    )
+
+    for confirmation in [
+        "SIM",
+        "APLICAR OPÇÃO 5 COM CONCLUSÃO EM 5 PROTOCOLOS",
+        "APLICAR OPÇÃO 5 COM CONCLUSÃO EM 50",
+    ]:
+        with pytest.raises(full_pipeline.StrongConfirmationError):
+            full_pipeline.validate_option5_strong_confirmation(
+                confirmation,
+                authorization,
+            )
+
+
 def test_frozen_batch_selects_exactly_10_and_drops_11th_with_deduplication(
     tmp_path,
 ) -> None:
@@ -149,6 +246,30 @@ def test_frozen_batch_selects_exactly_10_and_drops_11th_with_deduplication(
         if item.get("global_limit_status") == "excluded_by_global_limit"
     ]
     assert "SYNTH0011" in dropped
+
+
+def test_frozen_batch_selects_exactly_50_when_explicitly_authorized(tmp_path) -> None:
+    summary = _items(tmp_path, *(f"SYNTH{i:04d}" for i in range(1, 53)))
+    authorization = full_pipeline.validate_requested_batch_limit(
+        50,
+        full_pipeline.batch_authorization_policy_from_settings(
+            SimpleNamespace(OPTION5_AUTHORIZED_MAX_PROTOCOLS=60)
+        ),
+    )
+
+    limited = full_pipeline.apply_authorized_global_protocol_limit(
+        summary,
+        authorization,
+    )
+
+    assert len(limited.frozen_batch.protocols) == 50
+    assert limited.frozen_batch.protocols[0] == "SYNTH0001"
+    assert limited.frozen_batch.protocols[-1] == "SYNTH0050"
+    assert limited.frozen_batch.dropped_by_limit == 2
+    assert limited.summary["protocols_dropped_by_global_limit"] == [
+        "SYNTH0051",
+        "SYNTH0052",
+    ]
 
 
 def test_frozen_batch_scope_violation_blocks_unknown_protocol_after_freeze() -> None:
@@ -210,6 +331,52 @@ def test_unauthorized_batch_limit_blocks_before_external_resources(monkeypatch) 
         full_pipeline.run_full_cdp_pipeline(_EntryPointSettings())
 
     assert exc.value.code == "BATCH_LIMIT_NOT_AUTHORIZED"
+    assert calls == []
+
+
+def test_option5_batch50_without_explicit_setting_blocks_before_external_resources(
+    monkeypatch,
+) -> None:
+    calls: list[str] = []
+
+    settings = SimpleNamespace(
+        MAX_COMPLETED_TO_PROCESS=50,
+        OPTION5_AUTHORIZED_MAX_PROTOCOLS=5,
+        option5_execution_lock_path=None,
+    )
+    monkeypatch.setattr(full_pipeline, "run_preflight", lambda *a, **k: calls.append("preflight"))
+    monkeypatch.setattr(full_pipeline, "_run_download_step", lambda *a, **k: calls.append("download"))
+
+    with pytest.raises(PreflightBlockedError) as exc:
+        full_pipeline.run_full_cdp_pipeline(
+            settings,
+            confirmation=full_pipeline.build_option5_strong_confirmation(50),
+        )
+
+    assert exc.value.code == "BATCH_LIMIT_NOT_AUTHORIZED"
+    assert calls == []
+
+
+def test_option5_batch50_requires_exact_confirmation_before_external_resources(
+    monkeypatch,
+) -> None:
+    calls: list[str] = []
+
+    settings = SimpleNamespace(
+        MAX_COMPLETED_TO_PROCESS=50,
+        OPTION5_AUTHORIZED_MAX_PROTOCOLS=60,
+        option5_execution_lock_path=None,
+    )
+    monkeypatch.setattr(full_pipeline, "run_preflight", lambda *a, **k: calls.append("preflight"))
+    monkeypatch.setattr(full_pipeline, "_run_download_step", lambda *a, **k: calls.append("download"))
+
+    with pytest.raises(PreflightBlockedError) as exc:
+        full_pipeline.run_full_cdp_pipeline(
+            settings,
+            confirmation=full_pipeline.build_option5_strong_confirmation(5),
+        )
+
+    assert exc.value.code == "STRONG_CONFIRMATION_MISMATCH"
     assert calls == []
 
 

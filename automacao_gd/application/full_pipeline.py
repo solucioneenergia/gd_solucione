@@ -49,6 +49,9 @@ DOWNLOAD_SHAREABLE_JSON_REPORT_NAME = "downloads_cdp_shareable.json"
 DOWNLOAD_SHAREABLE_MARKDOWN_REPORT_NAME = "downloads_cdp_shareable.md"
 VALID_DOWNLOAD_STATUSES_FOR_PROCESSING = {"downloaded", "existing_pdf_after_skip"}
 CONTROLLED_PRODUCTION_AUTHORIZATION_SCOPE = "CONTROLLED_PRODUCTION_V2_0_1"
+CONTROLLED_PRODUCTION_UP_TO_60_AUTHORIZATION_SCOPE = (
+    "CONTROLLED_PRODUCTION_OPTION5_UP_TO_60"
+)
 SYNTHETIC_BATCH10_AUTHORIZATION_SCOPE = "SYNTHETIC_BATCH10_VALIDATION"
 
 
@@ -154,6 +157,29 @@ def default_batch_authorization_policy() -> BatchAuthorizationPolicy:
     )
 
 
+def batch_authorization_policy_from_settings(settings: object) -> BatchAuthorizationPolicy:
+    raw_authorized = getattr(settings, "OPTION5_AUTHORIZED_MAX_PROTOCOLS", 5)
+    try:
+        authorized_max_protocols = int(raw_authorized or 0)
+    except (TypeError, ValueError) as exc:
+        raise BatchAuthorizationError(
+            "BATCH_LIMIT_NOT_AUTHORIZED",
+            "Limite autorizado para opÃ§Ã£o 5 deve ser numÃ©rico.",
+        ) from exc
+
+    if 1 <= authorized_max_protocols <= 5:
+        return default_batch_authorization_policy()
+    if 5 < authorized_max_protocols <= 60:
+        return BatchAuthorizationPolicy(
+            authorized_max_protocols=authorized_max_protocols,
+            authorization_scope=CONTROLLED_PRODUCTION_UP_TO_60_AUTHORIZATION_SCOPE,
+        )
+    raise BatchAuthorizationError(
+        "BATCH_LIMIT_NOT_AUTHORIZED",
+        "Limite autorizado para opÃ§Ã£o 5 deve estar entre 1 e 60.",
+    )
+
+
 def validate_requested_batch_limit(
     requested_batch_limit: int,
     policy: BatchAuthorizationPolicy | None = None,
@@ -210,7 +236,7 @@ def main() -> int:
 
     authorization = validate_requested_batch_limit(
         getattr(settings, "MAX_COMPLETED_TO_PROCESS", 0),
-        default_batch_authorization_policy(),
+        batch_authorization_policy_from_settings(settings),
     )
     confirmation = build_option5_strong_confirmation(
         authorization.requested_batch_limit
@@ -241,7 +267,7 @@ def run_full_cdp_pipeline(
     try:
         authorization = validate_requested_batch_limit(
             requested_batch_limit,
-            default_batch_authorization_policy(),
+            batch_authorization_policy_from_settings(settings),
         )
     except BatchAuthorizationError as exc:
         raise PreflightBlockedError(
@@ -498,7 +524,7 @@ def confirm_real_run_if_needed(settings) -> bool:
     try:
         authorization = validate_requested_batch_limit(
             getattr(settings, "MAX_COMPLETED_TO_PROCESS", 0),
-            default_batch_authorization_policy(),
+            batch_authorization_policy_from_settings(settings),
         )
     except BatchAuthorizationError:
         return False

@@ -34,8 +34,8 @@ from automacao_gd.application.operational_guard import (
 from automacao_gd.application.full_pipeline import (
     BatchAuthorizationError,
     StrongConfirmationError,
+    batch_authorization_policy_from_settings,
     build_option5_strong_confirmation,
-    default_batch_authorization_policy,
     validate_option5_strong_confirmation,
     validate_requested_batch_limit,
 )
@@ -358,7 +358,7 @@ def _confirmed_pipeline(controller: ApplicationController):
     try:
         authorization = validate_requested_batch_limit(
             getattr(controller.settings, "MAX_COMPLETED_TO_PROCESS", 5),
-            default_batch_authorization_policy(),
+            batch_authorization_policy_from_settings(controller.settings),
         )
     except BatchAuthorizationError as exc:
         return _cancelled_operation_result(exc.code, require_cdp=True)
@@ -366,9 +366,9 @@ def _confirmed_pipeline(controller: ApplicationController):
         authorization.requested_batch_limit
     )
     mode = "simulacao com acesso ao Portal/CDP" if controller.settings.DRY_RUN else "execucao real"
-    confirmation = input(
-        f"Confirme {mode}. Digite {required_confirmation}: "
-    ).strip()
+    print(f"Confirme {mode}.")
+    print(f"Digite {required_confirmation}")
+    confirmation = input("Confirmar: ").strip()
     try:
         validate_option5_strong_confirmation(confirmation, authorization)
     except StrongConfirmationError as exc:
