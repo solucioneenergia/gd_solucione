@@ -32,8 +32,8 @@ def test_gitleaks_version_is_pinned_for_local_parity() -> None:
         encoding="utf-8"
     )
 
-    assert "gitleaks/gitleaks-action@v2.3.9" in workflow
-    assert 'GITLEAKS_VERSION: "8.30.1"' in workflow
+    assert "GITLEAKS_VERSION: 8.30.1" in workflow
+    assert "gitleaks detect --source . --no-banner --redact --verbose --exit-code 1" in workflow
 
 
 def test_release_candidate_staging_is_ignored() -> None:

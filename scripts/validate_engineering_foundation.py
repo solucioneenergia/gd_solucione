@@ -345,7 +345,7 @@ def _check_ci(root: Path, errors: list[str]) -> None:
         "python -m pip wheel",
         "import desktop_app; import apps.desktop",
         "scripts/validate_release_zip.py",
-        "gitleaks/gitleaks-action",
+        "gitleaks detect --source . --no-banner --redact --verbose --exit-code 1",
     )
     for token in required_tokens:
         if token not in active:
