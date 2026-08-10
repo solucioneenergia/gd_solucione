@@ -599,6 +599,7 @@ def _run_download_step(settings, state_store=None) -> dict:
             state_store=state_store,
             skip_already_completed=settings.SKIP_ALREADY_COMPLETED,
             reconciliation_callback=_reconciliation_callback(settings),
+            settings=settings,
         )
         summary["run_error"] = summary.get("run_error")
         return summary

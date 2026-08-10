@@ -1386,6 +1386,106 @@ def test_download_aborts_after_three_protocol_not_found_errors(monkeypatch) -> N
     assert calls == ["2601", "2602", "2603"]
 
 
+def test_download_uses_injected_settings_for_target_protocols(monkeypatch) -> None:
+    class GlobalSettings(DummySettings):
+        ENABLE_PORTAL_PAGINATION = True
+        MAX_COMPLETED_TO_PROCESS = 2
+        OP5_RECONCILIATION_MODE = "batch_fast"
+        op5_target_protocols = set()
+
+    class InjectedSettings(DummySettings):
+        ENABLE_PORTAL_PAGINATION = True
+        MAX_COMPLETED_TO_PROCESS = 2
+        OP5_RECONCILIATION_MODE = "batch_fast"
+        op5_target_protocols = {"2600001050"}
+
+    records = [
+        PortalSolicitation(protocol="2600001048", status="CONCLUIDA", page_number=1),
+        PortalSolicitation(protocol="2600001049", status="CONCLUIDA", page_number=1),
+        PortalSolicitation(protocol="2600001050", status="CONCLUIDA", page_number=1),
+    ]
+    seen_collection_settings: list[object] = []
+
+    monkeypatch.setattr(cdp_portal_service, "get_settings", lambda: GlobalSettings())
+    monkeypatch.setattr(
+        cdp_portal_service,
+        "ensure_listing_starts_on_page_one",
+        lambda page: {
+            "success": True,
+            "status": "already_on_first_page",
+            "initial_active_page": 1,
+            "active_page_after": 1,
+        },
+    )
+
+    def fake_collect(
+        page,
+        settings,
+        *,
+        state_store=None,
+        max_completed=None,
+        skip_already_completed=True,
+    ):
+        seen_collection_settings.append(settings)
+        return {
+            "pages_read": 1,
+            "total_rows": 3,
+            "total_completed": 3,
+            "completed_records": records,
+            "duplicates_skipped": [],
+            "pagination_warnings": [],
+            "pagination_enabled": True,
+            "pagination_complete": True,
+            "last_page_confirmed": True,
+            "last_page_number": 1,
+            "next_page_available_after_stop": False,
+            "pagination_safety_cap": 1,
+            "pages_visited": [1],
+            "pagination_stop_reason": "last_page_reached",
+            "pagination_next_found": False,
+            "pagination_click_attempts": 0,
+            "pagination_mode": "numeric",
+            "pagination_current_page": 1,
+            "pagination_target_page": None,
+            "pagination_numeric_links_found": [],
+            "pagination_diagnostics": [],
+        }
+
+    monkeypatch.setattr(
+        cdp_portal_service,
+        "_collect_completed_listing_rows_across_pages",
+        fake_collect,
+    )
+    monkeypatch.setattr(
+        cdp_portal_service,
+        "ensure_request_origin_page",
+        lambda page, request, listing_url=None: {
+            "success": False,
+            "status": "protocol_not_found_on_origin_page",
+            "method": "current_page",
+            "protocol_found_on_origin_page": False,
+            "url_after": "https://portal/listagem",
+            "error": "stop_after_selection_for_test",
+            "row": None,
+        },
+    )
+
+    summary = download_completed_budgets_from_current_page(
+        FakePage(),
+        max_completed=2,
+        settings=InjectedSettings(),
+    )
+
+    assert len(seen_collection_settings) == 1
+    assert isinstance(seen_collection_settings[0], InjectedSettings)
+    assert summary["total_selected"] == 1
+    assert summary["target_protocols"] == ["2600001050"]
+    assert [item["protocol"] for item in summary["selected_protocols"]] == [
+        "2600001050"
+    ]
+    assert [item["protocol"] for item in summary["results"]] == ["2600001050"]
+
+
 def test_duplicate_protocol_between_pages_is_kept_once() -> None:
     page_1 = [_row("2601"), _row("2602")]
     page_2 = [_row("2602"), _row("2603")]

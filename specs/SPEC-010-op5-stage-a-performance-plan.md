@@ -265,6 +265,9 @@ Contratos:
 - `op5-plan --limit N --protocols <lista>` restringe a seleção aos protocolos explícitos,
   continua lendo páginas até encontrar o subconjunto solicitado ou encerrar a paginação segura,
   e não pode substituir a confirmação forte da execução real;
+- o subconjunto de `--protocols` deve ser propagado pelo `Settings` efetivo da execução até a
+  camada CDP/download; a seleção não pode depender de `get_settings()` global nem de variável de
+  ambiente externa para respeitar o lote direcionado;
 - `op5-apply --plan <arquivo>` executa produção somente a partir do plano informado, sem nova
   navegação CDP, com confirmação forte vinculada à quantidade do plano;
 - `op5-audit-global` executa reconciliação global somente leitura, sem download, sem aplicação

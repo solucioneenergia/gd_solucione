@@ -229,6 +229,56 @@ def test_cli_op5_plan_passes_target_protocols_to_settings(
     assert captured[0].OP5_TARGET_PROTOCOLS == "2600001048,2600001049"
 
 
+def test_pipeline_download_step_passes_effective_settings(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    captured: list[object] = []
+    settings = SimpleNamespace(
+        CDP_ENDPOINT="http://127.0.0.1:9222",
+        PORTAL_GD_URL="https://portal.example/sintetico",
+        downloads_dir_path=tmp_path / "downloads",
+        MAX_COMPLETED_TO_PROCESS=2,
+        REPROCESS_EXISTING_PDFS=False,
+        PROCESS_EXISTING_AFTER_SKIP=True,
+        SKIP_ALREADY_COMPLETED=True,
+        OP5_TARGET_PROTOCOLS="2600001048,2600001049",
+        op5_target_protocols={"2600001048", "2600001049"},
+    )
+
+    class FakePlaywright:
+        def stop(self) -> None:
+            pass
+
+    class FakePlaywrightFactory:
+        def start(self) -> FakePlaywright:
+            return FakePlaywright()
+
+    monkeypatch.setattr(
+        full_pipeline,
+        "sync_playwright",
+        lambda: FakePlaywrightFactory(),
+    )
+    monkeypatch.setattr(full_pipeline, "connect_to_existing_edge", lambda *_args: object())
+    monkeypatch.setattr(full_pipeline, "find_portal_page_from_cdp", lambda *_args: object())
+    monkeypatch.setattr(full_pipeline, "_reconciliation_callback", lambda _settings: None)
+
+    def fake_download(**kwargs):
+        captured.append(kwargs.get("settings"))
+        return {"run_error": None, "status": OperationStatus.SUCESSO.value}
+
+    monkeypatch.setattr(
+        full_pipeline,
+        "download_completed_budgets_from_current_page",
+        fake_download,
+    )
+
+    result = full_pipeline._run_download_step(settings, state_store=object())
+
+    assert result["run_error"] is None
+    assert captured == [settings]
+
+
 def test_cli_op5_audit_global_invokes_readonly_audit(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

@@ -1148,8 +1148,9 @@ def download_completed_budgets_from_current_page(
     state_store=None,
     skip_already_completed: bool = True,
     reconciliation_callback=None,
+    settings=None,
 ) -> dict:
-    settings = get_settings()
+    settings = settings or get_settings()
     downloads_root = Path(downloads_root or settings.downloads_dir_path)
     limit = settings.MAX_COMPLETED_TO_PROCESS if max_completed is None else max_completed
     started_at = datetime.now()
@@ -1164,6 +1165,9 @@ def download_completed_budgets_from_current_page(
     summary["enable_portal_pagination"] = bool(settings.ENABLE_PORTAL_PAGINATION)
     summary["max_portal_pages"] = int(settings.MAX_PORTAL_PAGES or 0)
     summary["skip_already_completed"] = bool(skip_already_completed)
+    summary["target_protocols"] = sorted(
+        getattr(settings, "op5_target_protocols", set()) or []
+    )
     logger.info(
         "Configuracao efetiva do lote CDP: "
         f"ENABLE_PORTAL_PAGINATION={summary['enable_portal_pagination']}; "
