@@ -81,7 +81,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         if args.command == "backfill-apply":
             return _run_backfill_apply(args.plan)
         if args.command == "op5-plan":
-            return _run_op5_plan(args.limit)
+            return _run_op5_plan(args.limit, protocols=args.protocols)
         if args.command == "op5-apply":
             return _run_op5_apply(args.plan)
         return _run_op5_audit_global()
@@ -155,6 +155,10 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         type=int,
         help="limite solicitado para op5-plan",
     )
+    parser.add_argument(
+        "--protocols",
+        help="lista separada por virgula/ponto e virgula para restringir op5-plan",
+    )
     parser.add_argument("--input", type=Path, help="arquivo para logs-sanitize")
     parser.add_argument(
         "--confirmation",
@@ -163,10 +167,15 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     return parser.parse_args(argv)
 
 
-def _run_op5_plan(limit: int | None) -> int:
+def _run_op5_plan(limit: int | None, *, protocols: str | None = None) -> int:
     if limit is None or limit <= 0:
         print("Status: BLOQUEADO")
         print("op5-plan exige --limit N positivo.")
+        return 2
+    target_protocols = _normalize_protocol_list(protocols)
+    if target_protocols and len(target_protocols) > limit:
+        print("Status: BLOQUEADO")
+        print("op5-plan --protocols nao pode exceder --limit.")
         return 2
     settings = get_settings().model_copy(
         update={
@@ -174,6 +183,7 @@ def _run_op5_plan(limit: int | None) -> int:
             "MAX_COMPLETED_TO_PROCESS": limit,
             "OP5_RECONCILIATION_MODE": "batch_fast",
             "APPLY_EXCEL": True,
+            "OP5_TARGET_PROTOCOLS": ",".join(target_protocols),
         }
     )
     authorization = validate_requested_batch_limit(
@@ -184,6 +194,19 @@ def _run_op5_plan(limit: int | None) -> int:
     result = ApplicationController(settings).run_pipeline(confirmation=confirmation)
     print_operation_summary("pipeline", result)
     return exit_code_for_status(result.status or OperationStatus.FALHOU)
+
+
+def _normalize_protocol_list(value: str | None) -> tuple[str, ...]:
+    if not value:
+        return ()
+    protocols = tuple(
+        item.strip()
+        for item in value.replace(";", ",").split(",")
+        if item.strip()
+    )
+    if len(protocols) != len(set(protocols)):
+        raise SystemExit("op5-plan --protocols contem protocolo duplicado.")
+    return protocols
 
 
 def _run_op5_apply(plan_path: Path | None) -> int:

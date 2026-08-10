@@ -547,6 +547,10 @@ def _incremental_batch_limit_reached(
         force_reprocess_protocols=getattr(settings, "force_reprocess_protocols", set()),
         settings=settings,
     )
+    target_protocols = set(getattr(settings, "op5_target_protocols", set()) or set())
+    if target_protocols:
+        selected_protocols = {record.protocol for record in selection["selected_records"]}
+        return target_protocols <= selected_protocols
     return len(selection["selected_records"]) >= limit
 
 
@@ -715,6 +719,7 @@ def select_eligible_completed_requests(
     settings=None,
 ) -> dict:
     force_reprocess_protocols = force_reprocess_protocols or set()
+    target_protocols = set(getattr(settings, "op5_target_protocols", set()) or set())
     selected: list[PortalSolicitation] = []
     eligible: list[PortalSolicitation] = []
     duplicates_removed: list[dict] = []
@@ -723,6 +728,8 @@ def select_eligible_completed_requests(
     seen_protocols: set[str] = set()
 
     for request in completed_requests:
+        if target_protocols and request.protocol not in target_protocols:
+            continue
         if request.protocol in seen_protocols:
             duplicates_removed.append(
                 _selection_skip_dict(request, "duplicate_removed", pipeline_state)

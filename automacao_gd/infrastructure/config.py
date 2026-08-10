@@ -46,6 +46,7 @@ class Settings(BaseSettings):
     OP5_ELIGIBILITY_CACHE_TTL_MINUTES: int = Field(default=30, ge=1, le=1440)
     OP5_PDF_WORKERS: int = Field(default=1, ge=1, le=4)
     OP5_PLAN_PATH: Path | None = Field(default=None)
+    OP5_TARGET_PROTOCOLS: str = Field(default="")
     ENABLE_PORTAL_PAGINATION: bool = Field(default=False)
     MAX_PORTAL_PAGES: int = Field(default=1, ge=0)
     MAX_PROTOCOL_NOT_FOUND_ERRORS: int = Field(default=3, ge=1)
@@ -228,6 +229,14 @@ class Settings(BaseSettings):
     @property
     def force_reprocess_protocols(self) -> set[str]:
         return {item.strip() for item in self.FORCE_REPROCESS_PROTOCOLS.split(",") if item.strip()}
+
+    @property
+    def op5_target_protocols(self) -> set[str]:
+        return {
+            item.strip()
+            for item in self.OP5_TARGET_PROTOCOLS.replace(";", ",").split(",")
+            if item.strip()
+        }
 
     @property
     def pipeline_state_path(self) -> Path:

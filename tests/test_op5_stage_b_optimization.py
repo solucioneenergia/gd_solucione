@@ -190,15 +190,43 @@ def test_parallel_pdf_extraction_preserves_order_and_rejects_excess_workers(
 
 
 def test_cli_accepts_explicit_option5_commands() -> None:
-    plan = _parse_args(["op5-plan", "--limit", "20"])
+    plan = _parse_args(["op5-plan", "--limit", "20", "--protocols", "2600001048,2600001049"])
     apply = _parse_args(["op5-apply", "--plan", "data/logs/op5_plan_latest.json"])
     audit = _parse_args(["op5-audit-global"])
 
     assert plan.command == "op5-plan"
     assert plan.limit == 20
+    assert plan.protocols == "2600001048,2600001049"
     assert apply.command == "op5-apply"
     assert apply.plan == Path("data/logs/op5_plan_latest.json")
     assert audit.command == "op5-audit-global"
+
+
+def test_cli_op5_plan_passes_target_protocols_to_settings(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured: list[object] = []
+    base = SimpleNamespace(
+        OPTION5_AUTHORIZED_MAX_PROTOCOLS=60,
+        model_copy=lambda update: SimpleNamespace(
+            OPTION5_AUTHORIZED_MAX_PROTOCOLS=60,
+            **update,
+        ),
+    )
+    monkeypatch.setattr(cli, "get_settings", lambda: base)
+    monkeypatch.setattr(
+        cli.ApplicationController,
+        "run_pipeline",
+        lambda self, *, confirmation: captured.append(self.settings)
+        or SimpleNamespace(status=OperationStatus.SUCESSO, payload={}),
+    )
+    monkeypatch.setattr(cli, "print_operation_summary", lambda *_args, **_kwargs: None)
+
+    exit_code = cli._run_op5_plan(2, protocols="2600001048, 2600001049")
+
+    assert exit_code == 0
+    assert captured[0].MAX_COMPLETED_TO_PROCESS == 2
+    assert captured[0].OP5_TARGET_PROTOCOLS == "2600001048,2600001049"
 
 
 def test_cli_op5_audit_global_invokes_readonly_audit(

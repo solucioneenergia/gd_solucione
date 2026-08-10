@@ -253,6 +253,7 @@ O terminal deve aceitar comandos explícitos sem depender do menu interativo:
 
 ```text
 py app.py op5-plan --limit N
+py app.py op5-plan --limit N --protocols <lista>
 py app.py op5-apply --plan <arquivo>
 py app.py op5-audit-global
 ```
@@ -261,6 +262,9 @@ Contratos:
 
 - `op5-plan --limit N` executa dry-run da opção 5 com `MAX_COMPLETED_TO_PROCESS=N`,
   `OP5_RECONCILIATION_MODE=batch_fast`, gera plano OP5 e não aplica Excel;
+- `op5-plan --limit N --protocols <lista>` restringe a seleção aos protocolos explícitos,
+  continua lendo páginas até encontrar o subconjunto solicitado ou encerrar a paginação segura,
+  e não pode substituir a confirmação forte da execução real;
 - `op5-apply --plan <arquivo>` executa produção somente a partir do plano informado, sem nova
   navegação CDP, com confirmação forte vinculada à quantidade do plano;
 - `op5-audit-global` executa reconciliação global somente leitura, sem download, sem aplicação
@@ -285,6 +289,7 @@ Configuração:
 OP5_RECONCILIATION_MODE=inline_global | batch_fast | audit_global
 OP5_ELIGIBILITY_CACHE_TTL_MINUTES=30
 OP5_PDF_WORKERS=1
+OP5_TARGET_PROTOCOLS=
 ```
 
 Valor padrão inicial: `inline_global`, para preservar compatibilidade. O lote rápido deve ser
@@ -371,6 +376,7 @@ temporariamente se passarem pelos validadores da SPEC-009.
 - RED para índice local da planilha sendo reutilizado após mudança do SHA.
 - RED para extração PDF paralela que perde a ordem do lote ou aceita mais de 4 workers.
 - RED para CLI sem os comandos `op5-plan`, `op5-apply` e `op5-audit-global`.
+- RED para `op5-plan --protocols` selecionando protocolo fora dos primeiros N elegíveis.
 
 ## Critérios de aceite
 
@@ -386,6 +392,8 @@ temporariamente se passarem pelos validadores da SPEC-009.
 - [ ] Índice local da planilha é reutilizado por SHA e invalidado em mudança.
 - [ ] Extração PDF paralela respeita limite 1..4 e preserva ordem.
 - [ ] Comandos explícitos `op5-plan`, `op5-apply` e `op5-audit-global` existem e falham fechado.
+- [ ] `op5-plan --protocols` restringe o lote aos protocolos explícitos e não para antes de
+      procurá-los nas páginas permitidas.
 - [ ] Testes direcionados, Ruff, MyPy e scanner permanecem verdes.
 
 ## Rollout

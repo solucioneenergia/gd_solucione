@@ -94,6 +94,34 @@ def test_batch_limit_is_applied_after_skipping_completed_state() -> None:
     assert [record.protocol for record in selection["selected_records"]] == protocols[10:20]
 
 
+def test_target_protocols_restrict_batch_fast_selection() -> None:
+    requests = [
+        _row("2600001048")["record"],
+        _row("2600001049")["record"],
+        _row("2600001050")["record"],
+    ]
+
+    selection = select_eligible_completed_requests(
+        requests,
+        {},
+        max_completed_to_process=2,
+        skip_already_completed=True,
+        force_reprocess_protocols=set(),
+        settings=type(
+            "TargetSettings",
+            (),
+            {"op5_target_protocols": {"2600001050"}},
+        )(),
+    )
+
+    assert [record.protocol for record in selection["selected_records"]] == [
+        "2600001050"
+    ]
+    assert [record.protocol for record in selection["eligible_records"]] == [
+        "2600001050"
+    ]
+
+
 def test_limit_zero_selects_all_eligible_after_skip() -> None:
     protocols = [f"26000000{index:02d}" for index in range(27)]
     completed_in_state = set(protocols[:10])
