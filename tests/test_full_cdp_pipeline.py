@@ -2483,6 +2483,99 @@ def test_return_to_listing_fails_closed_without_opening_new_portal_page(
     assert detail_page.context.new_page_called is False
 
 
+def test_recover_listing_does_not_navigate_when_current_page_is_http_access_denied(
+    monkeypatch,
+) -> None:
+    class HttpBlockedPage:
+        url = "http://gdneoenergiapernambuco.neoenergia.com/index.jsf"
+
+        def __init__(self) -> None:
+            self.back_called = False
+
+        def is_closed(self) -> bool:
+            return False
+
+        def wait_for_timeout(self, timeout: int) -> None:
+            return None
+
+        def go_back(self, **kwargs) -> None:
+            self.back_called = True
+
+    page = HttpBlockedPage()
+    navigation_calls: list[str] = []
+
+    monkeypatch.setattr(cdp_portal_service, "_has_minhas_solicitacoes_table", lambda page: False)
+    monkeypatch.setattr(
+        cdp_portal_service,
+        "_click_minhas_solicitacoes_navigation",
+        lambda page: navigation_calls.append("menu") or False,
+    )
+    monkeypatch.setattr(
+        cdp_portal_service,
+        "_goto_listing_url",
+        lambda page, url: navigation_calls.append(f"goto:{url}"),
+    )
+    monkeypatch.setattr(
+        cdp_portal_service,
+        "_reload_page",
+        lambda page: navigation_calls.append("reload"),
+    )
+
+    recovery = cdp_portal_service._recover_minhas_solicitacoes(
+        page,
+        "https://gdneoenergiapernambuco.neoenergia.com/pages/acompanhamento/index.jsf",
+    )
+
+    assert recovery["success"] is False
+    assert recovery["status"] == "failed_return_to_listing"
+    assert "PowerShell" in recovery["error"]
+    assert navigation_calls == []
+    assert page.back_called is False
+
+
+def test_recover_listing_does_not_goto_http_listing_url(monkeypatch) -> None:
+    class HttpsDetailPage:
+        url = "https://gdneoenergiapernambuco.neoenergia.com/detalhe"
+
+        def is_closed(self) -> bool:
+            return False
+
+        def wait_for_timeout(self, timeout: int) -> None:
+            return None
+
+        def go_back(self, **kwargs) -> None:
+            raise AssertionError("history must not run when listing URL is unsafe")
+
+    navigation_calls: list[str] = []
+
+    monkeypatch.setattr(cdp_portal_service, "_has_minhas_solicitacoes_table", lambda page: False)
+    monkeypatch.setattr(
+        cdp_portal_service,
+        "_click_minhas_solicitacoes_navigation",
+        lambda page: navigation_calls.append("menu") or False,
+    )
+    monkeypatch.setattr(
+        cdp_portal_service,
+        "_goto_listing_url",
+        lambda page, url: navigation_calls.append(f"goto:{url}"),
+    )
+    monkeypatch.setattr(
+        cdp_portal_service,
+        "_reload_page",
+        lambda page: navigation_calls.append("reload"),
+    )
+
+    recovery = cdp_portal_service._recover_minhas_solicitacoes(
+        HttpsDetailPage(),
+        "http://gdneoenergiapernambuco.neoenergia.com/index.jsf",
+    )
+
+    assert recovery["success"] is False
+    assert recovery["status"] == "failed_return_to_listing"
+    assert "PowerShell" in recovery["error"]
+    assert navigation_calls == []
+
+
 def test_return_to_listing_uses_existing_context_listing_when_original_is_closed(
     monkeypatch,
 ) -> None:

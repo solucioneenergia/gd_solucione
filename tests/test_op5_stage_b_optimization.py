@@ -704,6 +704,41 @@ def test_pipeline_download_step_passes_effective_settings(
     assert captured == [settings]
 
 
+def test_pipeline_download_step_reports_manual_cdp_opening_when_listing_tab_missing(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    settings = SimpleNamespace(
+        CDP_ENDPOINT="http://127.0.0.1:9222",
+        PORTAL_GD_URL="https://gdneoenergiapernambuco.neoenergia.com/",
+        downloads_dir_path=tmp_path / "downloads",
+        MAX_COMPLETED_TO_PROCESS=60,
+        ENABLE_PORTAL_PAGINATION=True,
+        MAX_PORTAL_PAGES=15,
+        REPROCESS_EXISTING_PDFS=False,
+        PROCESS_EXISTING_AFTER_SKIP=True,
+        SKIP_ALREADY_COMPLETED=True,
+    )
+
+    class FakePlaywright:
+        def stop(self) -> None:
+            pass
+
+    class FakePlaywrightFactory:
+        def start(self) -> FakePlaywright:
+            return FakePlaywright()
+
+    monkeypatch.setattr(full_pipeline, "sync_playwright", lambda: FakePlaywrightFactory())
+    monkeypatch.setattr(full_pipeline, "connect_to_existing_edge", lambda *_args: object())
+    monkeypatch.setattr(full_pipeline, "find_portal_page_from_cdp", lambda *_args: None)
+
+    result = full_pipeline._run_download_step(settings, state_store=object())
+
+    assert result["total_errors"] == 1
+    assert "PowerShell" in result["run_error"]
+    assert "login manual" in result["run_error"]
+
+
 def test_cli_op5_audit_global_invokes_readonly_audit(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

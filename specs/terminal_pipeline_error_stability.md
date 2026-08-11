@@ -186,3 +186,26 @@ PDFs baixados, PDFs reutilizados e retomadas.
 - `test_global_protocol_limit_counts_resumed_protocols`
 - `test_global_limit_metrics_close_with_processing_categories`
 - `test_real_run_reuses_pending_simulation_result_without_second_warning`
+
+## Adendo 2026-08-11 - CDP attach-only sem navegacao HTTP
+
+### Problema
+
+O retorno a listagem durante `op5-plan` ainda podia tentar navegar, recarregar ou voltar no
+historico quando a pagina atual ou a `listing_url` capturada apontavam para
+`http://gdneoenergiapernambuco.neoenergia.com/...`. Esse caminho pode recriar a tela de
+`Access Denied` observada no Edge.
+
+### Contrato
+
+- O modo CDP permanece estritamente attach-only.
+- Se a pagina atual ou a `listing_url` salva forem HTTP do Portal GD, a automacao deve falhar
+  fechada antes de chamar `goto()`, `reload()` ou `go_back()`.
+- A mensagem operacional deve orientar o operador a reabrir o Edge pelo comando PowerShell
+  aprovado, fazer login manual e deixar a listagem aberta.
+- A automacao nao pode abrir nova aba, navegar para a raiz do Portal nem tentar autenticar.
+
+### Testes
+
+- `test_recover_listing_does_not_navigate_when_current_page_is_http_access_denied`
+- `test_recover_listing_does_not_goto_http_listing_url`

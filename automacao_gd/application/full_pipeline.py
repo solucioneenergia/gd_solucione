@@ -15,6 +15,7 @@ from automacao_gd.infrastructure.portal.cdp_service import (
     connect_to_existing_edge,
     download_completed_budgets_from_current_page,
     find_portal_page_from_cdp,
+    manual_cdp_listing_recovery_message,
 )
 from automacao_gd.infrastructure.config import Settings, get_settings
 from automacao_gd.infrastructure.files.file_service import ensure_directories
@@ -780,7 +781,9 @@ def _run_download_step(settings, state_store=None) -> dict:
         browser = connect_to_existing_edge(playwright, settings.CDP_ENDPOINT)
         page = find_portal_page_from_cdp(browser, settings.PORTAL_GD_URL)
         if page is None:
-            raise RuntimeError("Nenhuma aba do Portal GD foi encontrada via CDP.")
+            message = manual_cdp_listing_recovery_message()
+            logger.error(message)
+            return _download_error_summary(settings, message)
 
         summary = download_completed_budgets_from_current_page(
             page=page,
@@ -832,7 +835,7 @@ def run_op5_audit_global(settings: Settings | None = None) -> dict:
         browser = connect_to_existing_edge(playwright, active_settings.CDP_ENDPOINT)
         page = find_portal_page_from_cdp(browser, active_settings.PORTAL_GD_URL)
         if page is None:
-            raise RuntimeError("Nenhuma aba do Portal GD foi encontrada via CDP.")
+            raise RuntimeError(manual_cdp_listing_recovery_message())
         listing_summary = _collect_completed_listing_rows_across_pages(
             page,
             active_settings,

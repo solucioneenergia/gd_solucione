@@ -3769,6 +3769,11 @@ def _recover_minhas_solicitacoes(page, listing_url: str) -> dict:
         return result
 
     unsafe_url = _is_unsafe_navigation_url(_safe_page_url(page), listing_url)
+    if unsafe_url:
+        result["error"] = manual_cdp_listing_recovery_message()
+        result["url_after"] = _safe_page_url(page)
+        return result
+
     if not unsafe_url and _click_minhas_solicitacoes_navigation(page):
         if _wait_minhas_solicitacoes(page):
             result.update(
@@ -3836,6 +3841,14 @@ def _recover_minhas_solicitacoes(page, listing_url: str) -> dict:
     result["error"] = error
     result["url_after"] = _safe_page_url(page)
     return result
+
+
+def manual_cdp_listing_recovery_message() -> str:
+    return (
+        "Nao foi possivel retornar para a tabela de listagem com seguranca. "
+        "Reabra o Edge pelo comando PowerShell aprovado, faca login manual no "
+        "Portal GD e deixe a listagem aberta."
+    )
 
 
 def _apply_listing_recovery_result(target: dict, recovery: dict) -> None:
@@ -4002,9 +4015,16 @@ def _safe_page_url(page) -> str:
 
 def _is_unsafe_navigation_url(current_url: str | None, listing_url: str | None) -> bool:
     current = urlparse(current_url or "")
+    listing = urlparse(listing_url or "")
+    if is_insecure_portal_http_url(listing_url or ""):
+        return True
+    if listing.scheme and listing.scheme.lower() != "https":
+        return True
     if current.scheme.lower() in {"about", "edge", "chrome"}:
         return True
     if not current.netloc:
+        return True
+    if is_insecure_portal_http_url(current_url or ""):
         return True
     expected_host = urlparse(listing_url or "").netloc.lower()
     if expected_host and current.netloc.lower() != expected_host:
