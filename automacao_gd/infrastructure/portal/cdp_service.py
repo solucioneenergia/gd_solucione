@@ -1176,6 +1176,20 @@ def download_completed_budgets_from_current_page(
         f"SKIP_ALREADY_COMPLETED={summary['skip_already_completed']}."
     )
 
+    if _page_looks_access_denied(page):
+        summary["run_error"] = (
+            "Access Denied detectado no Portal GD. "
+            f"{manual_cdp_listing_recovery_message()}"
+        )
+        summary["aborted"] = True
+        summary["abort_reason"] = summary["run_error"]
+        summary["finished_at"] = datetime.now().isoformat(timespec="seconds")
+        logger.error(summary["run_error"])
+        _refresh_download_totals(summary)
+        summary["total_cdp_errors"] = 1
+        summary["total_errors"] = 1
+        return summary
+
     if settings.ENABLE_PORTAL_PAGINATION:
         reset_result = ensure_listing_starts_on_page_one(page)
         summary["pagination_initial_active_page"] = reset_result.get(

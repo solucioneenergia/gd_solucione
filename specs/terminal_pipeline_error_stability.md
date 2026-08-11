@@ -201,6 +201,8 @@ historico quando a pagina atual ou a `listing_url` capturada apontavam para
 - O modo CDP permanece estritamente attach-only.
 - Se a pagina atual ou a `listing_url` salva forem HTTP do Portal GD, a automacao deve falhar
   fechada antes de chamar `goto()`, `reload()` ou `go_back()`.
+- Se a aba HTTPS inicialmente valida virar `Access Denied` depois da conexao CDP, a automacao
+  deve abortar antes de resetar paginacao, ler tabela, baixar PDF ou manter espera longa.
 - A mensagem operacional deve orientar o operador a reabrir o Edge pelo comando PowerShell
   aprovado, fazer login manual e deixar a listagem aberta.
 - A automacao nao pode abrir nova aba, navegar para a raiz do Portal nem tentar autenticar.
@@ -209,3 +211,4 @@ historico quando a pagina atual ou a `listing_url` capturada apontavam para
 
 - `test_recover_listing_does_not_navigate_when_current_page_is_http_access_denied`
 - `test_recover_listing_does_not_goto_http_listing_url`
+- `test_download_step_aborts_before_pagination_when_portal_turns_access_denied`

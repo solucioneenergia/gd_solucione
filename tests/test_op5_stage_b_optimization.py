@@ -10,6 +10,7 @@ import pytest
 
 from automacao_gd.application import full_pipeline, processing_service
 from automacao_gd.application.contracts import OperationStatus
+from automacao_gd.infrastructure.portal import cdp_service as cdp_portal_service
 from automacao_gd.presentation import cli
 from automacao_gd.presentation.cli import _parse_args
 
@@ -737,6 +738,44 @@ def test_pipeline_download_step_reports_manual_cdp_opening_when_listing_tab_miss
     assert result["total_errors"] == 1
     assert "PowerShell" in result["run_error"]
     assert "login manual" in result["run_error"]
+
+
+def test_download_step_aborts_before_pagination_when_portal_turns_access_denied(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    settings = SimpleNamespace(
+        downloads_dir_path=tmp_path / "downloads",
+        MAX_COMPLETED_TO_PROCESS=60,
+        ENABLE_PORTAL_PAGINATION=True,
+        MAX_PORTAL_PAGES=15,
+        DRY_RUN=True,
+        REPROCESS_EXISTING_PDFS=False,
+        PROCESS_EXISTING_AFTER_SKIP=True,
+        SKIP_ALREADY_COMPLETED=True,
+        op5_target_protocols=set(),
+    )
+    page = SimpleNamespace(url="https://gdneoenergiapernambuco.neoenergia.com/index.jsf")
+
+    monkeypatch.setattr(cdp_portal_service, "_page_looks_access_denied", lambda page: True)
+    monkeypatch.setattr(
+        cdp_portal_service,
+        "ensure_listing_starts_on_page_one",
+        lambda page: (_ for _ in ()).throw(
+            AssertionError("pagination reset must not run after Access Denied")
+        ),
+    )
+
+    summary = cdp_portal_service.download_completed_budgets_from_current_page(
+        page,
+        downloads_root=tmp_path / "downloads",
+        settings=settings,
+    )
+
+    assert summary["aborted"] is True
+    assert summary["total_errors"] == 1
+    assert "Access Denied" in summary["run_error"]
+    assert "PowerShell" in summary["run_error"]
 
 
 def test_cli_op5_audit_global_invokes_readonly_audit(
