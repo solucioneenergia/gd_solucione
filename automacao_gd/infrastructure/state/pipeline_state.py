@@ -404,8 +404,10 @@ def _excel_valid(entry: dict, settings, protocol: str) -> bool:
         workbook_path=settings.planilha_path,
         protocol=protocol,
         entry_date=entry.get("entry_date"),
+        completion_date=entry.get("completion_date"),
         module_text=technical.get("placa_planilha"),
         inverter_text=technical.get("inversor_planilha"),
+        require_completion_present=True,
     )
     return bool(validation.get("success") and validation.get("already_updated"))
 

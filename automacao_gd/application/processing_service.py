@@ -678,6 +678,16 @@ def _completion_value_from_metadata(portal_metadata: dict | None) -> dict[str, A
             "reason": status,
             "pending_review": True,
         }
+    if completed_status:
+        return {
+            "value": None,
+            "raw": raw,
+            "normalized": None,
+            "source_stage": portal_metadata.get("completion_source_stage"),
+            "extraction_status": status or "COMPLETION_DATE_MISSING",
+            "reason": "COMPLETION_DATE_MISSING",
+            "pending_review": True,
+        }
     return {
         "value": None,
         "raw": raw,
@@ -828,6 +838,10 @@ def _process_single_pdf(
                 parecer="Sim",
                 dry_run=dry_run,
                 backup_path=backup_path,
+                require_completion_date=bool(
+                    portal_metadata
+                    and _is_completed_status(portal_metadata.get("status"))
+                ),
             )
         else:
             excel_status = _skipped_excel_status(protocol, dry_run)

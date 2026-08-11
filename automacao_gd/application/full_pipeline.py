@@ -1174,6 +1174,9 @@ def _persist_op5_plan(logs_dir: Path, payload: dict) -> Path:
 def _build_op5_plan_payload(payload: dict) -> dict:
     download = deepcopy(payload.get("download") or {})
     processing = payload.get("processing") or {}
+    planned_actions = _planned_excel_actions(processing)
+    download = _download_summary_for_planned_actions(download, planned_actions)
+    planned_count = len(planned_actions)
     return {
         "schema_version": 1,
         "created_at": datetime.now().isoformat(timespec="seconds"),
@@ -1191,15 +1194,23 @@ def _build_op5_plan_payload(payload: dict) -> dict:
         "apply_archive": payload.get("apply_archive"),
         "archive_only_local": bool(payload.get("archive_only_local")),
         "source_plan_path": payload.get("source_plan_path"),
-        "total_selected": payload.get("total_selected", 0),
-        "total_updates_planned": payload.get("total_updates_planned", 0),
+        "total_selected": planned_count,
+        "total_updates_planned": planned_count,
         "total_updates_applied": payload.get("total_updates_applied", 0),
         "total_errors": payload.get("total_errors", 0),
         "frozen_batch": download.get("frozen_batch"),
         "frozen_pdf_scope": download.get("frozen_pdf_scope"),
-        "planned_excel_actions": _planned_excel_actions(processing),
+        "planned_excel_actions": planned_actions,
         "download": download,
     }
+
+
+EXCEL_WRITE_ACTIONS = {
+    "insert_new_chronological",
+    "update_existing",
+    "move_wrong_sheet_to_correct_sheet",
+    "reformat_existing_excel_row",
+}
 
 
 def _planned_excel_actions(processing_summary: dict) -> list[dict[str, str]]:
@@ -1211,9 +1222,54 @@ def _planned_excel_actions(processing_summary: dict) -> list[dict[str, str]]:
         excel_status = item.get("excel_status")
         excel_status = excel_status if isinstance(excel_status, dict) else {}
         action = str(item.get("action") or excel_status.get("action") or "")
-        if protocol and action:
+        if protocol and action in EXCEL_WRITE_ACTIONS:
             actions.append({"protocol": protocol, "action": action})
     return actions
+
+
+def _download_summary_for_planned_actions(
+    download: dict,
+    planned_actions: list[dict[str, str]],
+) -> dict:
+    planned_protocols = [
+        str(item.get("protocol") or "")
+        for item in planned_actions
+        if str(item.get("protocol") or "")
+    ]
+    planned_set = set(planned_protocols)
+    if not planned_set:
+        return download
+
+    download["results"] = [
+        item
+        for item in download.get("results") or []
+        if str(item.get("protocol") or "") in planned_set
+    ]
+    download["selected_protocols"] = [
+        item
+        for item in download.get("selected_protocols") or []
+        if str(item.get("protocol") or "") in planned_set
+    ]
+    download["protocols_selected_by_global_limit"] = planned_protocols
+    download["total_protocols_selected_by_global_limit"] = len(planned_protocols)
+    download["total_selected"] = len(planned_protocols)
+    download["total_for_processing"] = len(planned_protocols)
+    download["total_sent_to_processing"] = len(planned_protocols)
+
+    frozen_batch = download.get("frozen_batch")
+    if isinstance(frozen_batch, dict):
+        frozen_batch["protocols"] = planned_protocols
+
+    frozen_scope = download.get("frozen_pdf_scope")
+    if isinstance(frozen_scope, dict):
+        artifacts = [
+            artifact
+            for artifact in frozen_scope.get("artifacts") or []
+            if str(artifact.get("protocol") or "") in planned_set
+        ]
+        frozen_scope["artifacts"] = artifacts
+        download["frozen_pdf_scope_count"] = len(artifacts)
+    return download
 
 
 def load_frozen_dry_run_plan(
@@ -1322,7 +1378,8 @@ def _validate_explicit_op5_plan_payload(payload: dict, settings: Settings) -> No
             code="OP5_PLAN_INVALID",
             technical_cause="schema_version_invalid",
         )
-    if not isinstance(payload.get("planned_excel_actions"), list):
+    planned_actions = payload.get("planned_excel_actions")
+    if not isinstance(planned_actions, list) or not planned_actions:
         raise _op5_plan_block(
             "Plano OP5 nao contem acoes Excel planejadas.",
             code="OP5_PLAN_INVALID",

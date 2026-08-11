@@ -135,8 +135,8 @@ A mudança de modo não pode mascarar erro de extração, erro de aplicação ou
 
 ### RF-004 — Seleção incremental
 
-Em `batch_fast`, a leitura do Portal deve parar quando houver N protocolos elegíveis e
-processáveis, respeitando:
+Em `batch_fast`, a leitura do Portal deve parar quando houver N ações reais planejadas
+ou N protocolos explicitamente solicitados, respeitando:
 
 - deduplicação por protocolo;
 - `SKIP_ALREADY_COMPLETED`;
@@ -144,7 +144,18 @@ processáveis, respeitando:
 - limite autorizado;
 - paginação segura.
 
-Se a paginação terminar antes de N elegíveis, o lote menor pode prosseguir em dry-run, desde que
+Para `op5-plan --limit N` sem `--protocols`, N representa o teto de alterações reais
+planejadas para Excel (`insert_new_chronological`, `update_existing`,
+`move_wrong_sheet_to_correct_sheet` ou equivalente), não o número bruto de protocolos
+concluídos encontrados no Portal. Protocolos classificados como
+`skipped_excel_already_updated` ou comprovadamente completos no estado local não consomem
+o limite operacional do lote. Se os primeiros protocolos lidos já estiverem completos, o
+planejamento deve continuar a seleção segura até encontrar até N ações planejadas,
+atingir fim/safety cap da listagem ou encontrar erro bloqueante. O relatório deve manter
+separados: concluídos lidos no Portal, selecionados para análise, completos/sem
+alteração, ações Excel planejadas e ações Excel aplicadas.
+
+Se a paginação terminar antes de N ações planejadas, o lote menor pode prosseguir em dry-run, desde que
 o relatório registre o motivo e a quantidade efetiva. Em execução real, o plano congelado define
 o escopo; não há nova seleção.
 

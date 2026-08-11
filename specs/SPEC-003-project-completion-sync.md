@@ -236,6 +236,13 @@ Exemplos:
 - `Conclusão` igual e equipamento divergente: atualizar somente `Placa`/`Inversor`.
 - Tudo igual: classificar como já atualizado.
 
+Para solicitações concluídas da opção 5, `Conclusão` não pode ser considerada
+`completion_no_change=True` quando a célula da planilha estiver vazia e o Portal/plano não
+trouxer data ou valor canônico de conclusão. Nesse caso, o protocolo deve ser bloqueado para
+revisão/retomada operacional com erro específico de conclusão indisponível, sem aplicar
+atualização parcial de equipamentos na mesma linha. Se houver data ou valor `EM ABERTO`
+canônico no plano/metadata, a automação deve preencher a coluna `Conclusão`.
+
 ## Transação do Excel
 
 Quando um protocolo possuir alterações seguras em `Conclusão`, `Placa` ou `Inversor`, elas devem ser aplicadas na mesma transação controlada:

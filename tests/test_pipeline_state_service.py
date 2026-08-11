@@ -3,6 +3,8 @@ import json
 from pathlib import Path
 from types import SimpleNamespace
 
+from openpyxl import Workbook
+
 from src.models import PortalSolicitation
 from src.pipeline_state_service import PipelineStateStore
 from automacao_gd.domain.equipment_cache import serialize_equipment_cache
@@ -18,6 +20,41 @@ def _settings(tmp_path: Path, skip_completed: bool = True) -> SimpleNamespace:
         downloads_dir_path=tmp_path / "downloads",
         planilha_path=tmp_path / "planilha.xlsx",
     )
+
+
+def _write_workbook_with_protocol(
+    path: Path,
+    protocol: str,
+    *,
+    completion: str | None,
+) -> None:
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "2026"
+    ws.append(
+        [
+            "Cliente",
+            "Protocolo",
+            "Data de ingresso",
+            "Conclusão",
+            "Parecer",
+            "Placa",
+            "Inversor",
+        ]
+    )
+    ws.append(
+        [
+            "CLIENTE SINTETICO LTDA",
+            protocol,
+            "16/01/2026",
+            completion,
+            "Sim",
+            "10x FAB MOD",
+            "1x FAB INV",
+        ]
+    )
+    wb.save(path)
+    wb.close()
 
 
 def _completed_artifacts(tmp_path: Path, protocol: str) -> dict:
@@ -87,6 +124,25 @@ def test_completed_protocol_is_skipped_when_artifacts_are_valid(tmp_path: Path) 
     )
 
     assert store.should_skip_completed(protocol, _settings(tmp_path)) is True
+
+
+def test_completed_protocol_is_not_skipped_when_workbook_completion_is_blank(
+    tmp_path: Path,
+) -> None:
+    protocol = "2600001048"
+    _write_workbook_with_protocol(tmp_path / "planilha.xlsx", protocol, completion=None)
+    settings = _settings(tmp_path)
+    settings.APPLY_EXCEL = True
+
+    store = PipelineStateStore(path=tmp_path / "state.json", resume=False)
+    store.update_protocol(
+        protocol,
+        status="completed",
+        last_step="completed",
+        data=_completed_artifacts(tmp_path, protocol),
+    )
+
+    assert store.should_skip_completed(protocol, settings) is False
 
 
 def test_completed_protocol_is_not_skipped_when_force_reprocess(tmp_path: Path) -> None:

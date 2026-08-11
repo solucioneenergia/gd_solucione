@@ -149,6 +149,26 @@ class TestUpdateExcelFromPdfData:
         assert result["row_found"] is True
         assert result["row_number"] is not None
 
+    def test_op5_blocks_existing_row_when_completion_is_blank_and_missing(
+        self, sample_workbook: Path
+    ):
+        result = update_excel_from_pdf_data(
+            workbook_path=sample_workbook,
+            protocol="2600001097",
+            client_name="CLIENTE SINTETICO 008 LTDA",
+            entry_date="01/06/2025",
+            completion_date=None,
+            module_text="18x MOD X 585W",
+            inverter_text="1x INV Y",
+            dry_run=True,
+            require_completion_date=True,
+        )
+
+        assert result["success"] is False
+        assert result["can_write"] is False
+        assert result["action"] == "blocked_missing_completion_date"
+        assert result["completion_no_change"] is False
+
     def test_real_run_skips_protocol_already_updated(self, sample_workbook: Path):
         result = update_excel_from_pdf_data(
             workbook_path=sample_workbook,

@@ -143,6 +143,7 @@ def validate_excel_protocol_updated(
     completion_date: Any = None,
     module_text: str | None = None,
     inverter_text: str | None = None,
+    require_completion_present: bool = False,
 ) -> dict:
     workbook_path = Path(workbook_path)
     result: dict[str, Any] = {
@@ -188,6 +189,13 @@ def validate_excel_protocol_updated(
         )
         if result["target_sheet"] and occurrence["sheet"] != result["target_sheet"]:
             return result
+
+        if require_completion_present and completion_date is None:
+            completion_col = _column_by_normalized_name(info["columns"], "CONCLUSAO")
+            if not _has_text(info["worksheet"].cell(row=row, column=completion_col).value):
+                result["already_updated"] = False
+                result["error"] = "Conclusão vazia na planilha."
+                return result
 
         result["already_updated"] = _row_has_required_update_values(
             info["worksheet"],
@@ -325,6 +333,7 @@ def update_excel_from_pdf_data(
     dry_run: bool = True,
     backup_path: Path | None = None,
     apply_changes: bool = True,
+    require_completion_date: bool = False,
 ) -> dict:
     workbook_path = Path(workbook_path)
     entry_dt = parse_date(entry_date)
@@ -391,6 +400,7 @@ def update_excel_from_pdf_data(
                 backup_path=backup_path,
                 apply_changes=apply_changes,
                 workbook_path=workbook_path,
+                require_completion_date=require_completion_date,
             )
 
         return _handle_new_row(
@@ -408,6 +418,7 @@ def update_excel_from_pdf_data(
             backup_path=backup_path,
             apply_changes=apply_changes,
             workbook_path=workbook_path,
+            require_completion_date=require_completion_date,
         )
     except PermissionError as exc:
         _set_workbook_operational_error(result, exc)
@@ -440,6 +451,7 @@ def _handle_existing_row(
     backup_path: Path | None,
     apply_changes: bool,
     workbook_path: Path,
+    require_completion_date: bool,
 ) -> dict:
     existing_sheet = occurrence["sheet"]
     existing_row = occurrence["row"]
@@ -455,6 +467,33 @@ def _handle_existing_row(
             "created_new_row": False,
         }
     )
+    ws_info = sheet_map[existing_sheet]
+    if require_completion_date and completion_date is None:
+        completion_col = _column_by_normalized_name(ws_info["columns"], "CONCLUSAO")
+        current_completion = ws_info["worksheet"].cell(
+            row=existing_row,
+            column=completion_col,
+        ).value
+        if not _has_text(current_completion):
+            result.update(
+                {
+                    "success": False,
+                    "can_write": False,
+                    "action": "blocked_missing_completion_date",
+                    "target_row": existing_row,
+                    "new_row": existing_row,
+                    "moved_from": f"{existing_sheet}!{existing_row}",
+                    "moved_to": f"{existing_sheet}!{existing_row}",
+                    "completion_no_change": False,
+                    "completion_action": "MISSING_COMPLETION_DATE",
+                    "error": (
+                        "Conclusão vazia na planilha e data de conclusão não "
+                        "disponível no plano OP5."
+                    ),
+                }
+            )
+            return result
+
     if existing_sheet != result["target_sheet"]:
         return _handle_wrong_sheet(
             result=result,
@@ -475,7 +514,6 @@ def _handle_existing_row(
             workbook_path=workbook_path,
         )
 
-    ws_info = sheet_map[existing_sheet]
     update_state = _row_required_update_state(
         ws_info["worksheet"],
         existing_row,
@@ -654,7 +692,24 @@ def _handle_new_row(
     backup_path: Path | None,
     apply_changes: bool,
     workbook_path: Path,
+    require_completion_date: bool,
 ) -> dict:
+    if require_completion_date and completion_date is None:
+        result.update(
+            {
+                "success": False,
+                "can_write": False,
+                "action": "blocked_missing_completion_date",
+                "completion_no_change": False,
+                "completion_action": "MISSING_COMPLETION_DATE",
+                "error": (
+                    "Data de conclusão não disponível para criar linha OP5 "
+                    "com Conclusão preenchida."
+                ),
+            }
+        )
+        return result
+
     target_info = _get_or_prepare_target_sheet(
         wb=wb,
         sheet_map=sheet_map,

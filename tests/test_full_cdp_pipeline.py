@@ -7,6 +7,7 @@ from scripts.run_full_cdp_pipeline import (
     _pdf_paths_for_processing,
     build_pipeline_payload,
 )
+from automacao_gd.application import full_pipeline
 import src.cdp_portal_service as cdp_portal_service
 from src.cdp_portal_service import (
     _click_next_listing_page_diagnostic,
@@ -1004,6 +1005,55 @@ def test_batch_fast_collect_stops_when_requested_limit_is_reached(monkeypatch) -
     assert summary["pagination_complete"] is False
     assert clicks == []
 
+
+def test_op5_plan_counts_only_excel_write_actions_as_planned() -> None:
+    payload = {
+        "json_report_path": "data/logs/pipeline_cdp_completo.json",
+        "status": "SUCESSO",
+        "requested_batch_limit": 50,
+        "authorized_batch_limit": 60,
+        "authorization_scope": "CONTROLLED_PRODUCTION_OPTION5_UP_TO_60",
+        "workbook_path": "pyproject.toml",
+        "apply_excel": True,
+        "apply_archive": True,
+        "total_selected": 50,
+        "total_updates_planned": 2,
+        "total_updates_applied": 0,
+        "total_errors": 0,
+        "download": {
+            "frozen_batch": {"protocols": ["2600001048", "2600001049", "2600001050"]},
+            "frozen_pdf_scope": {"artifacts": []},
+        },
+        "processing": {
+            "results": [
+                {
+                    "protocol": "2600001048",
+                    "excel_status": {"action": "skipped_excel_already_updated"},
+                },
+                {
+                    "protocol": "2600001049",
+                    "excel_status": {"action": "update_existing"},
+                },
+                {
+                    "protocol": "2600001050",
+                    "excel_status": {"action": "insert_new_chronological"},
+                },
+            ]
+        },
+    }
+
+    plan = full_pipeline._build_op5_plan_payload(payload)
+
+    assert plan["total_selected"] == 2
+    assert plan["total_updates_planned"] == 2
+    assert plan["planned_excel_actions"] == [
+        {"protocol": "2600001049", "action": "update_existing"},
+        {"protocol": "2600001050", "action": "insert_new_chronological"},
+    ]
+    assert plan["download"]["frozen_batch"]["protocols"] == [
+        "2600001049",
+        "2600001050",
+    ]
 
 def test_batch_fast_does_not_require_global_reconciliation_before_lot(monkeypatch) -> None:
     class Settings(DummySettings):
