@@ -119,10 +119,11 @@ def test_cdp_close_does_not_close_manual_browser() -> None:
     assert calls == ["playwright.stop"]
 
 
-def test_cdp_mode_opens_https_portal_tab_when_only_http_blocked_tab_exists(
+def test_cdp_mode_fails_closed_when_only_http_blocked_tab_exists(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     navigations: list[str] = []
+    created_pages: list[str] = []
 
     class FakePage:
         def __init__(self, url: str) -> None:
@@ -141,6 +142,7 @@ def test_cdp_mode_opens_https_portal_tab_when_only_http_blocked_tab_exists(
             self.pages = [blocked]
 
         def new_page(self):
+            created_pages.append("new_page")
             self.pages.append(created)
             created.context = self
             return created
@@ -161,10 +163,11 @@ def test_cdp_mode_opens_https_portal_tab_when_only_http_blocked_tab_exists(
     )
     automation = CDPPortalGDAutomation(settings)
 
-    automation.start_browser()
+    with pytest.raises(RuntimeError, match="Abra o Edge.*PowerShell.*login manual"):
+        automation.start_browser()
 
-    assert automation.page is created
-    assert navigations == ["https://gdneoenergiapernambuco.neoenergia.com/"]
+    assert created_pages == []
+    assert navigations == []
 
 
 def test_find_portal_page_ignores_access_denied_tab() -> None:

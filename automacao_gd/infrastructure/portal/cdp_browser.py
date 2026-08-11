@@ -33,7 +33,12 @@ class CDPPortalGDAutomation(PersistentBrowserPortalGDAutomation):
             )
             self.page = self.find_portal_tab()
             if self.page is None:
-                self.page = self._open_https_portal_tab()
+                raise RuntimeError(
+                    "Nenhuma aba HTTPS autenticada/listagem do Portal GD foi "
+                    "encontrada via CDP. Abra o Edge pelo comando PowerShell "
+                    "aprovado, faça login manual no Portal GD e deixe a listagem "
+                    "aberta antes de executar a automação."
+                )
             self.context = self.page.context
         except Exception:
             playwright.stop()
@@ -53,24 +58,6 @@ class CDPPortalGDAutomation(PersistentBrowserPortalGDAutomation):
             self.browser,
             self.settings.PORTAL_GD_URL,
         )
-
-    def _open_https_portal_tab(self):
-        if self.browser is None:
-            raise RuntimeError("Conexão CDP ainda não foi iniciada.")
-        if not self.browser.contexts:
-            raise RuntimeError("Nenhum contexto do Edge foi encontrado via CDP.")
-        context = self.browser.contexts[0]
-        page = context.new_page()
-        logger.warning(
-            "Nenhuma aba HTTPS válida do Portal GD foi encontrada via CDP; "
-            "abrindo nova aba HTTPS no Edge conectado."
-        )
-        page.goto(
-            self.settings.PORTAL_GD_URL,
-            wait_until="domcontentloaded",
-            timeout=20_000,
-        )
-        return page
 
     def open_portal(self) -> None:
         if self.page is None:

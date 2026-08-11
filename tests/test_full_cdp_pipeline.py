@@ -549,6 +549,37 @@ def test_reset_listing_to_first_page_clicks_page_one(monkeypatch) -> None:
     assert targets == [1]
 
 
+def test_reset_listing_accepts_disabled_page_one_when_active_indicator_missing(
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(cdp_portal_service, "get_active_numeric_page", lambda page: None)
+    monkeypatch.setattr(
+        cdp_portal_service,
+        "read_current_page_table_with_row_handles",
+        lambda page: [_row("2600001048")],
+    )
+    monkeypatch.setattr(
+        cdp_portal_service,
+        "find_and_click_next_numeric_page",
+        lambda page, current_page_number: {
+            "found": True,
+            "enabled": False,
+            "clicked": False,
+            "current_page_number": current_page_number,
+            "target_page_number": 1,
+            "numeric_page_links_found": ["1", "2", "3"],
+            "stop_reason": "pagination_numeric_target_disabled",
+        },
+    )
+
+    result = ensure_listing_starts_on_page_one(FakePage())
+
+    assert result["success"] is True
+    assert result["status"] == "assumed_first_page_active_unconfirmed"
+    assert result["active_page_after"] == 1
+    assert result["click_result"]["target_page_number"] == 1
+
+
 def test_max_portal_pages_one_reads_only_current_page() -> None:
     summary = consolidate_listing_page_rows([_page(0, 50), _page(50, 50)], max_pages=1)
 
@@ -2380,3 +2411,143 @@ def test_protocol_row_includes_listing_recovery_diagnostics() -> None:
     assert rows[0]["retorno_listagem_status"] == "recovered_listing_by_url"
     assert rows[0]["metodo_retorno_listagem"] == "recovered_listing_by_url"
     assert rows[0]["url_depois_detalhe"].endswith("/detalhe")
+
+
+def test_return_to_listing_fails_closed_without_opening_new_portal_page(
+    monkeypatch,
+) -> None:
+    class SameTabDetailPage:
+        def __init__(self) -> None:
+            self.name = "detail"
+            self.url = "https://gdneoenergiapernambuco.neoenergia.com/detalhe"
+            self.context = RecoveryContext()
+            self.closed = False
+
+        def is_closed(self) -> bool:
+            return self.closed
+
+        def wait_for_timeout(self, timeout: int) -> None:
+            return None
+
+        def go_back(self, **kwargs) -> None:
+            raise cdp_portal_service.PlaywrightError("history unavailable")
+
+    class RecoveryContext:
+        def __init__(self) -> None:
+            self.pages = []
+            self.new_page_called = False
+
+        def new_page(self):
+            self.new_page_called = True
+            raise AssertionError("CDP recovery must not open a new portal page")
+
+    detail_page = SameTabDetailPage()
+    detail_page.context.pages.append(detail_page)
+
+    monkeypatch.setattr(
+        cdp_portal_service,
+        "_has_minhas_solicitacoes_table",
+        lambda page: False,
+    )
+    monkeypatch.setattr(
+        cdp_portal_service,
+        "_click_minhas_solicitacoes_navigation",
+        lambda page: False,
+    )
+
+    monkeypatch.setattr(
+        cdp_portal_service,
+        "_goto_listing_url",
+        lambda page, listing_url: (_ for _ in ()).throw(
+            cdp_portal_service.PlaywrightError("same tab stuck")
+        ),
+    )
+    monkeypatch.setattr(
+        cdp_portal_service,
+        "_reload_page",
+        lambda page: (_ for _ in ()).throw(
+            cdp_portal_service.PlaywrightError("reload unavailable")
+        ),
+    )
+
+    recovered_page, recovery = cdp_portal_service._return_to_listing_after_detail(
+        detail_page,
+        detail_page,
+        "https://gdneoenergiapernambuco.neoenergia.com/minhas",
+    )
+
+    assert recovered_page is detail_page
+    assert recovery["success"] is False
+    assert recovery["status"] == "failed_return_to_listing"
+    assert "reabra o Edge" in recovery["error"]
+    assert detail_page.context.new_page_called is False
+
+
+def test_return_to_listing_uses_existing_context_listing_when_original_is_closed(
+    monkeypatch,
+) -> None:
+    class ContextPage:
+        def __init__(self, name: str, context: "RecoveryContext") -> None:
+            self.name = name
+            self.url = f"https://gdneoenergiapernambuco.neoenergia.com/{name}"
+            self.context = context
+            self.closed = False
+
+        def is_closed(self) -> bool:
+            return self.closed
+
+        def wait_for_timeout(self, timeout: int) -> None:
+            return None
+
+        def go_back(self, **kwargs) -> None:
+            raise cdp_portal_service.PlaywrightError("history unavailable")
+
+    class RecoveryContext:
+        def __init__(self) -> None:
+            self.pages = []
+
+        def new_page(self):
+            raise cdp_portal_service.PlaywrightError("new page unavailable")
+
+    context = RecoveryContext()
+    listing_page = ContextPage("closed-listing", context)
+    listing_page.closed = True
+    detail_page = ContextPage("detail", context)
+    sibling_listing = ContextPage("minhas", context)
+    context.pages.extend([listing_page, detail_page, sibling_listing])
+
+    monkeypatch.setattr(
+        cdp_portal_service,
+        "_has_minhas_solicitacoes_table",
+        lambda page: getattr(page, "name", "") == "minhas",
+    )
+    monkeypatch.setattr(
+        cdp_portal_service,
+        "_click_minhas_solicitacoes_navigation",
+        lambda page: False,
+    )
+    monkeypatch.setattr(
+        cdp_portal_service,
+        "_goto_listing_url",
+        lambda page, url: (_ for _ in ()).throw(
+            cdp_portal_service.PlaywrightError("navigation unavailable")
+        ),
+    )
+    monkeypatch.setattr(
+        cdp_portal_service,
+        "_reload_page",
+        lambda page: (_ for _ in ()).throw(
+            cdp_portal_service.PlaywrightError("reload unavailable")
+        ),
+    )
+
+    recovered_page, recovery = cdp_portal_service._return_to_listing_after_detail(
+        detail_page,
+        listing_page,
+        "https://gdneoenergiapernambuco.neoenergia.com/minhas",
+    )
+
+    assert recovered_page is sibling_listing
+    assert recovery["success"] is True
+    assert recovery["status"] == "recovered_listing_by_existing_context_page"
+    assert recovery["method"] == "recovered_listing_by_existing_context_page"

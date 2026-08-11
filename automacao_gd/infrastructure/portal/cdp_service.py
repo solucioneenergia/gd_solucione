@@ -2014,10 +2014,25 @@ def ensure_listing_starts_on_page_one(page) -> dict:
     active_page = get_active_numeric_page(page)
     result["initial_active_page"] = active_page
     if active_page is None:
+        first_page_probe = _recover_first_page_without_active_indicator(page)
+        result["click_result"] = first_page_probe
+        if first_page_probe["success"]:
+            result.update(
+                {
+                    "success": True,
+                    "status": first_page_probe["status"],
+                    "active_page_after": 1,
+                    "error": None,
+                }
+            )
+            return result
         result.update(
             {
                 "status": "cannot_confirm_active_page",
-                "error": "Nao foi possivel detectar a pagina ativa do paginador.",
+                "error": (
+                    first_page_probe.get("error")
+                    or "Nao foi possivel detectar a pagina ativa do paginador."
+                ),
             }
         )
         return result
@@ -2048,6 +2063,64 @@ def ensure_listing_starts_on_page_one(page) -> dict:
                 or f"Pagina ativa apos reset: {active_after}; esperado: 1."
             ),
         }
+    )
+    return result
+
+
+def _recover_first_page_without_active_indicator(page) -> dict:
+    result = {
+        "success": False,
+        "status": "cannot_confirm_active_page",
+        "method": "first_page_without_active_indicator",
+        "target_page_number": 1,
+        "click_result": None,
+        "error": "Nao foi possivel detectar a pagina ativa do paginador.",
+    }
+    try:
+        rows_before = read_current_page_table_with_row_handles(page)
+    except Exception as exc:
+        result["error"] = str(exc)
+        return result
+    if not rows_before:
+        result["error"] = "Listagem visivel sem linhas para confirmar pagina inicial."
+        return result
+
+    click_result = find_and_click_next_numeric_page(page, 0)
+    result["click_result"] = click_result
+    target_links = {str(link) for link in click_result.get("numeric_page_links_found", [])}
+    if (
+        click_result.get("found")
+        and not click_result.get("enabled")
+        and str(click_result.get("target_page_number")) == "1"
+        and "1" in target_links
+    ):
+        result.update(
+            {
+                "success": True,
+                "status": "assumed_first_page_active_unconfirmed",
+                "error": None,
+            }
+        )
+        return result
+    if click_result.get("clicked"):
+        _wait_after_pagination_click(page)
+        try:
+            if read_current_page_table_with_row_handles(page):
+                result.update(
+                    {
+                        "success": True,
+                        "status": "reset_to_first_page_unconfirmed_active",
+                        "error": None,
+                    }
+                )
+                return result
+        except Exception as exc:
+            result["error"] = str(exc)
+            return result
+
+    result["error"] = (
+        click_result.get("stop_reason")
+        or "Nao foi possivel confirmar ou selecionar a pagina 1 do paginador."
     )
     return result
 
@@ -3620,7 +3693,57 @@ def _return_to_listing_after_detail(detail_page, listing_page, listing_url: str)
             recovery = _recover_minhas_solicitacoes(listing_page, listing_url)
             return listing_page, recovery
     recovery = _recover_minhas_solicitacoes(detail_page, listing_url)
+    if not recovery["success"]:
+        fallback_page, fallback_recovery = _recover_listing_in_new_context_page(
+            detail_page,
+            listing_url,
+            previous_error=recovery.get("error"),
+        )
+        if fallback_recovery["success"] or fallback_recovery.get("error"):
+            return fallback_page, fallback_recovery
     return detail_page, recovery
+
+
+def _recover_listing_in_new_context_page(
+    page,
+    listing_url: str,
+    *,
+    previous_error: str | None = None,
+) -> tuple[object, dict]:
+    result = {
+        "success": False,
+        "status": "failed_return_to_listing",
+        "method": "existing_context_listing_only",
+        "url_before": _safe_page_url(page),
+        "url_after": None,
+        "error": previous_error or "Nao foi possivel retornar para a tabela de listagem.",
+    }
+    try:
+        context = getattr(page, "context", None)
+        if context is None:
+            return page, result
+        for candidate in list(getattr(context, "pages", []) or []):
+            if candidate is page or _page_is_closed(candidate):
+                continue
+            recovery = _recover_minhas_solicitacoes(candidate, listing_url)
+            if recovery["success"]:
+                recovery.update(
+                    {
+                        "status": "recovered_listing_by_existing_context_page",
+                        "method": "recovered_listing_by_existing_context_page",
+                    }
+                )
+                return candidate, recovery
+        result["error"] = (
+            f"{result['error']} reabra o Edge pelo comando PowerShell aprovado, "
+            "faca login manual no Portal GD e deixe a listagem aberta."
+        )
+        return page, result
+    except PlaywrightError as exc:
+        result["error"] = str(exc)
+        result["url_after"] = _safe_page_url(page)
+        logger.debug(f"Falha ao recuperar listagem em nova aba: {exc}")
+        return page, result
 
 
 def _recover_minhas_solicitacoes(page, listing_url: str) -> dict:

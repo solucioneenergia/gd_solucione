@@ -155,6 +155,20 @@ retornar `pagination_numeric_target_not_found`, mas listar o número alvo em
 de declarar falha. A falha só pode ser registrada como `pagination_numeric_target_not_found` depois
 desse fallback.
 
+Quando o detalhe do orçamento abrir na mesma aba e a aba não conseguir retornar para a listagem por
+menu, URL salva, reload ou histórico, o `op5-plan` deve tentar recuperar somente abas já existentes
+no mesmo contexto CDP que exibam a tabela `Minhas Solicitações`. O fluxo não pode abrir nova aba nem
+navegar para a URL raiz do Portal para tentar autenticação automática. Se nenhuma aba HTTPS já
+autenticada/listagem estiver disponível, deve falhar fechado e orientar o operador a reabrir o Edge
+com CDP pelo comando PowerShell aprovado e autenticar manualmente. Essa recuperação não altera o
+contrato do `op5-apply`, que continua proibido de reler Portal/CDP.
+
+Quando a listagem estiver visível, mas o Portal não expuser indicador confiável da página ativa do
+paginador, o reset inicial do `op5-plan` pode aceitar a página 1 apenas se o controle numérico `1`
+estiver presente como item desabilitado/ativo e a tabela possuir linhas. O relatório deve marcar o
+estado como página 1 não confirmada por indicador. Se essa evidência mínima não existir, o fluxo deve
+continuar bloqueando antes de download/aplicação.
+
 ### RF-005 — Pré-seleção local
 
 Antes de abrir detalhe ou baixar PDF, o lote rápido deve usar estado local disponível para
