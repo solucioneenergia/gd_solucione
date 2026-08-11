@@ -209,6 +209,11 @@ O reuso de PDF/metadados técnicos só é válido quando o cache estiver vincula
 - versão do extrator ou schema técnico;
 - versão das regras técnicas quando disponível.
 
+Para OP5 com preenchimento da coluna `Conclusão`, metadata local só pode evitar a abertura do
+detalhe do Portal se contiver `completion_date`, `completion_date_raw`,
+`completion_date_normalized` ou status canônico que justifique `EM ABERTO`. Metadata sem
+evidência de conclusão deve obrigar nova leitura do detalhe, mesmo que o PDF já exista.
+
 Cache legado sem protocolo e SHA do PDF deve ser reextraído.
 
 ### RF-006A — Arquivamento idempotente por SHA-256

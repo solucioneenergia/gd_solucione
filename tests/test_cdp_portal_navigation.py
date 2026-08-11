@@ -95,6 +95,28 @@ def test_existing_pdf_and_metadata_skip_opening_detail(tmp_path: Path) -> None:
     assert should_open_detail_for_budget("2601", tmp_path, False) is False
 
 
+def test_existing_pdf_and_metadata_without_completion_requires_detail_for_op5(
+    tmp_path: Path,
+) -> None:
+    protocol_dir = tmp_path / "2601"
+    protocol_dir.mkdir()
+    (protocol_dir / "Orcamento_de_Conexao_2601.pdf").write_bytes(b"%PDF-1.4\n")
+    (protocol_dir / "metadata.json").write_text(
+        '{"protocol": "2601"}',
+        encoding="utf-8",
+    )
+
+    assert (
+        should_open_detail_for_budget(
+            "2601",
+            tmp_path,
+            False,
+            require_completion_metadata=True,
+        )
+        is True
+    )
+
+
 def test_existing_pdf_still_requires_opening_detail_for_completion(tmp_path: Path) -> None:
     protocol_dir = tmp_path / "2601"
     protocol_dir.mkdir()

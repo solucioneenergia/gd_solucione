@@ -27,6 +27,11 @@ LISTING_RECOVERY_ATTEMPTS = 3
 VALID_DOWNLOAD_STATUSES_FOR_PROCESSING = {"downloaded", "existing_pdf_after_skip"}
 POINT_OF_CONNECTION_STAGE = "PONTO_DE_CONEXAO_APROVADO"
 POINT_OF_CONNECTION_STAGE_LABEL = "Ponto de Conexão Aprovado"
+POINT_OF_CONNECTION_NO_DATE_STATUSES = {
+    "POINT_OF_CONNECTION_COMPLETED_WITHOUT_DATE",
+    "POINT_OF_CONNECTION_STAGE_COMPLETED_WITHOUT_DATE",
+    "POINT_OF_CONNECTION_COMPLETION_DATE_NOT_AVAILABLE",
+}
 _COMPLETION_DATE_RE = re.compile(
     r"Conclu[ií]do\s+em\s+(\d{2}/\d{2}/\d{4})",
     flags=re.IGNORECASE,
@@ -1172,12 +1177,30 @@ def should_open_detail_for_budget(
     protocol: str,
     downloads_root: Path | None = None,
     reprocess_existing_pdfs: bool = False,
+    require_completion_metadata: bool = False,
 ) -> bool:
     if reprocess_existing_pdfs:
         return True
     existing_pdf = find_existing_connection_budget_pdf(protocol, downloads_root)
     metadata_path = find_existing_download_metadata(protocol, downloads_root)
+    if (
+        require_completion_metadata
+        and metadata_path is not None
+        and not _metadata_has_completion_value(metadata_path)
+    ):
+        return True
     return not (_is_valid_pdf(existing_pdf) and metadata_path is not None)
+
+
+def _metadata_has_completion_value(metadata_path: Path) -> bool:
+    metadata = _load_existing_download_metadata(Path(metadata_path))
+    return bool(
+        metadata.get("completion_date")
+        or metadata.get("completion_date_raw")
+        or metadata.get("completion_date_normalized")
+        or metadata.get("completion_extraction_status")
+        in POINT_OF_CONNECTION_NO_DATE_STATUSES
+    )
 
 
 def download_completed_budgets_from_current_page(
@@ -1547,6 +1570,9 @@ def download_completed_budgets_from_current_page(
                     protocol,
                     downloads_root,
                     reprocess_existing_pdfs,
+                    require_completion_metadata=bool(
+                        settings.APPLY_EXCEL and _is_batch_fast_mode(settings)
+                    ),
                 )
             ):
                 _reuse_existing_pdf_without_detail(
