@@ -17,6 +17,7 @@ from automacao_gd.application.operational_guard import (
     validate_offline_authorization,
     validate_operational_lock_proof,
 )
+from automacao_gd.application.op5_completed_index import record_completed_protocol
 from automacao_gd.application.op5_optimization import run_limited_pdf_tasks
 from automacao_gd.application.shareable_reports import build_shareable_report
 from automacao_gd.domain.errors import OperationalBlockError
@@ -913,7 +914,7 @@ def _process_single_pdf(
             }
         elif not dry_run:
             already_archived_path = _already_archived_path_from_state(
-                state_store, protocol
+                state_store, protocol, pdf_path
             )
             if already_archived_path:
                 archive_status = {
@@ -926,6 +927,8 @@ def _process_single_pdf(
                     "created_folder": False,
                     "fallback_mode": archive_destination.fallback_mode,
                     "legacy_gd_ignored": archive_destination.legacy_gd_ignored,
+                    "source_pdf_sha256": _sha256(pdf_path),
+                    "archived_pdf_sha256": _sha256(Path(already_archived_path)),
                 }
                 archived_pdf_path = already_archived_path
             elif apply_excel and not excel_status.get("success"):
@@ -952,13 +955,19 @@ def _process_single_pdf(
                 archive_status = {
                     "success": archive_result.success,
                     "simulated": False,
-                    "skipped": False,
+                    "skipped": archive_result.reason == "archive_already_done",
                     "error": archive_result.error,
                     "match_type": archive_result.match_type,
                     "reason": archive_result.reason,
                     "created_folder": archive_result.created_folder,
                     "fallback_mode": archive_result.fallback_mode,
                     "legacy_gd_ignored": archive_result.legacy_gd_ignored,
+                    "source_pdf_sha256": getattr(
+                        archive_result, "source_pdf_sha256", None
+                    ),
+                    "archived_pdf_sha256": getattr(
+                        archive_result, "archived_pdf_sha256", None
+                    ),
                 }
                 archived_pdf_path = archive_result.archived_pdf_path
                 if archive_result.destination_folder:
@@ -1050,6 +1059,17 @@ def _process_single_pdf(
                 "arquivo_final": Path(archived_pdf_path).name if archived_pdf_path else None,
                 "archive_status": archive_status,
                 "excel_status": _compact_excel_status(excel_status),
+                "op5_completed_index_effect": _record_completed_index_best_effort(
+                    protocol=protocol,
+                    pdf_path=pdf_path,
+                    archived_pdf_path=Path(archived_pdf_path)
+                    if archived_pdf_path
+                    else None,
+                    workbook_path=workbook_path,
+                    excel_status=excel_status,
+                    archive_status=archive_status,
+                    dry_run=dry_run,
+                ),
                 "error": None,
             }
         )
@@ -1113,6 +1133,45 @@ def _process_single_pdf(
                 result["error"],
             )
         return result
+
+
+def _record_completed_index_best_effort(
+    *,
+    protocol: str,
+    pdf_path: Path,
+    archived_pdf_path: Path | None,
+    workbook_path: Path,
+    excel_status: dict[str, Any],
+    archive_status: dict[str, Any],
+    dry_run: bool,
+) -> str:
+    if dry_run:
+        return "not_applicable"
+    if not excel_status.get("success") or not archive_status.get("success"):
+        return "not_applicable"
+    if not archived_pdf_path:
+        return "not_applicable"
+    try:
+        settings = get_settings()
+        record_completed_protocol(
+            index_path=settings.op5_completed_index_path,
+            protocol=protocol,
+            download_pdf_path=pdf_path,
+            archived_pdf_path=archived_pdf_path,
+            workbook_path=workbook_path,
+            workbook_sheet=excel_status.get("target_sheet")
+            or excel_status.get("worksheet")
+            or excel_status.get("source_sheet"),
+            workbook_row=excel_status.get("target_row")
+            or excel_status.get("row_number")
+            or excel_status.get("existing_row"),
+            source_pdf_sha256=archive_status.get("source_pdf_sha256"),
+            archived_pdf_sha256=archive_status.get("archived_pdf_sha256"),
+        )
+    except (AttributeError, OSError, TypeError, ValueError):
+        logger.error("Falha ao persistir indice mestre OP5 privado.")
+        return "failed"
+    return "persisted"
 
 
 def _add_state_error_best_effort(
@@ -2025,14 +2084,20 @@ def _state_excel_last_step(
     return "failed"
 
 
-def _already_archived_path_from_state(state_store, protocol: str) -> str | None:
+def _already_archived_path_from_state(
+    state_store, protocol: str, source_pdf_path: Path
+) -> str | None:
     if not state_store:
         return None
 
     entry = state_store.get_protocol(protocol) or {}
     archived_pdf_path = entry.get("archive", {}).get("archived_pdf_path")
     if archived_pdf_path and Path(archived_pdf_path).exists():
-        return str(archived_pdf_path)
+        try:
+            if _sha256(source_pdf_path) == _sha256(Path(archived_pdf_path)):
+                return str(archived_pdf_path)
+        except OSError:
+            return None
     return None
 
 
@@ -2054,6 +2119,8 @@ def _state_archive_payload(
         "created_folder": archive_status.get("created_folder"),
         "fallback_mode": archive_status.get("fallback_mode"),
         "legacy_gd_ignored": archive_status.get("legacy_gd_ignored"),
+        "source_pdf_sha256": archive_status.get("source_pdf_sha256"),
+        "archived_pdf_sha256": archive_status.get("archived_pdf_sha256"),
     }
 
 

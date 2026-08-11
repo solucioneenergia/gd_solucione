@@ -178,6 +178,23 @@ O reuso de PDF/metadados técnicos só é válido quando o cache estiver vincula
 
 Cache legado sem protocolo e SHA do PDF deve ser reextraído.
 
+### RF-006A — Arquivamento idempotente por SHA-256
+
+O arquivamento real de orçamento de conexão deve ser idempotente por conteúdo.
+Antes de criar `Orcamento_de_Conexao_<protocolo>_vN.pdf`, o sistema deve procurar,
+na pasta destino resolvida, arquivos `Orcamento_de_Conexao_<protocolo>*.pdf`.
+
+Se qualquer arquivo existente tiver SHA-256 igual ao PDF fonte:
+
+- não copiar o PDF novamente;
+- não criar `_v2`, `_v3` ou nova versão;
+- retornar sucesso com `reason=archive_already_done`;
+- registrar `source_pdf_sha256`, `archived_pdf_sha256` e caminho existente;
+- contabilizar o caso como `total_archive_already_done`, não como erro.
+
+Se houver arquivo com mesmo protocolo e SHA diferente, o comportamento seguro permanece:
+criar versão `_vN` sem sobrescrever arquivo existente e registrar os dois hashes quando possível.
+
 ### RF-007 — Cache privado de elegibilidade do Portal
 
 Em `batch_fast`, o dry-run pode persistir um snapshot privado e sanitizado da elegibilidade do
@@ -238,6 +255,33 @@ O índice deve mapear protocolo para metadados mínimos:
 
 O índice deve ser invalidado quando o SHA da planilha mudar. O índice não pode ser incluído em
 release, fixture permanente ou relatório compartilhável.
+
+### RF-009A — Estado mestre OP5 concluído
+
+O sistema deve manter um índice privado operacional em
+`DATA_DIR/state/op5_completed_index.json`.
+
+Cada protocolo concluído com sucesso no OP5 deve registrar:
+
+- `status=completed`;
+- SHA-256 do PDF local em `data/downloads`;
+- caminho relativo ou absoluto privado do PDF local;
+- SHA-256 do PDF arquivado;
+- caminho privado do PDF arquivado;
+- aba e linha da planilha afetada ou validada;
+- SHA-256 da planilha no momento da validação;
+- versão do extrator técnico;
+- versão das regras técnicas;
+- `updated_at`;
+- `expires_at`, exatamente 14 dias após a atualização.
+
+O índice mestre é uma evidência privada operacional. Ele não autoriza escrita por si só,
+não substitui plano congelado, lock global ou confirmação forte, e não pode ser publicado em
+relatórios compartilháveis, fixtures permanentes ou release.
+
+Após `expires_at`, a entrada deve ser considerada expirada e não pode ser usada para pular
+validação futura. A criação do índice não deve apagar PDFs locais; limpeza de `data/downloads`
+fica fora desta etapa e exigirá plano separado.
 
 ### RF-010 — Extração de PDF paralela com limite controlado
 
@@ -312,6 +356,7 @@ LOGS_DIR/op5_plan_latest.json
 LOGS_DIR/op5_portal_eligibility_cache.json
 LOGS_DIR/workbook_index_cache.json
 LOGS_DIR/portal_workbook_reconciliation_cache.json
+DATA_DIR/state/op5_completed_index.json
 ```
 
 ## Dados e persistência
@@ -384,6 +429,8 @@ temporariamente se passarem pelos validadores da SPEC-009.
 - RED para cache de elegibilidade contendo campos sensíveis ou sendo reutilizado fora do TTL.
 - RED para cache de reconciliação sendo reutilizado com SHA de planilha divergente.
 - RED para índice local da planilha sendo reutilizado após mudança do SHA.
+- RED para arquivamento repetido com PDF idêntico criando `_v2` indevido.
+- RED para índice mestre OP5 ausente ou sem TTL de 14 dias após protocolo concluído.
 - RED para extração PDF paralela que perde a ordem do lote ou aceita mais de 4 workers.
 - RED para CLI sem os comandos `op5-plan`, `op5-apply` e `op5-audit-global`.
 - RED para `op5-plan --protocols` selecionando protocolo fora dos primeiros N elegíveis.
@@ -400,6 +447,8 @@ temporariamente se passarem pelos validadores da SPEC-009.
 - [ ] Cache de elegibilidade é privado, sanitizado e invalidado por TTL/hash/modo.
 - [ ] Reconciliação global pode ser reutilizada por cache somente com SHA/hashes compatíveis.
 - [ ] Índice local da planilha é reutilizado por SHA e invalidado em mudança.
+- [ ] Arquivamento repetido de PDF idêntico não cria `_v2` e registra `archive_already_done`.
+- [ ] Índice mestre OP5 registra protocolo concluído com hashes, aba/linha, versões e TTL de 14 dias.
 - [ ] Extração PDF paralela respeita limite 1..4 e preserva ordem.
 - [ ] Comandos explícitos `op5-plan`, `op5-apply` e `op5-audit-global` existem e falham fechado.
 - [ ] `op5-plan --protocols` restringe o lote aos protocolos explícitos e não para antes de

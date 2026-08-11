@@ -243,6 +243,10 @@ class Settings(BaseSettings):
         return self.resolve_path(Path("data/state/pipeline_cdp_state.json"))
 
     @property
+    def op5_completed_index_path(self) -> Path:
+        return self.resolve_path(Path("data/state/op5_completed_index.json"))
+
+    @property
     def real_run_execution_lock_path(self) -> Path:
         return self.resolve_path(Path("data/locks/real_run_execution.lock"))
 

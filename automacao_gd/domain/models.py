@@ -320,6 +320,8 @@ class ArchiveResult(BaseModel):
     fallback_mode: str | None = None
     created_folder: bool | None = None
     legacy_gd_ignored: bool | None = None
+    source_pdf_sha256: str | None = None
+    archived_pdf_sha256: str | None = None
 
 
 def _clean_technical_text(text: str | None, uppercase: bool = True) -> str:

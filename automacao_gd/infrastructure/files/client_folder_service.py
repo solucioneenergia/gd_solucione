@@ -1,3 +1,4 @@
+import hashlib
 import json
 import re
 import time
@@ -556,9 +557,35 @@ def archive_pdf_to_client_folder(
         if not destination_folder.exists():
             created_folder = True
         destination_folder.mkdir(parents=True, exist_ok=True)
+        source_sha256 = _sha256_file(pdf_path)
+        already_archived = _find_identical_archived_pdf(
+            destination_folder, protocol, source_sha256
+        )
+        if already_archived is not None:
+            logger.info(
+                "PDF ja arquivado com mesmo SHA-256; copia pulada: "
+                f"protocol={protocol}; destino={already_archived}"
+            )
+            return ArchiveResult(
+                original_pdf_path=str(pdf_path),
+                archived_pdf_path=str(already_archived),
+                match_type=destination.match_type,
+                confidence=destination.confidence,
+                success=True,
+                error=None,
+                destination_folder=str(destination_folder),
+                reason="archive_already_done",
+                should_create_folder=False,
+                fallback_mode=destination.fallback_mode,
+                created_folder=False,
+                legacy_gd_ignored=destination.legacy_gd_ignored,
+                source_pdf_sha256=source_sha256,
+                archived_pdf_sha256=source_sha256,
+            )
         destination_file = build_destination_pdf_path(destination_folder, protocol)
 
         atomic_copy_file(pdf_path, destination_file, private=True)
+        archived_sha256 = _sha256_file(destination_file)
         logger.info(
             f"PDF arquivado em '{destination_file}' "
             f"(match_type={destination.match_type}, confidence={destination.confidence})."
@@ -576,6 +603,8 @@ def archive_pdf_to_client_folder(
             fallback_mode=destination.fallback_mode,
             created_folder=created_folder,
             legacy_gd_ignored=destination.legacy_gd_ignored,
+            source_pdf_sha256=source_sha256,
+            archived_pdf_sha256=archived_sha256,
         )
     except Exception as exc:
         logger.exception(f"Falha ao arquivar PDF: {exc}")
@@ -730,6 +759,34 @@ def _next_available_pdf_path(destination_folder: Path, protocol: str) -> Path:
         if not versioned.exists():
             return versioned
         version += 1
+
+
+def _find_identical_archived_pdf(
+    destination_folder: Path, protocol: str, source_sha256: str
+) -> Path | None:
+    protocol = validate_protocol_component(protocol)
+    base_name = sanitize_filename(f"Orcamento_de_Conexao_{protocol}")
+    try:
+        candidates = sorted(destination_folder.glob(f"{base_name}*.pdf"))
+    except OSError:
+        return None
+    for candidate in candidates:
+        if not candidate.is_file():
+            continue
+        try:
+            if _sha256_file(candidate) == source_sha256:
+                return candidate
+        except OSError:
+            continue
+    return None
+
+
+def _sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with Path(path).open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
 
 
 def _pending_folder(clientes_root: Path, protocol: str, client_name: str) -> Path:

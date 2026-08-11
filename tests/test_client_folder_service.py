@@ -1,5 +1,6 @@
 """Testes para client_folder_service — normalização, fuzzy match, busca por protocolo."""
 
+import hashlib
 import json
 from pathlib import Path
 from types import SimpleNamespace
@@ -448,6 +449,43 @@ class TestResolveArchiveDestinationFolder:
         assert result.match_type == "entrada_date_folder"
         assert Path(result.archived_pdf_path).name == "Orcamento_de_Conexao_2600001104_v2.pdf"
         assert existing.read_bytes() == b"old"
+
+    def test_archive_pdf_to_entry_folder_reuses_identical_existing_pdf_by_sha(
+        self, tmp_path: Path
+    ):
+        root = tmp_path / "clientes"
+        client = root / "Cliente"
+        entry = client / "Entrada 14-07-2026"
+        entry.mkdir(parents=True)
+        pdf = tmp_path / "origem.pdf"
+        pdf.write_bytes(b"%PDF-1.4\nCONTEUDO SINTETICO\n")
+        existing = entry / "Orcamento_de_Conexao_2600001104.pdf"
+        existing.write_bytes(pdf.read_bytes())
+        expected_sha = hashlib.sha256(pdf.read_bytes()).hexdigest()
+        match = ClientFolderMatch(
+            protocol="2600001104",
+            client_name="CLIENTE SINTETICO LTDA",
+            matched_path=str(client),
+            match_type="fuzzy_name",
+            confidence=100.0,
+            reason="found",
+        )
+
+        result = archive_pdf_to_client_folder(
+            pdf,
+            "2600001104",
+            "Cliente",
+            root,
+            match=match,
+            entry_date="2026-07-14",
+        )
+
+        assert result.success is True
+        assert result.reason == "archive_already_done"
+        assert Path(result.archived_pdf_path) == existing
+        assert result.source_pdf_sha256 == expected_sha
+        assert result.archived_pdf_sha256 == expected_sha
+        assert not (entry / "Orcamento_de_Conexao_2600001104_v2.pdf").exists()
 
 
 class TestBuildDestinationPdfPath:

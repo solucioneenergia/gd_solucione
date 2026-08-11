@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+from datetime import datetime, timezone
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock
@@ -126,6 +127,198 @@ def _configure_successful_single_pdf_dependencies(
     monkeypatch.setattr(processing_service, "update_excel_from_pdf_data", excel)
     monkeypatch.setattr(processing_service, "archive_pdf_to_client_folder", archive)
     return excel, archive
+
+
+def test_successful_real_op5_processing_records_completed_master_index(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    pdf = tmp_path / "Orcamento_de_Conexao_2600000000.pdf"
+    pdf.write_bytes(b"%PDF-1.4\nCONTEUDO SINTETICO\n")
+    workbook = tmp_path / "planilha-sintetica.xlsx"
+    workbook.write_bytes(b"WORKBOOK SINTETICO")
+    archived = tmp_path / "cliente-sintetico" / pdf.name
+    archived.parent.mkdir()
+    archived.write_bytes(pdf.read_bytes())
+    index_path = tmp_path / "state" / "op5_completed_index.json"
+    expected_pdf_sha = hashlib.sha256(pdf.read_bytes()).hexdigest()
+    expected_workbook_sha = hashlib.sha256(workbook.read_bytes()).hexdigest()
+
+    monkeypatch.setattr(
+        processing_service,
+        "get_settings",
+        lambda: SimpleNamespace(
+            downloads_dir_path=tmp_path / "downloads-sinteticos",
+            logs_dir_path=tmp_path / "logs-sinteticos",
+            op5_completed_index_path=index_path,
+        ),
+    )
+    validation = TechnicalValidationResult(status="approved")
+    monkeypatch.setattr(
+        processing_service,
+        "_load_or_extract_technical_data",
+        lambda *args: (
+            "2600000000",
+            "CLIENTE SINTETICO LTDA",
+            "MODULO SINTETICO",
+            "INVERSOR SINTETICO",
+            "5x MODULO SINTETICO",
+            "1x INVERSOR SINTETICO",
+            validation,
+        ),
+    )
+    monkeypatch.setattr(
+        processing_service,
+        "load_portal_metadata",
+        lambda *args: ({"entry_date": "2026-01-16", "completion_date": "2026-01-20"}, None),
+    )
+    monkeypatch.setattr(
+        processing_service,
+        "find_client_folder",
+        lambda *args: SimpleNamespace(
+            match_type="protocol",
+            matched_path=str(tmp_path / "cliente-sintetico"),
+            confidence=1.0,
+            cache_hit=False,
+            cache_key=None,
+            reason=None,
+            found_by="protocol",
+            protocol_search_hit=True,
+            search_elapsed_seconds=0.0,
+        ),
+    )
+    monkeypatch.setattr(
+        processing_service,
+        "resolve_archive_destination_folder",
+        lambda **kwargs: SimpleNamespace(
+            destination_folder=tmp_path / "cliente-sintetico",
+            match_type="protocol",
+            reason=None,
+            should_create_folder=False,
+            fallback_mode=None,
+            legacy_gd_ignored=False,
+        ),
+    )
+    monkeypatch.setattr(
+        processing_service,
+        "update_excel_from_pdf_data",
+        Mock(
+            return_value={
+                "success": True,
+                "can_write": True,
+                "skipped": False,
+                "action": "update_existing",
+                "target_sheet": "2026",
+                "target_row": 42,
+                "row_number": 42,
+            }
+        ),
+    )
+    monkeypatch.setattr(
+        processing_service,
+        "archive_pdf_to_client_folder",
+        Mock(
+            return_value=SimpleNamespace(
+                success=True,
+                error=None,
+                match_type="protocol",
+                reason=None,
+                created_folder=False,
+                fallback_mode=None,
+                legacy_gd_ignored=False,
+                archived_pdf_path=str(archived),
+                destination_folder=str(archived.parent),
+                source_pdf_sha256=expected_pdf_sha,
+                archived_pdf_sha256=expected_pdf_sha,
+            )
+        ),
+    )
+
+    result = processing_service._process_single_pdf(
+        pdf,
+        workbook,
+        tmp_path / "clientes-sinteticos",
+        dry_run=False,
+        apply_archive=True,
+    )
+
+    assert result["success"] is True
+    payload = json.loads(index_path.read_text(encoding="utf-8"))
+    entry = payload["protocols"]["2600000000"]
+    assert entry["status"] == "completed"
+    assert entry["download_pdf_sha256"] == expected_pdf_sha
+    assert entry["archived_pdf_sha256"] == expected_pdf_sha
+    assert entry["workbook_sheet"] == "2026"
+    assert entry["workbook_row"] == 42
+    assert entry["workbook_sha256"] == expected_workbook_sha
+    assert entry["technical_extractor_version"] == processing_service.TECHNICAL_PROCESSING_FORMAT_VERSION
+    assert entry["equipment_rules_version"] == processing_service.EQUIPMENT_RULES_VERSION
+    updated_at = datetime.fromisoformat(entry["updated_at"])
+    expires_at = datetime.fromisoformat(entry["expires_at"])
+    assert updated_at.tzinfo is not None
+    assert expires_at - updated_at == pytest.approx(
+        datetime.fromtimestamp(14 * 24 * 60 * 60, tz=timezone.utc)
+        - datetime.fromtimestamp(0, tz=timezone.utc)
+    )
+
+
+def test_op5_completed_master_index_is_not_recorded_when_effects_are_incomplete(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    pdf = tmp_path / "Orcamento_de_Conexao_2600000000.pdf"
+    pdf.write_bytes(b"%PDF-1.4\nCONTEUDO SINTETICO\n")
+    archived = tmp_path / "cliente-sintetico" / pdf.name
+    archived.parent.mkdir()
+    archived.write_bytes(pdf.read_bytes())
+    workbook = tmp_path / "planilha-sintetica.xlsx"
+    workbook.write_bytes(b"WORKBOOK SINTETICO")
+    index_path = tmp_path / "state" / "op5_completed_index.json"
+
+    monkeypatch.setattr(
+        processing_service,
+        "get_settings",
+        lambda: SimpleNamespace(op5_completed_index_path=index_path),
+    )
+
+    effect = processing_service._record_completed_index_best_effort(
+        protocol="2600000000",
+        pdf_path=pdf,
+        archived_pdf_path=archived,
+        workbook_path=workbook,
+        excel_status={"success": False, "target_sheet": "2026", "target_row": 42},
+        archive_status={"success": True, "source_pdf_sha256": None, "archived_pdf_sha256": None},
+        dry_run=False,
+    )
+
+    assert effect == "not_applicable"
+    assert not index_path.exists()
+
+
+def test_state_archive_skip_requires_same_pdf_sha256(tmp_path: Path) -> None:
+    source = tmp_path / "Orcamento_de_Conexao_2600000000.pdf"
+    source.write_bytes(b"%PDF-1.4\nPDF ATUAL SINTETICO\n")
+    archived = tmp_path / "cliente-sintetico" / source.name
+    archived.parent.mkdir()
+    archived.write_bytes(b"%PDF-1.4\nPDF ANTIGO DIFERENTE\n")
+
+    class StateStore:
+        def get_protocol(self, protocol: str) -> dict:
+            return {"archive": {"archived_pdf_path": str(archived)}}
+
+    assert (
+        processing_service._already_archived_path_from_state(
+            StateStore(), "2600000000", source
+        )
+        is None
+    )
+    archived.write_bytes(source.read_bytes())
+    assert (
+        processing_service._already_archived_path_from_state(
+            StateStore(), "2600000000", source
+        )
+        == str(archived)
+    )
 
 
 def test_cache_protocol_mismatch_is_reextracted_and_blocks_all_effects(
