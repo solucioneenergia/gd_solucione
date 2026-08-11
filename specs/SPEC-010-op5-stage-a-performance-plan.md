@@ -192,6 +192,8 @@ Antes de abrir detalhe ou baixar PDF, o lote rápido deve usar estado local disp
 reduzir trabalho:
 
 - protocolos já concluídos no state;
+- protocolos já presentes na planilha com `Cliente`, `Protocolo`, `Data de ingresso`,
+  `Conclusão`, `Parecer`, `Placa` e `Inversor` preenchidos;
 - PDFs existentes válidos;
 - metadados locais válidos;
 - flags de reprocessamento.

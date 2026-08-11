@@ -215,6 +215,65 @@ def validate_excel_protocol_updated(
             wb.close()
 
 
+def protocol_row_has_required_values(workbook_path: Path, protocol: str) -> dict:
+    workbook_path = Path(workbook_path)
+    result: dict[str, Any] = {
+        "success": False,
+        "complete": False,
+        "protocol": protocol,
+        "worksheet": None,
+        "row": None,
+        "missing_columns": [],
+        "error": None,
+    }
+    if not workbook_path.exists():
+        result["error"] = f"Planilha não encontrada: {workbook_path}"
+        return result
+
+    wb: Workbook | None = None
+    try:
+        wb = load_workbook_safe(workbook_path)
+        sheet_map = _workbook_required_sheets(wb)
+        occurrences = _find_protocol_occurrences(sheet_map, protocol)
+        if len(occurrences) != 1:
+            result["error"] = (
+                "Protocolo não encontrado na planilha"
+                if not occurrences
+                else "Protocolo duplicado na planilha"
+            )
+            return result
+
+        occurrence = occurrences[0]
+        info = sheet_map[occurrence["sheet"]]
+        row = occurrence["row"]
+        missing = [
+            column_name
+            for column_name in REQUIRED_COLUMNS
+            if not _has_text(
+                info["worksheet"].cell(
+                    row=row,
+                    column=info["columns"][column_name],
+                ).value
+            )
+        ]
+        result.update(
+            {
+                "success": True,
+                "complete": not missing,
+                "worksheet": occurrence["sheet"],
+                "row": row,
+                "missing_columns": missing,
+            }
+        )
+        return result
+    except Exception as exc:
+        result["error"] = str(exc)
+        return result
+    finally:
+        if wb is not None:
+            wb.close()
+
+
 def update_excel_equipment_columns(
     workbook_path: Path,
     protocol: str,

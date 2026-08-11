@@ -12,6 +12,7 @@ from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 
 from automacao_gd.infrastructure.config import get_settings
 from automacao_gd.infrastructure.dates import parse_date
+from automacao_gd.infrastructure.excel.service import protocol_row_has_required_values
 from automacao_gd.infrastructure.files.file_service import sanitize_filename
 from automacao_gd.infrastructure.logging import logger
 from automacao_gd.infrastructure.metadata.service import save_download_metadata
@@ -685,11 +686,30 @@ def _selection_skip_dict(
 
 def _state_should_skip_completed(pipeline_state, protocol: str, settings=None) -> bool:
     if pipeline_state is None:
-        return False
+        return _workbook_should_skip_completed(protocol, settings)
     if hasattr(pipeline_state, "should_skip_completed"):
-        return bool(pipeline_state.should_skip_completed(protocol, settings))
+        return bool(pipeline_state.should_skip_completed(protocol, settings)) or (
+            _workbook_should_skip_completed(protocol, settings)
+        )
     entry = _state_entry(pipeline_state, protocol)
-    return bool(entry and entry.get("status") == "completed")
+    return bool(entry and entry.get("status") == "completed") or (
+        _workbook_should_skip_completed(protocol, settings)
+    )
+
+
+def _workbook_should_skip_completed(protocol: str, settings=None) -> bool:
+    if settings is None:
+        return False
+    if not bool(getattr(settings, "APPLY_EXCEL", False)):
+        return False
+    mode = str(getattr(settings, "OP5_RECONCILIATION_MODE", "") or "").lower()
+    if mode != "batch_fast":
+        return False
+    workbook_path = getattr(settings, "planilha_path", None)
+    if workbook_path is None:
+        return False
+    validation = protocol_row_has_required_values(Path(workbook_path), protocol)
+    return bool(validation.get("success") and validation.get("complete"))
 
 
 def _state_entry(pipeline_state, protocol: str) -> dict | None:

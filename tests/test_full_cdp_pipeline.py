@@ -1,6 +1,8 @@
 from datetime import datetime
 from pathlib import Path
 
+from openpyxl import Workbook
+
 from scripts.run_full_cdp_pipeline import (
     _apply_global_protocol_limit,
     _build_protocol_rows,
@@ -93,6 +95,60 @@ def test_batch_limit_is_applied_after_skipping_completed_state() -> None:
     assert len(selection["skipped_completed"]) == 10
     assert len(selection["eligible_records"]) == 17
     assert [record.protocol for record in selection["selected_records"]] == protocols[10:20]
+
+
+def test_batch_fast_selection_skips_protocol_with_complete_workbook_row(
+    tmp_path: Path,
+) -> None:
+    workbook_path = tmp_path / "planilha.xlsx"
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "2026"
+    ws.append(
+        [
+            "Cliente",
+            "Protocolo",
+            "Data de ingresso",
+            "Conclusão",
+            "Parecer",
+            "Placa",
+            "Inversor",
+        ]
+    )
+    ws.append(
+        [
+            "CLIENTE SINTETICO LTDA",
+            "2600001048",
+            "16/01/2026",
+            "20/01/2026",
+            "Sim",
+            "10x FAB MOD",
+            "1x FAB INV",
+        ]
+    )
+    wb.save(workbook_path)
+    wb.close()
+
+    settings = DummySettings()
+    settings.OP5_RECONCILIATION_MODE = "batch_fast"
+    settings.planilha_path = workbook_path
+    settings.APPLY_EXCEL = True
+    requests = [
+        _row("2600001048")["record"],
+        _row("2600001049")["record"],
+    ]
+
+    selection = select_eligible_completed_requests(
+        requests,
+        pipeline_state=None,
+        max_completed_to_process=1,
+        skip_already_completed=True,
+        force_reprocess_protocols=set(),
+        settings=settings,
+    )
+
+    assert [record.protocol for record in selection["selected_records"]] == ["2600001049"]
+    assert selection["skipped_completed"][0]["protocol"] == "2600001048"
 
 
 def test_target_protocols_restrict_batch_fast_selection() -> None:
