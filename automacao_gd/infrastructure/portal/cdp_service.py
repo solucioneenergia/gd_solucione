@@ -2312,6 +2312,49 @@ def navigate_to_numeric_page(page, target_page_number: int) -> dict:
                     }
                 )
                 return result
+            if target > active_before:
+                sequential = _navigate_to_numeric_page_sequentially(
+                    page,
+                    target_page_number=target,
+                    active_page_before=active_before,
+                    signature_before=signature_before,
+                    use_numeric_first=False,
+                )
+                result["sequential_navigation_after_no_change"] = sequential
+                result["url_after"] = sequential.get("url_after")
+                if sequential.get("success"):
+                    result.update(
+                        {
+                            "success": True,
+                            "status": "recovered_listing_by_numeric_page",
+                            "method": "recovered_listing_by_sequential_numeric_page",
+                            "active_page_after": sequential.get("active_page_after"),
+                            "signature_after": sequential.get("signature_after"),
+                            "error": None,
+                        }
+                    )
+                    return result
+            if target < active_before:
+                sequential = _navigate_to_numeric_page_backwards_sequentially(
+                    page,
+                    target_page_number=target,
+                    active_page_before=active_before,
+                    signature_before=signature_before,
+                )
+                result["sequential_navigation_after_no_change"] = sequential
+                result["url_after"] = sequential.get("url_after")
+                if sequential.get("success"):
+                    result.update(
+                        {
+                            "success": True,
+                            "status": "recovered_listing_by_numeric_page",
+                            "method": "recovered_listing_by_reverse_sequential_numeric_page",
+                            "active_page_after": sequential.get("active_page_after"),
+                            "signature_after": sequential.get("signature_after"),
+                            "error": None,
+                        }
+                    )
+                    return result
             result["status"] = "pagination_active_page_mismatch"
             result["error"] = (
                 f"Pagina ativa apos clique: {active_after}; esperado: {target}."
@@ -2347,6 +2390,7 @@ def _navigate_to_numeric_page_sequentially(
     target_page_number: int,
     active_page_before: int,
     signature_before: tuple,
+    use_numeric_first: bool = True,
 ) -> dict:
     current_page_number = int(active_page_before)
     previous_signature = signature_before
@@ -2364,7 +2408,23 @@ def _navigate_to_numeric_page_sequentially(
         "error": None,
     }
     while current_page_number < target_page_number:
-        click_result = find_and_click_next_listing_page(page, current_page_number)
+        if use_numeric_first:
+            click_result = find_and_click_next_listing_page(page, current_page_number)
+        else:
+            next_button = _click_next_listing_page_diagnostic(page)
+            click_result = {
+                **next_button,
+                "mode": "next_button",
+                "current_page_number": current_page_number,
+                "target_page_number": current_page_number + 1,
+                "numeric_page_links_found": [],
+                "numeric_page_links_count": 0,
+            }
+            if next_button.get("clicked"):
+                click_result["found"] = True
+                click_result["enabled"] = True
+                click_result["next_page_available"] = True
+                click_result["stop_reason"] = "pagination_next_clicked"
         diagnostics.append(click_result)
         if (
             not click_result.get("found")

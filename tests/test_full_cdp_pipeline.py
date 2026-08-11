@@ -1493,6 +1493,87 @@ def test_navigate_to_numeric_page_steps_until_target_when_direct_link_is_hidden(
     assert clicks == [2, 3, 4]
 
 
+def test_navigate_to_numeric_page_uses_sequential_fallback_when_direct_click_stays_on_same_page(
+    monkeypatch,
+) -> None:
+    active_page = {"value": 1}
+    rows_by_page = {
+        1: [_row("2600001011"), _row("2600001012")],
+        2: [_row("2600001048"), _row("2600001049")],
+    }
+    direct_clicks = []
+    sequential_clicks = []
+
+    def fake_active_page(page):
+        return active_page["value"]
+
+    def fake_rows(page):
+        return rows_by_page[active_page["value"]]
+
+    def fake_direct_numeric_click(page, current_page_number: int):
+        direct_clicks.append(current_page_number + 1)
+        return {
+            "found": True,
+            "enabled": True,
+            "clicked": True,
+            "selector": ".ui-paginator a",
+            "text": str(current_page_number + 1),
+            "mode": "numeric",
+            "current_page_number": current_page_number,
+            "target_page_number": current_page_number + 1,
+            "numeric_page_links_found": ["1", "2"],
+            "numeric_page_links_count": 2,
+            "stop_reason": "pagination_numeric_page_clicked",
+        }
+
+    def forbidden_numeric_first_fallback(page, current_page_number: int):
+        raise AssertionError("fallback must use next-button diagnostic directly")
+
+    def fake_next_button(page):
+        sequential_clicks.append(2)
+        active_page["value"] = 2
+        return {
+            "found": True,
+            "enabled": True,
+            "clicked": True,
+            "selector": ".ui-paginator-next",
+            "text": ">",
+            "stop_reason": "pagination_next_clicked",
+        }
+
+    monkeypatch.setattr(cdp_portal_service, "get_active_numeric_page", fake_active_page)
+    monkeypatch.setattr(
+        cdp_portal_service,
+        "read_current_page_table_with_row_handles",
+        fake_rows,
+    )
+    monkeypatch.setattr(
+        cdp_portal_service,
+        "find_and_click_next_numeric_page",
+        fake_direct_numeric_click,
+    )
+    monkeypatch.setattr(
+        cdp_portal_service,
+        "find_and_click_next_listing_page",
+        forbidden_numeric_first_fallback,
+    )
+    monkeypatch.setattr(
+        cdp_portal_service,
+        "_click_next_listing_page_diagnostic",
+        fake_next_button,
+    )
+    monkeypatch.setattr(cdp_portal_service, "_wait_after_pagination_click", lambda page: None)
+
+    result = navigate_to_numeric_page(FakePage(), 2)
+
+    assert result["success"] is True
+    assert result["status"] == "recovered_listing_by_numeric_page"
+    assert result["method"] == "recovered_listing_by_sequential_numeric_page"
+    assert result["active_page_after"] == 2
+    assert direct_clicks == [2]
+    assert sequential_clicks == [2]
+
+
 def test_origin_page_navigates_to_numeric_page_when_protocol_is_not_visible(
     monkeypatch,
 ) -> None:

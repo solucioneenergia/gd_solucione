@@ -155,6 +155,12 @@ retornar `pagination_numeric_target_not_found`, mas listar o número alvo em
 de declarar falha. A falha só pode ser registrada como `pagination_numeric_target_not_found` depois
 desse fallback.
 
+Se o clique numérico direto reportar sucesso, mas o Portal permanecer na mesma página ativa e com a
+mesma assinatura de tabela, o `op5-plan` deve tentar a navegação sequencial já validada pelo
+paginador antes de declarar `pagination_active_page_mismatch`. Essa recuperação só é válida para
+planejamento/leitura do Portal; `op5-apply` continua aplicando exclusivamente o plano congelado sem
+reler CDP.
+
 Quando o detalhe do orçamento abrir na mesma aba e a aba não conseguir retornar para a listagem por
 menu, URL salva, reload ou histórico, o `op5-plan` deve tentar recuperar somente abas já existentes
 no mesmo contexto CDP que exibam a tabela `Minhas Solicitações`. O fluxo não pode abrir nova aba nem
