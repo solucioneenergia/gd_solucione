@@ -307,6 +307,10 @@ py app.py op5-plan --limit N
 py app.py op5-plan --limit N --protocols <lista>
 py app.py op5-apply --plan <arquivo>
 py app.py op5-audit-global
+py app.py op5-retention-audit
+py app.py op5-retention-apply --plan <arquivo>
+py app.py workbook-format-audit
+py app.py workbook-format-apply --plan <arquivo>
 ```
 
 Contratos:
@@ -325,6 +329,52 @@ Contratos:
   Excel e sem gerar plano de aplicação;
 - todos os comandos devem retornar código não-zero em bloqueio/cancelamento/erro;
 - nenhum comando pode ler `.env` em teste nem acessar Portal/CDP sem autorização operacional.
+
+### RF-012 — Retenção segura de `data/downloads`
+
+O sistema deve oferecer limpeza segura dos PDFs locais baixados sem apagar diretamente no audit:
+
+```text
+py app.py op5-retention-audit
+py app.py op5-retention-apply --plan <arquivo>
+```
+
+Contratos:
+
+- `op5-retention-audit` é somente leitura e gera um plano privado operacional em `LOGS_DIR`;
+- `op5-retention-apply` só apaga arquivos listados no plano informado;
+- nenhum diretório inteiro pode ser removido;
+- cada arquivo só pode ser excluído se todos os critérios forem verdadeiros:
+  - o PDF local está dentro de `DOWNLOADS_DIR`;
+  - o protocolo possui entrada válida e não expirada em `DATA_DIR/state/op5_completed_index.json`;
+  - o SHA-256 do PDF local coincide com `download_pdf_sha256` do índice mestre;
+  - o PDF arquivado existe e seu SHA-256 coincide com `archived_pdf_sha256`;
+  - o SHA-256 local e o SHA-256 arquivado são iguais;
+  - a entrada contém aba e linha da planilha;
+  - o SHA-256 atual da planilha coincide com `workbook_sha256` do índice mestre.
+- arquivos sem todos os critérios devem ser preservados e aparecer como bloqueados no plano.
+
+O plano de retenção é privado operacional e não pode ser relatório compartilhável, release ou
+fixture permanente. Falha de validação no apply deve preservar o arquivo.
+
+### RF-013 — Saneamento global da planilha separado do OP5
+
+O saneamento/formatação global da planilha deve permanecer separado da opção 5:
+
+```text
+py app.py workbook-format-audit
+py app.py workbook-format-apply --plan <arquivo>
+```
+
+Contratos:
+
+- `workbook-format-audit` executa somente leitura/dry-run, calcula SHA-256 da planilha e grava
+  plano privado operacional;
+- `workbook-format-apply` exige `--plan`, revalida o SHA-256 atual da planilha e bloqueia se o
+  arquivo mudou desde a auditoria;
+- a aplicação reutiliza o reparo/formatação existente, cria backup conforme contrato atual e não
+  roda Portal/CDP/download/arquivamento;
+- a OP5 não deve chamar automaticamente esses comandos.
 
 ## Requisitos não funcionais
 
@@ -356,6 +406,8 @@ LOGS_DIR/op5_plan_latest.json
 LOGS_DIR/op5_portal_eligibility_cache.json
 LOGS_DIR/workbook_index_cache.json
 LOGS_DIR/portal_workbook_reconciliation_cache.json
+LOGS_DIR/op5_retention_plan_latest.json
+LOGS_DIR/workbook_format_plan_latest.json
 DATA_DIR/state/op5_completed_index.json
 ```
 
@@ -378,6 +430,12 @@ Novos códigos:
 - `OP5_APPLY_PLAN_REQUIRED`;
 - `OP5_AUDIT_GLOBAL_FAILED`;
 - `OP5_CACHE_INVALIDATED`.
+- `OP5_RETENTION_PLAN_REQUIRED`;
+- `OP5_RETENTION_PLAN_INVALID`;
+- `OP5_RETENTION_VALIDATION_FAILED`;
+- `WORKBOOK_FORMAT_PLAN_REQUIRED`;
+- `WORKBOOK_FORMAT_PLAN_INVALID`;
+- `WORKBOOK_FORMAT_WORKBOOK_CHANGED`.
 
 ## Segurança e privacidade
 
@@ -434,6 +492,10 @@ temporariamente se passarem pelos validadores da SPEC-009.
 - RED para extração PDF paralela que perde a ordem do lote ou aceita mais de 4 workers.
 - RED para CLI sem os comandos `op5-plan`, `op5-apply` e `op5-audit-global`.
 - RED para `op5-plan --protocols` selecionando protocolo fora dos primeiros N elegíveis.
+- RED para retenção tentando excluir PDF sem índice mestre válido, SHA arquivado validado e SHA da planilha igual.
+- RED para `op5-retention-apply` recusando plano ausente, plano alterado ou arquivo fora de `DOWNLOADS_DIR`.
+- RED para saneamento de workbook sem plano ou com SHA da planilha alterado.
+- RED para OP5 permanecer independente dos comandos de saneamento global.
 
 ## Critérios de aceite
 
@@ -453,6 +515,10 @@ temporariamente se passarem pelos validadores da SPEC-009.
 - [ ] Comandos explícitos `op5-plan`, `op5-apply` e `op5-audit-global` existem e falham fechado.
 - [ ] `op5-plan --protocols` restringe o lote aos protocolos explícitos e não para antes de
       procurá-los nas páginas permitidas.
+- [ ] `op5-retention-audit` gera plano dry-run sem apagar PDFs.
+- [ ] `op5-retention-apply` exclui apenas PDFs locais com índice mestre válido, hashes iguais e planilha validada.
+- [ ] `workbook-format-audit` gera plano separado sem alterar workbook.
+- [ ] `workbook-format-apply` aplica somente com plano e SHA da planilha inalterado.
 - [ ] Testes direcionados, Ruff, MyPy e scanner permanecem verdes.
 
 ## Rollout

@@ -31,6 +31,14 @@ from automacao_gd.application.operational_guard import (
     build_option4_strong_confirmation,
     prepare_offline_batch,
 )
+from automacao_gd.application.op5_retention import (
+    apply_download_retention_plan,
+    audit_download_retention,
+)
+from automacao_gd.application.workbook_format_flow import (
+    apply_workbook_format_plan,
+    audit_workbook_format,
+)
 from automacao_gd.application.full_pipeline import (
     BatchAuthorizationError,
     StrongConfirmationError,
@@ -87,7 +95,15 @@ def main(argv: Sequence[str] | None = None) -> int:
             return _run_op5_apply(args.plan)
         if args.command == "op5-archive-plan":
             return _run_op5_archive_plan(args.plan)
-        return _run_op5_audit_global()
+        if args.command == "op5-audit-global":
+            return _run_op5_audit_global()
+        if args.command == "op5-retention-audit":
+            return _run_op5_retention_audit()
+        if args.command == "op5-retention-apply":
+            return _run_op5_retention_apply(args.plan)
+        if args.command == "workbook-format-audit":
+            return _run_workbook_format_audit()
+        return _run_workbook_format_apply(args.plan)
 
     ensure_directories()
     setup_logger(verbose=args.verbose)
@@ -146,6 +162,10 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
             "op5-apply",
             "op5-archive-plan",
             "op5-audit-global",
+            "op5-retention-audit",
+            "op5-retention-apply",
+            "workbook-format-audit",
+            "workbook-format-apply",
         ),
         help="executa auditoria histórica ou aplica um plano previamente aprovado",
     )
@@ -271,6 +291,70 @@ def _run_op5_audit_global() -> int:
     print(f"Status: {status}")
     print(str(payload.get("operation_message") or "Auditoria global OP5 concluida."))
     return exit_code_for_status(str(status))
+
+
+def _run_op5_retention_audit() -> int:
+    settings = get_settings()
+    payload = audit_download_retention(
+        downloads_root=settings.downloads_dir_path,
+        master_index_path=settings.op5_completed_index_path,
+        workbook_path=settings.planilha_path,
+        logs_dir=settings.logs_dir_path,
+    )
+    print("Status: SUCESSO")
+    print("Auditoria de retenção OP5 concluída em modo somente leitura.")
+    print(f"- PDFs analisados: {payload['total_pdfs_scanned']}")
+    print(f"- Candidatos para exclusão: {payload['total_delete_candidates']}")
+    print(f"- Bloqueados/preservados: {payload['total_blocked']}")
+    print(f"- Plano: {payload['plan_path']}")
+    return 0
+
+
+def _run_op5_retention_apply(plan_path: Path | None) -> int:
+    if plan_path is None:
+        print("Status: BLOQUEADO")
+        print("op5-retention-apply exige --plan <arquivo>.")
+        return 2
+    settings = get_settings()
+    payload = apply_download_retention_plan(
+        plan_path,
+        downloads_root=settings.downloads_dir_path,
+        master_index_path=settings.op5_completed_index_path,
+        workbook_path=settings.planilha_path,
+        logs_dir=settings.logs_dir_path,
+    )
+    print(f"Status: {payload['status']}")
+    print(f"- PDFs excluídos: {payload.get('deleted_count', 0)}")
+    print(f"- Bloqueados/preservados: {payload.get('blocked_count', 0)}")
+    if payload.get("error"):
+        print(str(payload["error"]))
+    return 0 if payload.get("success") else 2
+
+
+def _run_workbook_format_audit() -> int:
+    settings = get_settings()
+    payload = audit_workbook_format(settings.planilha_path, settings.logs_dir_path)
+    print("Status: SUCESSO")
+    print("Auditoria de formatação da planilha concluída em modo somente leitura.")
+    print(f"- Plano: {payload['plan_path']}")
+    return 0
+
+
+def _run_workbook_format_apply(plan_path: Path | None) -> int:
+    if plan_path is None:
+        print("Status: BLOQUEADO")
+        print("workbook-format-apply exige --plan <arquivo>.")
+        return 2
+    settings = get_settings()
+    payload = apply_workbook_format_plan(
+        plan_path,
+        workbook_path=settings.planilha_path,
+        logs_dir=settings.logs_dir_path,
+    )
+    print(f"Status: {payload['status']}")
+    if payload.get("error"):
+        print(str(payload["error"]))
+    return 0 if payload.get("success") else 2
 
 
 def _run_logs_audit() -> int:

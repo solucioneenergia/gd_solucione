@@ -198,6 +198,14 @@ def test_cli_accepts_explicit_option5_commands() -> None:
     archive_plan = _parse_args(
         ["op5-archive-plan", "--plan", "data/logs/op5_plan_latest.json"]
     )
+    retention_audit = _parse_args(["op5-retention-audit"])
+    retention_apply = _parse_args(
+        ["op5-retention-apply", "--plan", "data/logs/op5_retention_plan_latest.json"]
+    )
+    workbook_audit = _parse_args(["workbook-format-audit"])
+    workbook_apply = _parse_args(
+        ["workbook-format-apply", "--plan", "data/logs/workbook_format_plan_latest.json"]
+    )
 
     assert plan.command == "op5-plan"
     assert plan.limit == 20
@@ -207,6 +215,235 @@ def test_cli_accepts_explicit_option5_commands() -> None:
     assert audit.command == "op5-audit-global"
     assert archive_plan.command == "op5-archive-plan"
     assert archive_plan.plan == Path("data/logs/op5_plan_latest.json")
+    assert retention_audit.command == "op5-retention-audit"
+    assert retention_apply.command == "op5-retention-apply"
+    assert retention_apply.plan == Path("data/logs/op5_retention_plan_latest.json")
+    assert workbook_audit.command == "workbook-format-audit"
+    assert workbook_apply.command == "workbook-format-apply"
+    assert workbook_apply.plan == Path("data/logs/workbook_format_plan_latest.json")
+
+
+def test_op5_retention_audit_plans_only_master_valid_completed_downloads(
+    tmp_path: Path,
+) -> None:
+    from automacao_gd.application.op5_retention import audit_download_retention
+
+    downloads = tmp_path / "downloads"
+    logs = tmp_path / "logs"
+    state = tmp_path / "state" / "op5_completed_index.json"
+    workbook = tmp_path / "planilha-sintetica.xlsx"
+    archived = tmp_path / "clientes" / "Orcamento_de_Conexao_2600001048.pdf"
+    pdf = downloads / "2600001048" / "Orcamento_de_Conexao_2600001048.pdf"
+    blocked_pdf = downloads / "2600001049" / "Orcamento_de_Conexao_2600001049.pdf"
+    pdf.parent.mkdir(parents=True)
+    blocked_pdf.parent.mkdir(parents=True)
+    archived.parent.mkdir(parents=True)
+    logs.mkdir()
+    workbook.write_bytes(b"WORKBOOK SINTETICO")
+    pdf.write_bytes(b"%PDF-1.4\nPDF SINTETICO\n")
+    blocked_pdf.write_bytes(b"%PDF-1.4\nSEM INDICE MESTRE\n")
+    archived.write_bytes(pdf.read_bytes())
+    _write_completed_index(
+        state,
+        protocol="2600001048",
+        download_pdf=pdf,
+        archived_pdf=archived,
+        workbook=workbook,
+    )
+
+    plan = audit_download_retention(
+        downloads_root=downloads,
+        master_index_path=state,
+        workbook_path=workbook,
+        logs_dir=logs,
+        now=datetime(2026, 8, 11, 12, 0, tzinfo=timezone.utc),
+    )
+
+    assert plan["dry_run"] is True
+    assert plan["total_delete_candidates"] == 1
+    assert plan["total_blocked"] == 1
+    assert pdf.exists()
+    assert blocked_pdf.exists()
+    candidates = {item["protocol"]: item for item in plan["items"]}
+    assert candidates["2600001048"]["action"] == "delete_local_pdf"
+    assert candidates["2600001048"]["download_pdf_sha256"] == hashlib.sha256(
+        pdf.read_bytes()
+    ).hexdigest()
+    assert candidates["2600001049"]["action"] == "keep"
+    assert "master_index_missing_or_expired" in candidates["2600001049"]["reasons"]
+    assert Path(plan["plan_path"]).exists()
+
+
+def test_op5_retention_apply_deletes_only_revalidated_candidates(tmp_path: Path) -> None:
+    from automacao_gd.application.op5_retention import (
+        apply_download_retention_plan,
+        audit_download_retention,
+    )
+
+    downloads = tmp_path / "downloads"
+    logs = tmp_path / "logs"
+    state = tmp_path / "state" / "op5_completed_index.json"
+    workbook = tmp_path / "planilha-sintetica.xlsx"
+    archived = tmp_path / "clientes" / "Orcamento_de_Conexao_2600001048.pdf"
+    pdf = downloads / "2600001048" / "Orcamento_de_Conexao_2600001048.pdf"
+    blocked_pdf = downloads / "2600001049" / "Orcamento_de_Conexao_2600001049.pdf"
+    pdf.parent.mkdir(parents=True)
+    blocked_pdf.parent.mkdir(parents=True)
+    archived.parent.mkdir(parents=True)
+    logs.mkdir()
+    workbook.write_bytes(b"WORKBOOK SINTETICO")
+    pdf.write_bytes(b"%PDF-1.4\nPDF SINTETICO\n")
+    blocked_pdf.write_bytes(b"%PDF-1.4\nSEM INDICE MESTRE\n")
+    archived.write_bytes(pdf.read_bytes())
+    _write_completed_index(
+        state,
+        protocol="2600001048",
+        download_pdf=pdf,
+        archived_pdf=archived,
+        workbook=workbook,
+    )
+    plan = audit_download_retention(
+        downloads_root=downloads,
+        master_index_path=state,
+        workbook_path=workbook,
+        logs_dir=logs,
+        now=datetime(2026, 8, 11, 12, 0, tzinfo=timezone.utc),
+    )
+
+    result = apply_download_retention_plan(
+        Path(plan["plan_path"]),
+        downloads_root=downloads,
+        master_index_path=state,
+        workbook_path=workbook,
+        logs_dir=logs,
+        now=datetime(2026, 8, 11, 12, 0, tzinfo=timezone.utc),
+    )
+
+    assert result["success"] is True
+    assert result["deleted_count"] == 1
+    assert not pdf.exists()
+    assert blocked_pdf.exists()
+    assert archived.exists()
+
+
+def test_op5_retention_apply_blocks_when_workbook_changed(tmp_path: Path) -> None:
+    from automacao_gd.application.op5_retention import (
+        apply_download_retention_plan,
+        audit_download_retention,
+    )
+
+    downloads = tmp_path / "downloads"
+    logs = tmp_path / "logs"
+    state = tmp_path / "state" / "op5_completed_index.json"
+    workbook = tmp_path / "planilha-sintetica.xlsx"
+    archived = tmp_path / "clientes" / "Orcamento_de_Conexao_2600001048.pdf"
+    pdf = downloads / "2600001048" / "Orcamento_de_Conexao_2600001048.pdf"
+    pdf.parent.mkdir(parents=True)
+    archived.parent.mkdir(parents=True)
+    logs.mkdir()
+    workbook.write_bytes(b"WORKBOOK SINTETICO V1")
+    pdf.write_bytes(b"%PDF-1.4\nPDF SINTETICO\n")
+    archived.write_bytes(pdf.read_bytes())
+    _write_completed_index(
+        state,
+        protocol="2600001048",
+        download_pdf=pdf,
+        archived_pdf=archived,
+        workbook=workbook,
+    )
+    plan = audit_download_retention(
+        downloads_root=downloads,
+        master_index_path=state,
+        workbook_path=workbook,
+        logs_dir=logs,
+        now=datetime(2026, 8, 11, 12, 0, tzinfo=timezone.utc),
+    )
+    workbook.write_bytes(b"WORKBOOK SINTETICO V2")
+
+    result = apply_download_retention_plan(
+        Path(plan["plan_path"]),
+        downloads_root=downloads,
+        master_index_path=state,
+        workbook_path=workbook,
+        logs_dir=logs,
+        now=datetime(2026, 8, 11, 12, 0, tzinfo=timezone.utc),
+    )
+
+    assert result["success"] is False
+    assert result["deleted_count"] == 0
+    assert pdf.exists()
+    assert result["error_code"] == "OP5_RETENTION_VALIDATION_FAILED"
+
+
+def test_workbook_format_apply_blocks_stale_plan(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from automacao_gd.application import workbook_format_flow
+
+    logs = tmp_path / "logs"
+    logs.mkdir()
+    workbook = tmp_path / "planilha-sintetica.xlsx"
+    workbook.write_bytes(b"WORKBOOK SINTETICO V1")
+    monkeypatch.setattr(
+        workbook_format_flow,
+        "repair_workbook_format",
+        lambda **kwargs: {"success": True, "dry_run": kwargs["dry_run"], "sheets": []},
+    )
+    plan = workbook_format_flow.audit_workbook_format(workbook, logs)
+    workbook.write_bytes(b"WORKBOOK SINTETICO V2")
+
+    result = workbook_format_flow.apply_workbook_format_plan(
+        Path(plan["plan_path"]),
+        workbook_path=workbook,
+        logs_dir=logs,
+    )
+
+    assert result["success"] is False
+    assert result["error_code"] == "WORKBOOK_FORMAT_WORKBOOK_CHANGED"
+
+
+def _write_completed_index(
+    index_path: Path,
+    *,
+    protocol: str,
+    download_pdf: Path,
+    archived_pdf: Path,
+    workbook: Path,
+) -> None:
+    now = datetime(2026, 8, 11, 12, 0, tzinfo=timezone.utc)
+    index_path.parent.mkdir(parents=True, exist_ok=True)
+    index_path.write_text(
+        json.dumps(
+            {
+                "schema_version": "op5-completed-index-v1",
+                "protocols": {
+                    protocol: {
+                        "status": "completed",
+                        "download_pdf_path": str(download_pdf),
+                        "download_pdf_sha256": hashlib.sha256(
+                            download_pdf.read_bytes()
+                        ).hexdigest(),
+                        "archived_pdf_path": str(archived_pdf),
+                        "archived_pdf_sha256": hashlib.sha256(
+                            archived_pdf.read_bytes()
+                        ).hexdigest(),
+                        "workbook_sheet": "2026",
+                        "workbook_row": 42,
+                        "workbook_sha256": hashlib.sha256(workbook.read_bytes()).hexdigest(),
+                        "technical_extractor_version": "technical-processing-format-v6",
+                        "equipment_rules_version": "equipment-rules-v3",
+                        "updated_at": now.isoformat(timespec="seconds"),
+                        "expires_at": (now + timedelta(days=14)).isoformat(
+                            timespec="seconds"
+                        ),
+                    }
+                },
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
 
 
 def test_op5_archive_plan_reuses_frozen_scope_without_cdp_and_refreshes_workbook_sha(
