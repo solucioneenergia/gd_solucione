@@ -3,7 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
-from datetime import datetime, timezone
+from datetime import datetime
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock
@@ -256,10 +256,7 @@ def test_successful_real_op5_processing_records_completed_master_index(
     updated_at = datetime.fromisoformat(entry["updated_at"])
     expires_at = datetime.fromisoformat(entry["expires_at"])
     assert updated_at.tzinfo is not None
-    assert expires_at - updated_at == pytest.approx(
-        datetime.fromtimestamp(14 * 24 * 60 * 60, tz=timezone.utc)
-        - datetime.fromtimestamp(0, tz=timezone.utc)
-    )
+    assert (expires_at - updated_at).total_seconds() == 14 * 24 * 60 * 60
 
 
 def test_op5_completed_master_index_is_not_recorded_when_effects_are_incomplete(
