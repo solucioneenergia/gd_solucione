@@ -1,3 +1,4 @@
+import json
 import re
 import time
 import unicodedata
@@ -1152,7 +1153,11 @@ def should_open_detail_for_budget(
     downloads_root: Path | None = None,
     reprocess_existing_pdfs: bool = False,
 ) -> bool:
-    return True
+    if reprocess_existing_pdfs:
+        return True
+    existing_pdf = find_existing_connection_budget_pdf(protocol, downloads_root)
+    metadata_path = find_existing_download_metadata(protocol, downloads_root)
+    return not (_is_valid_pdf(existing_pdf) and metadata_path is not None)
 
 
 def download_completed_budgets_from_current_page(
@@ -1274,9 +1279,11 @@ def download_completed_budgets_from_current_page(
             reconciliation_context,
         )
         logger.info("Reconciliação global Portal x planilha concluída antes do limite.")
+    batch_fast_can_continue_with_partial_lot = (
+        batch_fast_mode and len(completed_records) > 0
+    )
     if collection.get("pagination_complete") is False and not (
-        batch_fast_mode
-        and collection.get("pagination_stop_reason") == "incremental_batch_limit_reached"
+        batch_fast_can_continue_with_partial_lot
     ):
         summary.update(
             {
@@ -1360,6 +1367,8 @@ def download_completed_budgets_from_current_page(
             "metrics_scope": "BATCH_FAST",
             "set_reconciliation_authoritative": False,
         }
+        if collection.get("pagination_complete") is False:
+            summary["partial_batch_due_to_pagination"] = True
     skipped_completed = selection["skipped_completed"]
     eligible_records = selection["eligible_records"]
     duplicate_skips = [
@@ -1507,6 +1516,32 @@ def download_completed_budgets_from_current_page(
 
             processed_protocols.add(protocol)
             logger.info(f"Processando protocolo concluido via CDP: {protocol}")
+            existing_pdf = find_existing_connection_budget_pdf(
+                protocol, downloads_root
+            )
+            if existing_pdf is not None:
+                result["existing_pdf_path"] = str(existing_pdf)
+            if (
+                existing_pdf is not None
+                and not should_open_detail_for_budget(
+                    protocol,
+                    downloads_root,
+                    reprocess_existing_pdfs,
+                )
+            ):
+                _reuse_existing_pdf_without_detail(
+                    record=record,
+                    existing_pdf=existing_pdf,
+                    downloads_root=downloads_root,
+                    result=result,
+                    process_existing_after_skip=process_existing_after_skip,
+                    state_store=state_store,
+                )
+                logger.info(
+                    "Detalhe do portal pulado porque ja existe PDF e metadata "
+                    f"validos para o protocolo {protocol}: {existing_pdf}"
+                )
+                continue
             origin_navigation = ensure_request_origin_page(
                 listing_page,
                 record,
@@ -1548,12 +1583,6 @@ def download_completed_budgets_from_current_page(
                 )
                 logger.error(result["cdp_error"])
                 continue
-
-            existing_pdf = find_existing_connection_budget_pdf(
-                protocol, downloads_root
-            )
-            if existing_pdf is not None:
-                result["existing_pdf_path"] = str(existing_pdf)
 
             before_pages = list(listing_page.context.pages)
             result["abriu_detalhe"] = True
@@ -1757,6 +1786,10 @@ def download_completed_budgets_from_current_page(
                         "Nao foi possivel garantir retorno a listagem apos "
                         f"protocolo {protocol}: {message}"
                     )
+                    summary["run_error"] = "failed_return_to_listing"
+                    summary["aborted"] = True
+                    summary["abort_reason"] = "failed_return_to_listing"
+                    abort_requested = True
                     result["retorno_listagem_status"] = "failed_return_to_listing"
                     result["metodo_retorno_listagem"] = (
                         result.get("metodo_retorno_listagem") or "failed"
@@ -1937,6 +1970,28 @@ def _reuse_existing_pdf_without_detail(
     else:
         result["metadata_created_from_listing"] = False
     result["metadata_path"] = str(metadata_path)
+    metadata = _load_existing_download_metadata(metadata_path)
+    if metadata:
+        for key in (
+            "detail_protocol",
+            "detail_client_name",
+            "completion_date",
+            "completion_date_raw",
+            "completion_date_normalized",
+            "completion_source_stage",
+            "completion_source_selector",
+            "completion_extraction_status",
+        ):
+            if metadata.get(key):
+                result[key] = metadata[key]
+        if metadata.get("protocol"):
+            result["detail_protocol"] = result.get("detail_protocol") or metadata[
+                "protocol"
+            ]
+        if metadata.get("client_name"):
+            result["detail_client_name"] = result.get("detail_client_name") or metadata[
+                "client_name"
+            ]
 
     if state_store:
         state_store.update_section(
@@ -1971,6 +2026,15 @@ def _reuse_existing_pdf_without_detail(
             state_store.add_error(protocol, "download", result["download_error"])
 
     return result
+
+
+def _load_existing_download_metadata(metadata_path: Path) -> dict[str, Any]:
+    try:
+        data = json.loads(Path(metadata_path).read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError, TypeError, ValueError) as exc:
+        logger.warning(f"Nao foi possivel ler metadata local existente: {exc}")
+        return {}
+    return data if isinstance(data, dict) else {}
 
 
 def _find_listing_row_by_protocol(page, protocol: str) -> dict | None:
@@ -3781,14 +3845,23 @@ def _return_to_listing_after_detail(detail_page, listing_page, listing_url: str)
                     detail_page.close()
                 except PlaywrightError as exc:
                     logger.debug(f"Falha ao fechar aba de detalhe: {exc}")
-            recovery = _recover_minhas_solicitacoes(listing_page, listing_url)
+            recovery = _recover_minhas_solicitacoes(
+                listing_page,
+                listing_url,
+                allow_active_navigation=False,
+            )
             return listing_page, recovery
-    recovery = _recover_minhas_solicitacoes(detail_page, listing_url)
+    recovery = _recover_minhas_solicitacoes(
+        detail_page,
+        listing_url,
+        allow_active_navigation=False,
+    )
     if not recovery["success"]:
         fallback_page, fallback_recovery = _recover_listing_in_new_context_page(
             detail_page,
             listing_url,
             previous_error=recovery.get("error"),
+            allow_active_navigation=False,
         )
         if fallback_recovery["success"] or fallback_recovery.get("error"):
             return fallback_page, fallback_recovery
@@ -3800,6 +3873,7 @@ def _recover_listing_in_new_context_page(
     listing_url: str,
     *,
     previous_error: str | None = None,
+    allow_active_navigation: bool = True,
 ) -> tuple[object, dict]:
     result = {
         "success": False,
@@ -3816,7 +3890,11 @@ def _recover_listing_in_new_context_page(
         for candidate in list(getattr(context, "pages", []) or []):
             if candidate is page or _page_is_closed(candidate):
                 continue
-            recovery = _recover_minhas_solicitacoes(candidate, listing_url)
+            recovery = _recover_minhas_solicitacoes(
+                candidate,
+                listing_url,
+                allow_active_navigation=allow_active_navigation,
+            )
             if recovery["success"]:
                 recovery.update(
                     {
@@ -3825,10 +3903,7 @@ def _recover_listing_in_new_context_page(
                     }
                 )
                 return candidate, recovery
-        result["error"] = (
-            f"{result['error']} reabra o Edge pelo comando PowerShell aprovado, "
-            "faca login manual no Portal GD e deixe a listagem aberta."
-        )
+        result["error"] = manual_cdp_listing_recovery_message()
         return page, result
     except PlaywrightError as exc:
         result["error"] = str(exc)
@@ -3837,7 +3912,12 @@ def _recover_listing_in_new_context_page(
         return page, result
 
 
-def _recover_minhas_solicitacoes(page, listing_url: str) -> dict:
+def _recover_minhas_solicitacoes(
+    page,
+    listing_url: str,
+    *,
+    allow_active_navigation: bool = True,
+) -> dict:
     result = {
         "success": False,
         "status": "failed_return_to_listing",
@@ -3857,6 +3937,11 @@ def _recover_minhas_solicitacoes(page, listing_url: str) -> dict:
                 "url_after": _safe_page_url(page),
             }
         )
+        return result
+
+    if not allow_active_navigation:
+        result["error"] = manual_cdp_listing_recovery_message()
+        result["url_after"] = _safe_page_url(page)
         return result
 
     unsafe_url = _is_unsafe_navigation_url(_safe_page_url(page), listing_url)
@@ -3937,7 +4022,7 @@ def _recover_minhas_solicitacoes(page, listing_url: str) -> dict:
 def manual_cdp_listing_recovery_message() -> str:
     return (
         "Nao foi possivel retornar para a tabela de listagem com seguranca. "
-        "Reabra o Edge pelo comando PowerShell aprovado, faca login manual no "
+        "reabra o Edge pelo comando PowerShell aprovado, faca login manual no "
         "Portal GD e deixe a listagem aberta."
     )
 
