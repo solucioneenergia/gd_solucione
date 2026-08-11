@@ -84,17 +84,23 @@ def find_portal_page_from_cdp(browser, portal_url: str):
 
     for page in pages:
         parsed = urlparse(page.url or "")
-        if _page_looks_access_denied(page):
+        if _page_url_is_blocked_or_insecure(page.url or ""):
+            logger.warning(f"Aba bloqueada do Portal GD ignorada: {page.url}")
+            continue
+        if expected_host and parsed.netloc.lower() == expected_host and _is_listing_like_portal_url(
+            page.url or ""
+        ):
+            logger.info(f"Aba do Portal GD identificada: {page.url}")
+            return page
+
+    for page in pages:
+        parsed = urlparse(page.url or "")
+        if _page_url_is_blocked_or_insecure(page.url or ""):
             logger.warning(f"Aba bloqueada do Portal GD ignorada: {page.url}")
             continue
         if expected_host and parsed.netloc.lower() == expected_host:
             logger.info(f"Aba do Portal GD identificada: {page.url}")
             return page
-
-    for page in pages:
-        if _page_looks_access_denied(page):
-            logger.warning(f"Aba bloqueada do Portal GD ignorada: {page.url}")
-            continue
         if "gdneoenergiapernambuco.neoenergia.com" in (page.url or "").lower():
             logger.info(f"Aba do Portal GD identificada por fallback: {page.url}")
             return page
@@ -102,12 +108,23 @@ def find_portal_page_from_cdp(browser, portal_url: str):
     return None
 
 
+def _page_url_is_blocked_or_insecure(url: str) -> bool:
+    lowered = (url or "").lower()
+    return is_insecure_portal_http_url(lowered) or "errors.edgesuite.net" in lowered
+
+
+def _is_listing_like_portal_url(url: str) -> bool:
+    lowered = (url or "").lower()
+    return (
+        "/pages/acompanhamento/" in lowered
+        or "minhas-solicitacoes" in lowered
+        or "minhas_solicitacoes" in lowered
+    )
+
+
 def _page_looks_access_denied(page) -> bool:
     url = (page.url or "").lower()
-    parsed = urlparse(url)
-    if is_insecure_portal_http_url(url):
-        return True
-    if "errors.edgesuite.net" in url:
+    if _page_url_is_blocked_or_insecure(url):
         return True
     try:
         title = (page.title() or "").strip().lower()

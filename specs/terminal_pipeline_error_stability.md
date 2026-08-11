@@ -199,6 +199,8 @@ historico quando a pagina atual ou a `listing_url` capturada apontavam para
 ### Contrato
 
 - O modo CDP permanece estritamente attach-only.
+- A selecao inicial da aba CDP deve ser passiva por URL; nao deve ler titulo, body ou DOM da aba
+  do Portal antes de escolher a pagina.
 - Se a pagina atual ou a `listing_url` salva forem HTTP do Portal GD, a automacao deve falhar
   fechada antes de chamar `goto()`, `reload()` ou `go_back()`.
 - Se a aba HTTPS inicialmente valida virar `Access Denied` depois da conexao CDP, a automacao
@@ -212,3 +214,4 @@ historico quando a pagina atual ou a `listing_url` capturada apontavam para
 - `test_recover_listing_does_not_navigate_when_current_page_is_http_access_denied`
 - `test_recover_listing_does_not_goto_http_listing_url`
 - `test_download_step_aborts_before_pagination_when_portal_turns_access_denied`
+- `test_find_portal_page_selects_https_portal_tab_without_dom_probe`

@@ -170,6 +170,39 @@ def test_cdp_mode_fails_closed_when_only_http_blocked_tab_exists(
     assert navigations == []
 
 
+def test_find_portal_page_selects_https_portal_tab_without_dom_probe() -> None:
+    probe_calls: list[str] = []
+
+    class FakeLocator:
+        def inner_text(self, timeout: int = 0) -> str:
+            probe_calls.append("body")
+            return "Minhas Solicitacoes"
+
+    class FakePage:
+        def __init__(self, url: str) -> None:
+            self.url = url
+
+        def title(self) -> str:
+            probe_calls.append("title")
+            return "Sistema de Solicitacao"
+
+        def locator(self, _selector: str) -> FakeLocator:
+            return FakeLocator()
+
+    portal_tab = FakePage(
+        "https://gdneoenergiapernambuco.neoenergia.com/pages/acompanhamento/index.jsf"
+    )
+    browser = SimpleNamespace(contexts=[SimpleNamespace(pages=[portal_tab])])
+
+    page = find_portal_page_from_cdp(
+        browser,
+        "https://gdneoenergiapernambuco.neoenergia.com/",
+    )
+
+    assert page is portal_tab
+    assert probe_calls == []
+
+
 def test_find_portal_page_ignores_access_denied_tab() -> None:
     class FakeLocator:
         def __init__(self, text: str) -> None:
