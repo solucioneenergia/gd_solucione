@@ -3561,3 +3561,77 @@ def test_op5_plan_recovers_listing_after_partial_selection_and_detail_return(
     assert recovery["method"] == "recovered_listing_by_existing_context_page"
     assert navigation_calls == []
     assert context.new_page_called is False
+
+
+def test_op5_plan_preserves_listing_context_before_opening_detail(
+    monkeypatch,
+) -> None:
+    navigation_calls: list[str] = []
+    state = {"returned_to_listing": False}
+
+    class SameTabDetailPage:
+        url = "https://gdneoenergiapernambuco.neoenergia.com/pages/detalhe/index.jsf"
+
+        def __init__(self) -> None:
+            self.context = RecoveryContext(self)
+
+        def is_closed(self) -> bool:
+            return False
+
+        def wait_for_timeout(self, timeout: int) -> None:
+            return None
+
+        def goto(self, *_args, **_kwargs) -> None:
+            navigation_calls.append("goto")
+
+        def reload(self, *_args, **_kwargs) -> None:
+            navigation_calls.append("reload")
+
+        def go_back(self, **_kwargs) -> None:
+            navigation_calls.append("go_back")
+
+    class RecoveryContext:
+        def __init__(self, page: SameTabDetailPage) -> None:
+            self.pages = [page]
+            self.new_page_called = False
+
+        def new_page(self):
+            self.new_page_called = True
+            raise AssertionError("CDP recovery must not open a new portal page")
+
+    page = SameTabDetailPage()
+
+    monkeypatch.setattr(
+        cdp_portal_service,
+        "_has_minhas_solicitacoes_table",
+        lambda page: state["returned_to_listing"],
+    )
+    monkeypatch.setattr(
+        cdp_portal_service,
+        "_listing_has_rows",
+        lambda page: state["returned_to_listing"],
+    )
+    monkeypatch.setattr(
+        cdp_portal_service,
+        "_click_minhas_solicitacoes_navigation",
+        lambda page: navigation_calls.append("menu") or False,
+    )
+    monkeypatch.setattr(
+        cdp_portal_service,
+        "_click_detail_return_to_listing",
+        lambda page: state.__setitem__("returned_to_listing", True) or True,
+        raising=False,
+    )
+
+    recovered_page, recovery = cdp_portal_service._return_to_listing_after_detail(
+        page,
+        page,
+        "https://gdneoenergiapernambuco.neoenergia.com/pages/acompanhamento/index.jsf",
+    )
+
+    assert recovered_page is page
+    assert recovery["success"] is True
+    assert recovery["status"] == "recovered_listing_by_detail_return_control"
+    assert recovery["method"] == "recovered_listing_by_detail_return_control"
+    assert navigation_calls == []
+    assert page.context.new_page_called is False

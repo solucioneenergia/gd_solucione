@@ -3928,6 +3928,13 @@ def _return_to_listing_after_detail(detail_page, listing_page, listing_url: str)
         allow_active_navigation=False,
     )
     if not recovery["success"]:
+        local_return_recovery = _recover_listing_by_detail_return_control(
+            detail_page,
+            listing_url,
+            previous_error=recovery.get("error"),
+        )
+        if local_return_recovery["success"]:
+            return detail_page, local_return_recovery
         fallback_page, fallback_recovery = _recover_listing_in_new_context_page(
             detail_page,
             listing_url,
@@ -3981,6 +3988,49 @@ def _recover_listing_in_new_context_page(
         result["url_after"] = _safe_page_url(page)
         logger.debug(f"Falha ao recuperar listagem em nova aba: {exc}")
         return page, result
+
+
+def _recover_listing_by_detail_return_control(
+    page,
+    listing_url: str,
+    *,
+    previous_error: str | None = None,
+) -> dict:
+    result = {
+        "success": False,
+        "status": "failed_return_to_listing",
+        "method": "recovered_listing_by_detail_return_control",
+        "url_before": _safe_page_url(page),
+        "url_after": None,
+        "error": previous_error or manual_cdp_listing_recovery_message(),
+    }
+    if _page_is_closed(page):
+        result["url_after"] = _safe_page_url(page)
+        return result
+    if _is_unsafe_navigation_url(_safe_page_url(page), listing_url):
+        result["error"] = manual_cdp_listing_recovery_message()
+        result["url_after"] = _safe_page_url(page)
+        return result
+    if not _click_detail_return_to_listing(page):
+        result["url_after"] = _safe_page_url(page)
+        return result
+    try:
+        page.wait_for_timeout(500)
+    except PlaywrightError:
+        pass
+    if _wait_minhas_solicitacoes(page) and _listing_has_rows(page):
+        result.update(
+            {
+                "success": True,
+                "status": "recovered_listing_by_detail_return_control",
+                "url_after": _safe_page_url(page),
+                "error": None,
+            }
+        )
+        return result
+    result["error"] = manual_cdp_listing_recovery_message()
+    result["url_after"] = _safe_page_url(page)
+    return result
 
 
 def _recover_minhas_solicitacoes(
@@ -4314,6 +4364,29 @@ def _click_internal_back_to_listing(page) -> bool:
         page.locator("a:has-text('Minhas Solicitações')"),
         page.locator("a:has-text('Minhas Solicitacoes')"),
     ]
+    for locator in candidates:
+        if _click_first_visible(locator):
+            try:
+                page.wait_for_load_state("domcontentloaded", timeout=DETAIL_TIMEOUT_MS)
+            except PlaywrightError:
+                pass
+            return True
+    return False
+
+
+def _click_detail_return_to_listing(page) -> bool:
+    pattern = re.compile(r"^\s*(voltar|retornar)\s*$", re.IGNORECASE)
+    try:
+        candidates = [
+            page.get_by_role("button", name=pattern),
+            page.get_by_role("link", name=pattern),
+            page.locator("button:has-text('Voltar')"),
+            page.locator("a:has-text('Voltar')"),
+            page.locator("button:has-text('Retornar')"),
+            page.locator("a:has-text('Retornar')"),
+        ]
+    except AttributeError:
+        return False
     for locator in candidates:
         if _click_first_visible(locator):
             try:
