@@ -3935,6 +3935,13 @@ def _return_to_listing_after_detail(detail_page, listing_page, listing_url: str)
         )
         if local_return_recovery["success"]:
             return detail_page, local_return_recovery
+        home_recovery = _recover_listing_by_authenticated_home_icon(
+            detail_page,
+            listing_url,
+            previous_error=recovery.get("error"),
+        )
+        if home_recovery["success"]:
+            return detail_page, home_recovery
         fallback_page, fallback_recovery = _recover_listing_in_new_context_page(
             detail_page,
             listing_url,
@@ -4030,6 +4037,79 @@ def _recover_listing_by_detail_return_control(
         return result
     result["error"] = manual_cdp_listing_recovery_message()
     result["url_after"] = _safe_page_url(page)
+    return result
+
+
+def _recover_listing_by_authenticated_home_icon(
+    page,
+    listing_url: str,
+    *,
+    previous_error: str | None = None,
+) -> dict:
+    result = {
+        "success": False,
+        "status": "failed_return_to_listing",
+        "method": "recovered_listing_by_authenticated_home_icon",
+        "url_before": _safe_page_url(page),
+        "url_after": None,
+        "error": previous_error or manual_cdp_listing_recovery_message(),
+    }
+    if _page_is_closed(page) or _page_looks_access_denied(page):
+        result["error"] = manual_cdp_listing_recovery_message()
+        result["url_after"] = _safe_page_url(page)
+        return result
+    if _is_unsafe_navigation_url(_safe_page_url(page), listing_url):
+        result["error"] = manual_cdp_listing_recovery_message()
+        result["url_after"] = _safe_page_url(page)
+        return result
+
+    pages_before = _context_pages_snapshot(page)
+    if not _click_authenticated_home_icon(page, listing_url):
+        result["url_after"] = _safe_page_url(page)
+        return result
+    if _context_pages_changed(page, pages_before):
+        result["error"] = manual_cdp_listing_recovery_message()
+        result["url_after"] = _safe_page_url(page)
+        return result
+
+    try:
+        page.wait_for_timeout(500)
+    except PlaywrightError:
+        pass
+
+    if _page_looks_access_denied(page) or is_insecure_portal_http_url(_safe_page_url(page)):
+        result["error"] = manual_cdp_listing_recovery_message()
+        result["url_after"] = _safe_page_url(page)
+        return result
+    if _wait_minhas_solicitacoes(page) and _listing_has_rows(page):
+        return _successful_home_listing_recovery(page, result)
+    if _click_home_minhas_solicitacoes_control(page, listing_url):
+        try:
+            page.wait_for_timeout(500)
+        except PlaywrightError:
+            pass
+        if (
+            not _page_looks_access_denied(page)
+            and not is_insecure_portal_http_url(_safe_page_url(page))
+            and _wait_minhas_solicitacoes(page)
+            and _listing_has_rows(page)
+        ):
+            return _successful_home_listing_recovery(page, result)
+
+    result["error"] = manual_cdp_listing_recovery_message()
+    result["url_after"] = _safe_page_url(page)
+    return result
+
+
+def _successful_home_listing_recovery(page, result: dict) -> dict:
+    result.update(
+        {
+            "success": True,
+            "status": "recovered_listing_by_authenticated_home_icon",
+            "url_after": _safe_page_url(page),
+            "error": None,
+        }
+    )
     return result
 
 
@@ -4384,6 +4464,12 @@ def _click_detail_return_to_listing(page) -> bool:
             page.locator("a:has-text('Voltar')"),
             page.locator("button:has-text('Retornar')"),
             page.locator("a:has-text('Retornar')"),
+            page.locator("input[type='submit'][value*='Voltar']"),
+            page.locator("input[type='button'][value*='Voltar']"),
+            page.locator("input[value*='Voltar']"),
+            page.locator("input[type='submit'][value*='Retornar']"),
+            page.locator("input[type='button'][value*='Retornar']"),
+            page.locator("input[value*='Retornar']"),
         ]
     except AttributeError:
         return False
@@ -4395,6 +4481,114 @@ def _click_detail_return_to_listing(page) -> bool:
                 pass
             return True
     return False
+
+
+def _click_authenticated_home_icon(page, listing_url: str) -> bool:
+    pattern = re.compile(r"^\s*(home|in[iÃ­]cio|inicio)\s*$", re.IGNORECASE)
+    try:
+        candidates = [
+            page.get_by_role("button", name=pattern),
+            page.get_by_role("link", name=pattern),
+            page.locator("[aria-label*='Home']"),
+            page.locator("[aria-label*='InÃ­cio']"),
+            page.locator("[aria-label*='Inicio']"),
+            page.locator("[title*='Home']"),
+            page.locator("[title*='InÃ­cio']"),
+            page.locator("[title*='Inicio']"),
+            page.locator("a:has(i.fa-home)"),
+            page.locator("button:has(i.fa-home)"),
+            page.locator("a:has(.fa-home)"),
+            page.locator("button:has(.fa-home)"),
+            page.locator("a:has-text('Home')"),
+            page.locator("button:has-text('Home')"),
+            page.locator("a:has-text('InÃ­cio')"),
+            page.locator("button:has-text('InÃ­cio')"),
+            page.locator("a:has-text('Inicio')"),
+            page.locator("button:has-text('Inicio')"),
+        ]
+    except AttributeError:
+        return False
+    return _click_first_visible_safe_portal_control(candidates, listing_url)
+
+
+def _click_home_minhas_solicitacoes_control(page, listing_url: str) -> bool:
+    pattern = re.compile(
+        r"minhas\s+solicita[cÃ§][oÃµ]es|consultar\s+solicita[cÃ§][oÃµ]es",
+        re.IGNORECASE,
+    )
+    try:
+        candidates = [
+            page.get_by_role("link", name=pattern),
+            page.get_by_role("button", name=pattern),
+            page.locator("a:has-text('Minhas SolicitaÃ§Ãµes')"),
+            page.locator("button:has-text('Minhas SolicitaÃ§Ãµes')"),
+            page.locator("a:has-text('Minhas Solicitacoes')"),
+            page.locator("button:has-text('Minhas Solicitacoes')"),
+            page.locator("a:has-text('Consultar SolicitaÃ§Ãµes')"),
+            page.locator("button:has-text('Consultar SolicitaÃ§Ãµes')"),
+            page.locator("a:has-text('Consultar Solicitacoes')"),
+            page.locator("button:has-text('Consultar Solicitacoes')"),
+        ]
+    except AttributeError:
+        return False
+    return _click_first_visible_safe_portal_control(candidates, listing_url)
+
+
+def _click_first_visible_safe_portal_control(
+    candidates: list,
+    listing_url: str,
+) -> bool:
+    for locator in candidates:
+        item = _first_visible(locator)
+        if item is None:
+            continue
+        if _locator_href_is_unsafe(item, listing_url):
+            continue
+        try:
+            item.click(timeout=10_000)
+            try:
+                item.page.wait_for_load_state("domcontentloaded", timeout=DETAIL_TIMEOUT_MS)
+            except (AttributeError, PlaywrightError):
+                pass
+            return True
+        except PlaywrightError as exc:
+            logger.debug(f"Controle seguro visivel nao clicavel: {exc}")
+    return False
+
+
+def _locator_href_is_unsafe(locator, listing_url: str) -> bool:
+    try:
+        href = locator.get_attribute("href", timeout=1_000)
+    except (AttributeError, PlaywrightError):
+        return False
+    if not href:
+        return False
+    normalized = href.strip()
+    if not normalized or normalized.startswith("#"):
+        return False
+    if normalized.lower().startswith("javascript:"):
+        return False
+    parsed = urlparse(normalized)
+    if not parsed.scheme and not parsed.netloc:
+        return False
+    expected_host = urlparse(listing_url or "").netloc.lower()
+    if parsed.scheme.lower() != "https":
+        return True
+    return bool(expected_host and parsed.netloc.lower() != expected_host)
+
+
+def _context_pages_snapshot(page) -> list:
+    context = getattr(page, "context", None)
+    if context is None:
+        return []
+    return list(getattr(context, "pages", []) or [])
+
+
+def _context_pages_changed(page, before: list) -> bool:
+    context = getattr(page, "context", None)
+    if context is None:
+        return False
+    return list(getattr(context, "pages", []) or []) != before
 
 
 def _page_is_closed(page) -> bool:

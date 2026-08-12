@@ -20,10 +20,18 @@ manual do operador e recriar `Access Denied` no Portal GD.
 - No retorno pos-detalhe do `op5-plan`, se a tabela `Minhas Solicitacoes` nao
   estiver visivel na aba corrente ou em outra aba ja existente do mesmo contexto
   CDP, o fluxo pode acionar apenas um controle local da propria tela de detalhe
-  com rotulo `Voltar` ou `Retornar`. Esse controle so e valido quando a URL
-  corrente permanece HTTPS no host autenticado do Portal, nao e raiz/Access
-  Denied, e a tabela `Minhas Solicitacoes` com linhas e reconfirmada apos o
-  clique. Se essa evidencia nao existir, o fluxo deve falhar fechado.
+  com rotulo/valor `Voltar` ou `Retornar`, incluindo botoes, links ou inputs de
+  formulario JSF. Esse controle so e valido quando a URL corrente permanece
+  HTTPS no host autenticado do Portal, nao e raiz/Access Denied, e a tabela
+  `Minhas Solicitacoes` com linhas e reconfirmada apos o clique. Se essa
+  evidencia nao existir, o fluxo deve falhar fechado.
+- Se `Voltar`/`Retornar` nao estiver disponivel ou nao reconfirmar a listagem, o
+  `op5-plan` pode acionar o controle visual `Home`/`Inicio`/icone de casa ja
+  existente na pagina autenticada. Esse clique so e valido se nao montar URL,
+  nao abrir nova aba, nao usar historico, nao usar reload, permanecer em HTTPS
+  no host do Portal, nao resultar em raiz/Access Denied e reconfirmar a tabela
+  `Minhas Solicitacoes` com linhas diretamente ou por um controle visual
+  autenticado da propria Home.
 - A revalidacao da pagina/linha de origem de um protocolo selecionado no
   `op5-plan` tambem deve operar em modo passivo: quando a listagem ja estiver
   visivel, pode usar apenas controles de paginacao existentes; quando a listagem
@@ -35,8 +43,13 @@ manual do operador e recriar `Access Denied` no Portal GD.
   - `go_back()`;
   - navegacao por menu.
 - O controle local `Voltar`/`Retornar` da tela de detalhe nao e considerado
-  navegacao por menu, desde que nao abra nova aba, nao use URL salva, nao use
-  historico e seja validado pela tabela autenticada apos o clique.
+  navegacao por menu, desde que seja um botao/link/input da propria tela, nao
+  abra nova aba, nao use URL salva, nao use historico e seja validado pela
+  tabela autenticada apos o clique.
+- O controle visual `Home`/`Inicio`/icone de casa tambem nao e considerado
+  navegacao por menu quando acionado por elemento ja visivel no DOM autenticado
+  e seguido de validacao da tabela. A automacao continua proibida de navegar
+  para raiz por URL, `http://`, `goto()`, `reload()`, `go_back()` ou nova aba.
 - Se um novo `op5-plan` falhar por CDP/listagem/paginacao, qualquer
   `op5_plan_latest.json` anterior deve ser removido ou sobrescrito por marcador
   invalido com `stale_after_failed_plan=true`; `op5-apply` nao pode aceitar esse
@@ -61,9 +74,16 @@ manual do operador e recriar `Access Denied` no Portal GD.
 Dado um detalhe aberto na mesma aba, sem tabela de listagem visivel,
 quando o retorno pos-detalhe for acionado,
 entao a automacao deve tentar apenas o controle local `Voltar`/`Retornar` da
-tela de detalhe; se a listagem com linhas for reconfirmada, o retorno deve ser
-aceito; caso contrario o resultado deve ser `failed_return_to_listing`, e
-nenhuma chamada a `goto()`, `reload()`, `go_back()` ou menu deve ocorrer.
+tela de detalhe, inclusive quando ele for um input JSF; se a listagem com linhas
+for reconfirmada, o retorno deve ser aceito; caso contrario o resultado deve ser
+`failed_return_to_listing`, e nenhuma chamada a `goto()`, `reload()`,
+`go_back()` ou menu deve ocorrer.
+
+Dado um detalhe aberto na mesma aba, sem `Voltar`/`Retornar` util,
+quando houver botao visual `Home`/`Inicio`/icone de casa autenticado,
+entao a automacao pode clicar esse controle e so deve aceitar o retorno se a
+tabela `Minhas Solicitacoes` com linhas for reconfirmada sem URL manual,
+historico, reload, `http://`, raiz insegura ou nova aba.
 
 Dado um protocolo concluido com PDF e `metadata.json` locais validos,
 quando `op5-plan` selecionar esse protocolo,
