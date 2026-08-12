@@ -1592,6 +1592,7 @@ def download_completed_budgets_from_current_page(
                 listing_page,
                 record,
                 listing_url,
+                allow_active_navigation=False,
             )
             _apply_origin_page_navigation_result(result, origin_navigation)
             if not origin_navigation["success"]:
@@ -2693,6 +2694,8 @@ def ensure_request_origin_page(
     page,
     request: PortalSolicitation,
     listing_url: str | None = None,
+    *,
+    allow_active_navigation: bool = True,
 ) -> dict:
     target_page = int(request.page_number or 1)
     protocol = request.protocol
@@ -2712,7 +2715,11 @@ def ensure_request_origin_page(
     logger.info(f"Protocolo {protocol} pertence a pagina {target_page}.")
 
     if listing_url:
-        recovery = _recover_minhas_solicitacoes(page, listing_url)
+        recovery = _recover_minhas_solicitacoes(
+            page,
+            listing_url,
+            allow_active_navigation=allow_active_navigation,
+        )
         if not recovery["success"]:
             result.update(
                 {
@@ -2743,7 +2750,7 @@ def ensure_request_origin_page(
 
     logger.info(f"Protocolo {protocol} nao esta visivel na pagina atual.")
     if target_page <= 1:
-        if listing_url:
+        if listing_url and allow_active_navigation:
             try:
                 logger.info(
                     f"Retornando para primeira pagina da listagem para o protocolo {protocol}."
@@ -2768,6 +2775,8 @@ def ensure_request_origin_page(
                 result["error"] = str(exc)
                 result["url_after"] = _safe_page_url(page)
                 return result
+        if listing_url and not allow_active_navigation:
+            result["method"] = "passive_origin_page_check"
         result["error"] = "protocol_not_found_on_origin_page"
         result["url_after"] = _safe_page_url(page)
         return result

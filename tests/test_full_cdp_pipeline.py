@@ -1062,6 +1062,69 @@ def test_batch_fast_collect_stops_when_requested_limit_is_reached(monkeypatch) -
     assert clicks == []
 
 
+def test_op5_plan_limit_50_continues_across_pages_without_active_root_navigation(
+    monkeypatch,
+) -> None:
+    class Settings(DummySettings):
+        ENABLE_PORTAL_PAGINATION = True
+        MAX_PORTAL_PAGES = 10
+        MAX_COMPLETED_TO_PROCESS = 50
+        OP5_RECONCILIATION_MODE = "batch_fast"
+
+    active_page = {"value": 1}
+    reads: list[int] = []
+    clicks: list[int] = []
+    navigation_calls: list[str] = []
+
+    class ListingPage(FakePage):
+        def goto(self, *_args, **_kwargs) -> None:
+            navigation_calls.append("goto")
+
+        def reload(self, *_args, **_kwargs) -> None:
+            navigation_calls.append("reload")
+
+        def go_back(self, *_args, **_kwargs) -> None:
+            navigation_calls.append("go_back")
+
+    def fake_read(page):
+        reads.append(active_page["value"])
+        start = (active_page["value"] - 1) * 15
+        return _page(start, 15)
+
+    def fake_next(page, current_page_number: int):
+        clicks.append(current_page_number)
+        active_page["value"] = current_page_number + 1
+        return {
+            "found": True,
+            "enabled": True,
+            "clicked": True,
+            "mode": "numeric",
+            "current_page_number": current_page_number,
+            "target_page_number": current_page_number + 1,
+            "numeric_page_links_found": [str(current_page_number + 1)],
+            "stop_reason": "pagination_numeric_page_clicked",
+        }
+
+    monkeypatch.setattr(cdp_portal_service, "get_active_numeric_page", lambda page: active_page["value"])
+    monkeypatch.setattr(cdp_portal_service, "read_current_page_table_with_row_handles", fake_read)
+    monkeypatch.setattr(cdp_portal_service, "find_and_click_next_listing_page", fake_next)
+    monkeypatch.setattr(
+        cdp_portal_service,
+        "_click_minhas_solicitacoes_navigation",
+        lambda page: navigation_calls.append("menu") or False,
+    )
+    monkeypatch.setattr(cdp_portal_service, "_wait_after_pagination_click", lambda page: None)
+
+    summary = _collect_completed_listing_rows_across_pages(ListingPage(), Settings())
+
+    assert summary["pages_read"] == 4
+    assert summary["total_completed"] == 60
+    assert summary["pagination_stop_reason"] == "incremental_batch_limit_reached"
+    assert summary["pagination_complete"] is False
+    assert clicks == [1, 2, 3]
+    assert navigation_calls == []
+
+
 def test_op5_plan_counts_only_excel_write_actions_as_planned() -> None:
     payload = {
         "json_report_path": "data/logs/pipeline_cdp_completo.json",
@@ -1812,6 +1875,190 @@ def test_origin_page_navigates_to_numeric_page_when_protocol_is_not_visible(
     assert result["row"]["record"].protocol == "2603"
 
 
+def test_origin_navigation_recovers_when_detail_return_leaves_listing_on_wrong_page(
+    monkeypatch,
+) -> None:
+    request = PortalSolicitation(
+        protocol="2603",
+        client_name="CLIENTE SINTETICO LTDA",
+        status="CONCLUIDA",
+        page_number=3,
+        row_index=2,
+    )
+    active_page = {"value": 1}
+    rows_by_page = {
+        1: [_row("2601")],
+        2: [_row("2602")],
+        3: [_row("2603")],
+    }
+    navigation_calls: list[str] = []
+
+    class ListingPage(FakePage):
+        def goto(self, *_args, **_kwargs) -> None:
+            navigation_calls.append("goto")
+
+        def reload(self, *_args, **_kwargs) -> None:
+            navigation_calls.append("reload")
+
+        def go_back(self, *_args, **_kwargs) -> None:
+            navigation_calls.append("go_back")
+
+    monkeypatch.setattr(cdp_portal_service, "_has_minhas_solicitacoes_table", lambda page: True)
+    monkeypatch.setattr(
+        cdp_portal_service,
+        "_click_minhas_solicitacoes_navigation",
+        lambda page: navigation_calls.append("menu") or False,
+    )
+    monkeypatch.setattr(cdp_portal_service, "get_active_numeric_page", lambda page: active_page["value"])
+    monkeypatch.setattr(
+        cdp_portal_service,
+        "read_current_page_table_with_row_handles",
+        lambda page: rows_by_page[active_page["value"]],
+    )
+    monkeypatch.setattr(
+        cdp_portal_service,
+        "find_and_click_next_numeric_page",
+        lambda page, current_page_number: {
+            "found": False,
+            "enabled": False,
+            "clicked": False,
+            "mode": "numeric",
+            "current_page_number": current_page_number,
+            "target_page_number": current_page_number + 1,
+            "numeric_page_links_found": ["1"],
+            "stop_reason": "pagination_numeric_target_not_found",
+        },
+    )
+
+    def fake_next(page, current_page_number: int):
+        active_page["value"] = current_page_number + 1
+        return {
+            "found": True,
+            "enabled": True,
+            "clicked": True,
+            "mode": "next_button",
+            "current_page_number": current_page_number,
+            "target_page_number": current_page_number + 1,
+            "numeric_page_links_found": [],
+            "stop_reason": "pagination_next_clicked",
+        }
+
+    monkeypatch.setattr(cdp_portal_service, "find_and_click_next_listing_page", fake_next)
+    monkeypatch.setattr(cdp_portal_service, "_wait_after_pagination_click", lambda page: None)
+
+    result = ensure_request_origin_page(
+        ListingPage(),
+        request,
+        "https://gdneoenergiapernambuco.neoenergia.com/pages/acompanhamento/index.jsf",
+        allow_active_navigation=False,
+    )
+
+    assert result["success"] is True
+    assert result["status"] == "protocol_found_on_origin_page"
+    assert result["method"] == "recovered_listing_by_sequential_numeric_page"
+    assert result["protocol_found_on_origin_page"] is True
+    assert navigation_calls == []
+
+
+def test_origin_navigation_fails_closed_when_wrong_page_cannot_be_recovered_safely(
+    monkeypatch,
+) -> None:
+    request = PortalSolicitation(
+        protocol="2603",
+        client_name="CLIENTE SINTETICO LTDA",
+        status="CONCLUIDA",
+        page_number=3,
+        row_index=2,
+    )
+    navigation_calls: list[str] = []
+
+    class ListingPage(FakePage):
+        def __init__(self) -> None:
+            self.context = type("Context", (), {"pages": [self]})()
+
+        def goto(self, *_args, **_kwargs) -> None:
+            navigation_calls.append("goto")
+
+        def reload(self, *_args, **_kwargs) -> None:
+            navigation_calls.append("reload")
+
+        def go_back(self, *_args, **_kwargs) -> None:
+            navigation_calls.append("go_back")
+
+    monkeypatch.setattr(cdp_portal_service, "_has_minhas_solicitacoes_table", lambda page: False)
+    monkeypatch.setattr(
+        cdp_portal_service,
+        "_click_minhas_solicitacoes_navigation",
+        lambda page: navigation_calls.append("menu") or False,
+    )
+    monkeypatch.setattr(
+        cdp_portal_service,
+        "read_current_page_table_with_row_handles",
+        lambda page: [_row("2601")],
+    )
+
+    result = ensure_request_origin_page(
+        ListingPage(),
+        request,
+        "https://gdneoenergiapernambuco.neoenergia.com/pages/acompanhamento/index.jsf",
+        allow_active_navigation=False,
+    )
+
+    assert result["success"] is False
+    assert result["status"] in {
+        "failed_return_to_listing",
+        "pagination_numeric_target_not_found",
+        "pagination_active_page_mismatch",
+        "protocol_not_found_on_origin_page",
+    }
+    assert "PowerShell" in result["error"]
+    assert navigation_calls == []
+
+
+def test_op5_plan_never_recovers_listing_by_root_http_or_unsafe_url(
+    monkeypatch,
+) -> None:
+    request = PortalSolicitation(
+        protocol="2603",
+        client_name="CLIENTE SINTETICO LTDA",
+        status="CONCLUIDA",
+        page_number=3,
+        row_index=2,
+    )
+    navigation_calls: list[str] = []
+
+    class AccessDeniedPage(FakePage):
+        url = "http://gdneoenergiapernambuco.neoenergia.com/index.jsf"
+
+        def goto(self, *_args, **_kwargs) -> None:
+            navigation_calls.append("goto")
+
+        def reload(self, *_args, **_kwargs) -> None:
+            navigation_calls.append("reload")
+
+        def go_back(self, *_args, **_kwargs) -> None:
+            navigation_calls.append("go_back")
+
+    monkeypatch.setattr(cdp_portal_service, "_has_minhas_solicitacoes_table", lambda page: False)
+    monkeypatch.setattr(
+        cdp_portal_service,
+        "_click_minhas_solicitacoes_navigation",
+        lambda page: navigation_calls.append("menu") or False,
+    )
+
+    result = ensure_request_origin_page(
+        AccessDeniedPage(),
+        request,
+        "http://gdneoenergiapernambuco.neoenergia.com/index.jsf",
+        allow_active_navigation=False,
+    )
+
+    assert result["success"] is False
+    assert result["status"] == "failed_return_to_listing"
+    assert "PowerShell" in result["error"]
+    assert navigation_calls == []
+
+
 def test_origin_page_reports_protocol_not_found_after_numeric_navigation(
     monkeypatch,
 ) -> None:
@@ -1926,7 +2173,7 @@ def test_download_aborts_after_three_protocol_not_found_errors(monkeypatch) -> N
         },
     )
 
-    def fake_origin(page, request, listing_url=None):
+    def fake_origin(page, request, listing_url=None, **_kwargs):
         calls.append(request.protocol)
         return {
             "success": False,
@@ -2009,7 +2256,7 @@ def test_download_aborts_after_failed_return_to_listing_even_with_reusable_pdf(
         },
     )
 
-    def fake_origin(page, request, listing_url=None):
+    def fake_origin(page, request, listing_url=None, **_kwargs):
         origin_calls.append(request.protocol)
         return {
             "success": True,

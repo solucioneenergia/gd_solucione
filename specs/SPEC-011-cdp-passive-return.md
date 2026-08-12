@@ -20,11 +20,20 @@ manual do operador e recriar `Access Denied` no Portal GD.
 - No retorno pos-detalhe do `op5-plan`, se a tabela `Minhas Solicitacoes` nao
   estiver visivel na aba corrente ou em outra aba ja existente do mesmo contexto
   CDP, o fluxo deve falhar fechado.
+- A revalidacao da pagina/linha de origem de um protocolo selecionado no
+  `op5-plan` tambem deve operar em modo passivo: quando a listagem ja estiver
+  visivel, pode usar apenas controles de paginacao existentes; quando a listagem
+  nao estiver visivel, deve falhar fechado sem menu, historico, reload, URL
+  salva ou nova aba.
 - Nesse retorno pos-detalhe, a automacao nao pode chamar:
   - `goto()`;
   - `reload()`;
   - `go_back()`;
   - navegacao por menu.
+- Se um novo `op5-plan` falhar por CDP/listagem/paginacao, qualquer
+  `op5_plan_latest.json` anterior deve ser removido ou sobrescrito por marcador
+  invalido com `stale_after_failed_plan=true`; `op5-apply` nao pode aceitar esse
+  plano.
 - A mensagem operacional deve orientar o operador a reabrir o Edge pelo comando
   PowerShell aprovado, fazer login manual e deixar a listagem aberta.
 - `op5-apply` continua proibido de reler Portal/CDP e aplica somente plano
@@ -56,3 +65,13 @@ Dado `batch_fast` com paginacao incompleta apos coletar protocolos elegiveis,
 quando a automacao nao conseguir avancar a pagina sem risco ao CDP,
 entao o plano deve seguir com o lote parcial ja coletado e reportar a causa,
 sem bloquear por reconciliacao global.
+
+Dado um protocolo coletado originalmente em pagina posterior,
+quando a listagem reaparecer em pagina incorreta apos detalhe,
+entao o `op5-plan` deve recuperar a pagina de origem apenas por paginacao segura
+e localizar o protocolo, sem `goto()`, `reload()`, `go_back()` ou menu.
+
+Dado um `op5_plan_latest.json` valido anterior,
+quando um novo `op5-plan` falhar por retorno/listagem/paginacao,
+entao o plano anterior deve ficar explicitamente inutilizavel antes de qualquer
+`op5-apply`.

@@ -717,6 +717,11 @@ def _run_full_cdp_pipeline_locked(
         payload["op5_plan_digest"] = _file_sha256(plan_path)
         logger.info(f"Plano OP5 congelado salvo em: {plan_path}")
         _persist_pipeline_reports(settings.logs_dir_path, payload)
+    elif settings.DRY_RUN:
+        plan_path = _invalidate_latest_op5_plan(settings.logs_dir_path, payload)
+        payload["op5_plan_path"] = str(plan_path)
+        payload["op5_plan_source_kind"] = "invalidated_after_failed_dry_run"
+        payload["op5_plan_digest"] = _file_sha256(plan_path)
     if payload["status"] == OperationStatus.SUCESSO.value:
         progress.finish_success("Pipeline concluído.")
     else:
@@ -1168,6 +1173,30 @@ def _persist_op5_plan(logs_dir: Path, payload: dict) -> Path:
     plan = _build_op5_plan_payload(payload)
     path = logs_dir / OP5_PLAN_JSON_REPORT_NAME
     atomic_write_json(path, plan)
+    return path
+
+
+def _invalidate_latest_op5_plan(logs_dir: Path, payload: dict) -> Path:
+    path = logs_dir / OP5_PLAN_JSON_REPORT_NAME
+    run_error = payload.get("run_error") or (payload.get("download") or {}).get(
+        "run_error"
+    )
+    marker: dict[str, object] = {
+        "schema_version": 1,
+        "created_at": datetime.now().isoformat(timespec="seconds"),
+        "dry_run": True,
+        "status": payload.get("status") or OperationStatus.FALHOU.value,
+        "stale_after_failed_plan": True,
+        "run_error": run_error or "op5_plan_failed",
+        "error_code": "OP5_PLAN_COMMAND_FAILED",
+        "requested_batch_limit": payload.get("requested_batch_limit"),
+        "authorized_batch_limit": payload.get("authorized_batch_limit"),
+        "authorization_scope": payload.get("authorization_scope"),
+        "total_errors": max(int(payload.get("total_errors", 0) or 0), 1),
+        "planned_excel_actions": [],
+        "source_report_path": payload.get("json_report_path"),
+    }
+    atomic_write_json(path, marker)
     return path
 
 

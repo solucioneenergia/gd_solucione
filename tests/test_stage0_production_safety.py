@@ -617,6 +617,77 @@ def test_option5_dry_run_persists_explicit_frozen_plan(
     ]
 
 
+def test_failed_op5_plan_does_not_leave_previous_latest_plan_usable(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    settings = _settings(
+        tmp_path,
+        DRY_RUN=True,
+        APPLY_ARCHIVE=True,
+        MAX_COMPLETED_TO_PROCESS=50,
+        OPTION5_AUTHORIZED_MAX_PROTOCOLS=60,
+        LOGS_DIR=tmp_path / "logs",
+        DOWNLOADS_DIR=tmp_path / "downloads",
+    )
+    settings.logs_dir_path.mkdir(parents=True, exist_ok=True)
+    plan_path = settings.logs_dir_path / "op5_plan_latest.json"
+    plan_path.write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "dry_run": True,
+                "status": "SUCESSO",
+                "requested_batch_limit": 50,
+                "authorized_batch_limit": 60,
+                "authorization_scope": full_pipeline.CONTROLLED_PRODUCTION_UP_TO_60_AUTHORIZATION_SCOPE,
+                "total_errors": 0,
+                "planned_excel_actions": [
+                    {"protocol": "2600001048", "action": "update_existing"}
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        full_pipeline,
+        "global_execution_lock_path",
+        lambda _settings: tmp_path / "locks" / "real_run_execution.lock",
+    )
+    monkeypatch.setattr(
+        full_pipeline,
+        "_run_download_step",
+        lambda *_args: {
+            "run_error": "failed_return_to_listing",
+            "aborted": True,
+            "abort_reason": "failed_return_to_listing",
+            "total_selected": 0,
+            "total_for_processing": 0,
+            "total_sent_to_processing": 0,
+            "total_existing_reused": 0,
+            "total_downloaded": 0,
+            "total_cdp_errors": 1,
+            "total_download_errors": 0,
+            "total_errors": 1,
+            "selected_protocols": [],
+            "results": [],
+        },
+    )
+    processing = Mock(side_effect=AssertionError("processing must not run after CDP failure"))
+    monkeypatch.setattr(full_pipeline, "process_downloaded_pdfs", processing)
+
+    result = full_pipeline.run_full_cdp_pipeline(
+        settings,
+        confirmation=full_pipeline.build_option5_strong_confirmation(50),
+    )
+    latest_plan = json.loads(plan_path.read_text(encoding="utf-8"))
+
+    assert result["status"] != "SUCESSO"
+    assert latest_plan["stale_after_failed_plan"] is True
+    assert latest_plan["status"] == result["status"]
+    assert latest_plan["run_error"] == "failed_return_to_listing"
+    assert latest_plan["planned_excel_actions"] == []
+
+
 def test_option5_real_run_blocks_when_workbook_changed_after_explicit_plan(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
