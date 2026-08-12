@@ -2224,8 +2224,15 @@ def _recover_first_page_without_active_indicator(page) -> dict:
         result["error"] = str(exc)
         return result
     if not rows_before:
-        result["error"] = "Listagem visivel sem linhas para confirmar pagina inicial."
-        return result
+        _wait_after_pagination_click(page)
+        try:
+            rows_before = read_current_page_table_with_row_handles(page)
+        except Exception as exc:
+            result["error"] = str(exc)
+            return result
+        if not rows_before:
+            result["error"] = "Listagem visivel sem linhas para confirmar pagina inicial."
+            return result
 
     click_result = find_and_click_next_numeric_page(page, 0)
     result["click_result"] = click_result

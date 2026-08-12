@@ -637,6 +637,45 @@ def test_reset_listing_accepts_disabled_page_one_when_active_indicator_missing(
     assert result["click_result"]["target_page_number"] == 1
 
 
+def test_reset_listing_retries_empty_rows_before_rejecting_first_page(
+    monkeypatch,
+) -> None:
+    row_reads = iter([[], [_row("2600001048")]])
+    waits = []
+
+    monkeypatch.setattr(cdp_portal_service, "get_active_numeric_page", lambda page: None)
+    monkeypatch.setattr(
+        cdp_portal_service,
+        "read_current_page_table_with_row_handles",
+        lambda page: next(row_reads),
+    )
+    monkeypatch.setattr(
+        cdp_portal_service,
+        "_wait_after_pagination_click",
+        lambda page: waits.append("wait"),
+    )
+    monkeypatch.setattr(
+        cdp_portal_service,
+        "find_and_click_next_numeric_page",
+        lambda page, current_page_number: {
+            "found": True,
+            "enabled": False,
+            "clicked": False,
+            "current_page_number": current_page_number,
+            "target_page_number": 1,
+            "numeric_page_links_found": ["1", "2", "3"],
+            "stop_reason": "pagination_numeric_target_disabled",
+        },
+    )
+
+    result = ensure_listing_starts_on_page_one(FakePage())
+
+    assert result["success"] is True
+    assert result["status"] == "assumed_first_page_active_unconfirmed"
+    assert result["active_page_after"] == 1
+    assert waits == ["wait"]
+
+
 def test_max_portal_pages_one_reads_only_current_page() -> None:
     summary = consolidate_listing_page_rows([_page(0, 50), _page(50, 50)], max_pages=1)
 
