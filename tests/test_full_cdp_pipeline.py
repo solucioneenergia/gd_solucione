@@ -3492,3 +3492,72 @@ def test_return_to_listing_uses_existing_context_listing_when_original_is_closed
     assert recovery["success"] is True
     assert recovery["status"] == "recovered_listing_by_existing_context_page"
     assert recovery["method"] == "recovered_listing_by_existing_context_page"
+
+
+def test_op5_plan_recovers_listing_after_partial_selection_and_detail_return(
+    monkeypatch,
+) -> None:
+    navigation_calls: list[str] = []
+
+    class ContextPage:
+        def __init__(self, name: str, context: "RecoveryContext") -> None:
+            self.name = name
+            self.url = f"https://gdneoenergiapernambuco.neoenergia.com/{name}"
+            self.context = context
+            self.closed = False
+
+        def is_closed(self) -> bool:
+            return self.closed
+
+        def wait_for_timeout(self, timeout: int) -> None:
+            return None
+
+        def close(self) -> None:
+            self.closed = True
+
+        def goto(self, *_args, **_kwargs) -> None:
+            navigation_calls.append("goto")
+
+        def reload(self, *_args, **_kwargs) -> None:
+            navigation_calls.append("reload")
+
+        def go_back(self, **kwargs) -> None:
+            navigation_calls.append("go_back")
+
+    class RecoveryContext:
+        def __init__(self) -> None:
+            self.pages = []
+            self.new_page_called = False
+
+        def new_page(self):
+            self.new_page_called = True
+            raise AssertionError("CDP recovery must not open a new portal page")
+
+    context = RecoveryContext()
+    stale_listing_page = ContextPage("stale-listing", context)
+    detail_page = ContextPage("detail", context)
+    safe_listing_page = ContextPage("minhas-solicitacoes", context)
+    context.pages.extend([stale_listing_page, detail_page, safe_listing_page])
+
+    monkeypatch.setattr(
+        cdp_portal_service,
+        "_has_minhas_solicitacoes_table",
+        lambda page: getattr(page, "name", "") == "minhas-solicitacoes",
+    )
+    monkeypatch.setattr(
+        cdp_portal_service,
+        "_click_minhas_solicitacoes_navigation",
+        lambda page: navigation_calls.append("menu") or False,
+    )
+
+    recovered_page, recovery = cdp_portal_service._return_to_listing_after_detail(
+        detail_page,
+        stale_listing_page,
+        "https://gdneoenergiapernambuco.neoenergia.com/pages/acompanhamento/index.jsf",
+    )
+
+    assert recovered_page is safe_listing_page
+    assert recovery["success"] is True
+    assert recovery["method"] == "recovered_listing_by_existing_context_page"
+    assert navigation_calls == []
+    assert context.new_page_called is False

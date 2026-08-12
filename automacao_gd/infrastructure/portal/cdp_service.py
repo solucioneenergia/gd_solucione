@@ -3912,6 +3912,15 @@ def _return_to_listing_after_detail(detail_page, listing_page, listing_url: str)
                 listing_url,
                 allow_active_navigation=False,
             )
+            if not recovery["success"]:
+                fallback_page, fallback_recovery = _recover_listing_in_new_context_page(
+                    listing_page,
+                    listing_url,
+                    previous_error=recovery.get("error"),
+                    allow_active_navigation=False,
+                )
+                if fallback_recovery["success"] or fallback_recovery.get("error"):
+                    return fallback_page, fallback_recovery
             return listing_page, recovery
     recovery = _recover_minhas_solicitacoes(
         detail_page,
