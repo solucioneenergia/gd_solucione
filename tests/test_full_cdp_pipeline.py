@@ -1,3 +1,4 @@
+import json
 from datetime import datetime
 from pathlib import Path
 
@@ -149,6 +150,55 @@ def test_batch_fast_selection_skips_protocol_with_complete_workbook_row(
 
     assert [record.protocol for record in selection["selected_records"]] == ["2600001049"]
     assert selection["skipped_completed"][0]["protocol"] == "2600001048"
+
+
+def test_batch_fast_selection_reuses_cached_workbook_protocol_check(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    workbook_path = tmp_path / "planilha.xlsx"
+    workbook_path.write_bytes(b"workbook-sha-input")
+    cache_dir = tmp_path / "logs"
+    cache_dir.mkdir()
+
+    class Settings(DummySettings):
+        OP5_RECONCILIATION_MODE = "batch_fast"
+        APPLY_EXCEL = True
+        planilha_path = workbook_path
+        logs_dir_path = cache_dir
+
+    calls: list[str] = []
+
+    def fake_protocol_row_has_required_values(path: Path, protocol: str) -> dict:
+        calls.append(protocol)
+        return {
+            "success": True,
+            "complete": protocol == "2600001048",
+            "worksheet": "2026",
+            "row": 49,
+            "missing_columns": [] if protocol == "2600001048" else ["Conclusão"],
+        }
+
+    monkeypatch.setattr(
+        cdp_portal_service,
+        "protocol_row_has_required_values",
+        fake_protocol_row_has_required_values,
+    )
+
+    for _ in range(2):
+        selection = select_eligible_completed_requests(
+            [_row("2600001048")["record"], _row("2600001049")["record"]],
+            pipeline_state=None,
+            max_completed_to_process=1,
+            skip_already_completed=True,
+            force_reprocess_protocols=set(),
+            settings=Settings(),
+        )
+        assert [record.protocol for record in selection["selected_records"]] == [
+            "2600001049"
+        ]
+
+    assert calls == ["2600001048", "2600001049"]
 
 
 def test_target_protocols_restrict_batch_fast_selection() -> None:
@@ -2646,6 +2696,176 @@ def test_batch_fast_reuses_existing_pdf_with_listing_completion_without_opening_
     assert result["download_status"] == "existing_pdf_after_skip"
     assert result["process_pdf_path"] == str(pdf_path)
     assert result["completion_date_raw"] == "01/02/2026"
+
+
+def test_batch_fast_reuses_existing_pdf_without_metadata_when_listing_completion_exists(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    class Settings(DummySettings):
+        ENABLE_PORTAL_PAGINATION = True
+        MAX_PORTAL_PAGES = 1
+        OP5_RECONCILIATION_MODE = "batch_fast"
+        REPROCESS_EXISTING_PDFS = False
+        PROCESS_EXISTING_AFTER_SKIP = True
+        APPLY_EXCEL = True
+
+    record = PortalSolicitation(
+        protocol="2600001050",
+        client_name="CLIENTE SINTETICO LTDA",
+        status="CONCLUIDA",
+        page_number=1,
+        entry_date="10/01/2026",
+        completion_date="01/02/2026",
+    )
+    protocol_dir = tmp_path / record.protocol
+    protocol_dir.mkdir()
+    pdf_path = protocol_dir / f"Orcamento_de_Conexao_{record.protocol}.pdf"
+    pdf_path.write_bytes(b"%PDF-1.4\n%%EOF")
+
+    monkeypatch.setattr(cdp_portal_service, "get_settings", lambda: Settings())
+    monkeypatch.setattr(
+        cdp_portal_service,
+        "ensure_listing_starts_on_page_one",
+        lambda page: {
+            "success": True,
+            "status": "already_on_first_page",
+            "initial_active_page": 1,
+            "active_page_after": 1,
+        },
+    )
+    monkeypatch.setattr(
+        cdp_portal_service,
+        "_collect_completed_listing_rows_across_pages",
+        lambda page, settings, **kwargs: {
+            "pages_read": 1,
+            "total_rows": 1,
+            "total_completed": 1,
+            "completed_records": [record],
+            "duplicates_skipped": [],
+            "pagination_warnings": [],
+            "pagination_enabled": True,
+            "pagination_stop_reason": "last_page_reached",
+            "pagination_next_found": False,
+            "pagination_click_attempts": 0,
+            "pagination_mode": "numeric",
+            "pagination_current_page": 1,
+            "pagination_target_page": None,
+            "pagination_numeric_links_found": [],
+            "pagination_diagnostics": [],
+        },
+    )
+    monkeypatch.setattr(
+        cdp_portal_service,
+        "ensure_request_origin_page",
+        lambda *args, **kwargs: (_ for _ in ()).throw(
+            AssertionError("existing PDF plus listing completion must not open detail")
+        ),
+    )
+
+    summary = download_completed_budgets_from_current_page(
+        FakePage(),
+        downloads_root=tmp_path,
+        max_completed=1,
+        settings=Settings(),
+    )
+
+    assert summary["aborted"] is False
+    assert summary["total_errors"] == 0
+    [result] = summary["results"]
+    assert result["abriu_detalhe"] is False
+    assert result["download_status"] == "existing_pdf_after_skip"
+    assert result["metadata_created_from_listing"] is True
+    assert result["process_pdf_path"] == str(pdf_path)
+    assert result["completion_date_raw"] == "01/02/2026"
+
+
+def test_batch_fast_uses_cached_local_candidates_without_reopening_portal(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    from automacao_gd.application.op5_optimization import write_eligibility_cache
+
+    class Settings(DummySettings):
+        ENABLE_PORTAL_PAGINATION = True
+        MAX_PORTAL_PAGES = 15
+        OP5_RECONCILIATION_MODE = "batch_fast"
+        REPROCESS_EXISTING_PDFS = False
+        PROCESS_EXISTING_AFTER_SKIP = True
+        APPLY_EXCEL = True
+        logs_dir_path = tmp_path / "logs"
+
+    settings = Settings()
+    settings.logs_dir_path.mkdir()
+    records = []
+    for index in range(2):
+        protocol = f"260000105{index}"
+        protocol_dir = tmp_path / protocol
+        protocol_dir.mkdir()
+        pdf_path = protocol_dir / f"Orcamento_de_Conexao_{protocol}.pdf"
+        pdf_path.write_bytes(b"%PDF-1.4\n%%EOF")
+        (protocol_dir / "metadata.json").write_text(
+            json.dumps(
+                {
+                    "protocol": protocol,
+                    "completion_date_raw": "01/02/2026",
+                    "completion_date": "2026-02-01",
+                    "completion_date_normalized": "2026-02-01",
+                    "completion_extraction_status": "found",
+                }
+            ),
+            encoding="utf-8",
+        )
+        records.append(
+            {
+                "protocol": protocol,
+                "page_number": 3,
+                "row_index": index + 10,
+                "status": "CONCLUIDA",
+                "completion_date": "01/02/2026",
+                "selection_reason": "eligible_new",
+                "client_name": "CLIENTE SINTETICO LTDA",
+            }
+        )
+    write_eligibility_cache(
+        settings.logs_dir_path / "op5_portal_eligibility_cache.json",
+        records=records,
+        requested_limit=2,
+        reconciliation_mode="batch_fast",
+    )
+
+    monkeypatch.setattr(cdp_portal_service, "get_settings", lambda: settings)
+    monkeypatch.setattr(
+        cdp_portal_service,
+        "ensure_listing_starts_on_page_one",
+        lambda page: (_ for _ in ()).throw(
+            AssertionError("cache local suficiente nao deve resetar paginacao")
+        ),
+    )
+    monkeypatch.setattr(
+        cdp_portal_service,
+        "_collect_completed_listing_rows_across_pages",
+        lambda *args, **kwargs: (_ for _ in ()).throw(
+            AssertionError("cache local suficiente nao deve reler portal")
+        ),
+    )
+
+    summary = download_completed_budgets_from_current_page(
+        FakePage(),
+        downloads_root=tmp_path,
+        max_completed=2,
+        settings=settings,
+    )
+
+    assert summary["aborted"] is False
+    assert summary["eligibility_cache_hit"] is True
+    assert summary["total_selected"] == 2
+    assert summary["total_pages_read"] == 0
+    assert summary["total_errors"] == 0
+    assert [item["download_status"] for item in summary["results"]] == [
+        "existing_pdf_after_skip",
+        "existing_pdf_after_skip",
+    ]
 
 
 def test_download_uses_injected_settings_for_target_protocols(monkeypatch) -> None:

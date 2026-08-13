@@ -187,6 +187,56 @@ def load_or_build_workbook_index(
     return index
 
 
+def cached_workbook_protocol_check(
+    workbook_path: Path,
+    protocol: str,
+    *,
+    cache_path: Path,
+    checker: Callable[[Path, str], dict[str, Any]],
+) -> dict[str, Any]:
+    workbook = Path(workbook_path)
+    workbook_sha256 = _file_sha256(workbook)
+    normalized_protocol = str(protocol).strip()
+    cache = Path(cache_path)
+    payload: dict[str, Any] = {}
+    if cache.is_file():
+        try:
+            loaded = json.loads(cache.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            loaded = {}
+        if (
+            isinstance(loaded, dict)
+            and loaded.get("schema_version") == WORKBOOK_INDEX_CACHE_SCHEMA_VERSION
+            and loaded.get("workbook_sha256") == workbook_sha256
+        ):
+            payload = loaded
+            protocols = loaded.get("protocols")
+            if isinstance(protocols, dict) and normalized_protocol in protocols:
+                result = dict(protocols[normalized_protocol])
+                result["cache_hit"] = True
+                result["workbook_sha256"] = workbook_sha256
+                return result
+
+    result = dict(checker(workbook, normalized_protocol))
+    sanitized_result = _sanitize_workbook_protocol_check(result)
+    protocols = dict(payload.get("protocols") or {})
+    protocols[normalized_protocol] = sanitized_result
+    atomic_write_json(
+        cache,
+        {
+            "schema_version": WORKBOOK_INDEX_CACHE_SCHEMA_VERSION,
+            "created_at": datetime.now(timezone.utc).isoformat(),
+            "workbook_sha256": workbook_sha256,
+            "protocols": protocols,
+        },
+        private=True,
+    )
+    result = dict(sanitized_result)
+    result["cache_hit"] = False
+    result["workbook_sha256"] = workbook_sha256
+    return result
+
+
 def run_limited_pdf_tasks(
     pdf_paths: Sequence[Path],
     *,
@@ -204,12 +254,32 @@ def run_limited_pdf_tasks(
 
 
 def _sanitize_eligibility_record(record: dict[str, Any]) -> dict[str, Any]:
-    return {
+    sanitized = {
         "protocol": str(record.get("protocol") or "").strip(),
         "page_number": record.get("page_number"),
         "row_index": record.get("row_index"),
         "status": str(record.get("status") or "").strip(),
         "selection_reason": str(record.get("selection_reason") or "").strip(),
+    }
+    entry_date = str(record.get("entry_date") or "").strip()
+    completion_date = str(record.get("completion_date") or "").strip()
+    if entry_date:
+        sanitized["entry_date"] = entry_date
+    if completion_date:
+        sanitized["completion_date"] = completion_date
+    return sanitized
+
+
+def _sanitize_workbook_protocol_check(result: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "success": bool(result.get("success")),
+        "complete": bool(result.get("complete")),
+        "worksheet": str(result.get("worksheet") or ""),
+        "row": result.get("row"),
+        "missing_columns": [
+            str(item) for item in list(result.get("missing_columns") or [])
+        ],
+        "error": str(result.get("error") or "")[:200],
     }
 
 

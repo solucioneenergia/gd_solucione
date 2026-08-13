@@ -895,6 +895,12 @@ def _persist_eligibility_cache_if_applicable(settings, download_summary: dict) -
         for item in download_summary.get("results") or []
         if str(item.get("protocol") or "").strip()
     ]
+    if not records:
+        records = [
+            item
+            for item in download_summary.get("selected_protocols") or []
+            if str(item.get("protocol") or "").strip()
+        ]
     cache_path = settings.logs_dir_path / "op5_portal_eligibility_cache.json"
     try:
         payload = write_eligibility_cache(

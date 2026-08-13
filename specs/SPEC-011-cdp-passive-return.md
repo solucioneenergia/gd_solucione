@@ -77,6 +77,13 @@ manual do operador e recriar `Access Denied` no Portal GD.
   `metadata.json` local nao deve forcar abertura do detalhe. A automacao deve
   propagar a data da listagem para o plano com fonte explicita
   `listing_completion_date`.
+- Em modo `batch_fast`, quando existe cache privado recente de elegibilidade do
+  Portal com candidatos sanitizados e todos os candidatos necessarios ao limite
+  solicitado podem ser processados localmente com PDF valido e metadata/conclusao
+  suficiente, o `op5-plan` pode iniciar por esse cache sem resetar paginacao nem
+  reler Portal. Se o cache nao for suficiente para completar o limite, o fluxo
+  deve voltar ao CDP manual autenticado e manter as mesmas regras passivas de
+  retorno/listagem.
 - Em modo `batch_fast`, se a paginacao do Portal falhar ou travar depois que
   pelo menos um protocolo elegivel ja foi coletado, o plano pode seguir com o
   lote parcial coletado, marcando explicitamente
@@ -113,6 +120,13 @@ data de conclusao valida na listagem,
 quando `op5-plan` rodar em modo `batch_fast`,
 entao o detalhe do Portal nao deve ser aberto apenas para completar metadata; a
 data da listagem deve ser usada no plano.
+
+Dado `batch_fast` com cache privado recente de candidatos e PDFs/metadados
+locais suficientes para o limite solicitado,
+quando `op5-plan` iniciar,
+entao a automacao nao deve resetar paginacao nem reler Portal antes de formar o
+lote local; se o cache for insuficiente, deve cair para o fluxo CDP normal sem
+gerar plano enganoso.
 
 Dado `batch_fast` com paginacao incompleta apos coletar protocolos elegiveis,
 quando a automacao nao conseguir avancar a pagina sem risco ao CDP,

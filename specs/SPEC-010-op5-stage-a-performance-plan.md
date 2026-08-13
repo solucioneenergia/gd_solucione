@@ -219,6 +219,21 @@ reduzir trabalho:
 
 A pré-seleção não pode excluir protocolo forçado por `FORCE_REPROCESS_PROTOCOLS`.
 
+Em `batch_fast`, o planejador deve manter caches privados operacionais por SHA/validade curta:
+
+- cache de verificacao da planilha por `workbook_sha256 + protocolo`, para evitar abrir a
+  planilha repetidamente durante selecao e reexecucoes proximas;
+- cache de elegibilidade do Portal por paginas/candidatos sanitizados, sem nome de cliente,
+  endereco, UC, texto bruto, token ou cookie;
+- quando uma execucao falhar antes de gerar resultados de PDF, os candidatos ja selecionados
+  devem ser persistidos de forma sanitizada em `op5_portal_eligibility_cache.json`.
+
+Na execucao seguinte, `batch_fast` pode iniciar a partir desse cache privado somente quando todos
+os candidatos necessarios ao limite solicitado puderem ser processados localmente com PDF valido,
+metadata/conclusao suficiente, workbook ainda compativel e sem `FORCE_REPROCESS_PROTOCOLS`. Se a
+evidencia local nao for suficiente para completar o limite solicitado, o fluxo deve voltar ao
+comportamento seguro via Portal/CDP manual autenticado; nao deve gerar plano enganoso.
+
 ### RF-006 — Reuso inteligente de PDFs e metadados
 
 O reuso de PDF/metadados técnicos só é válido quando o cache estiver vinculado a:
@@ -232,6 +247,12 @@ Para OP5 com preenchimento da coluna `Conclusão`, metadata local só pode evita
 detalhe do Portal se contiver `completion_date`, `completion_date_raw`,
 `completion_date_normalized` ou status canônico que justifique `EM ABERTO`. Metadata sem
 evidência de conclusão deve obrigar nova leitura do detalhe, mesmo que o PDF já exista.
+
+Excecao restrita: em `batch_fast`, quando houver PDF local valido e a linha de listagem/cache tiver
+data de conclusao valida, a falta de `metadata.json` ou de conclusao na metadata nao deve, por si
+so, forcar abertura de detalhe; a metadata pode ser criada/atualizada a partir da listagem com
+fonte explicita. Fora de `batch_fast`, o comportamento legado permanece: PDF sem metadata valida
+abre detalhe.
 
 Cache legado sem protocolo e SHA do PDF deve ser reextraído.
 

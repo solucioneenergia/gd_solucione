@@ -18,6 +18,10 @@ from automacao_gd.infrastructure.files.file_service import sanitize_filename
 from automacao_gd.infrastructure.logging import logger
 from automacao_gd.infrastructure.metadata.service import save_download_metadata
 from automacao_gd.application.op5_completed_index import load_valid_completed_entry
+from automacao_gd.application.op5_optimization import (
+    cached_workbook_protocol_check,
+    load_eligibility_cache,
+)
 from automacao_gd.domain.models import PortalSolicitation
 from automacao_gd.infrastructure.pdf.service import extract_generation_data
 
@@ -749,7 +753,16 @@ def _workbook_should_skip_completed(protocol: str, settings=None) -> bool:
     workbook_path = getattr(settings, "planilha_path", None)
     if workbook_path is None:
         return False
-    validation = protocol_row_has_required_values(Path(workbook_path), protocol)
+    workbook = Path(workbook_path)
+    if not workbook.is_file():
+        return False
+    logs_dir = Path(getattr(settings, "logs_dir_path", Path("data/logs")))
+    validation = cached_workbook_protocol_check(
+        workbook,
+        protocol,
+        cache_path=logs_dir / "op5_workbook_protocol_check_cache.json",
+        checker=protocol_row_has_required_values,
+    )
     return bool(validation.get("success") and validation.get("complete"))
 
 
@@ -1228,6 +1241,24 @@ def should_open_detail_for_budget(
     return not (_is_valid_pdf(existing_pdf) and metadata_path is not None)
 
 
+def _can_reuse_existing_pdf_without_detail(
+    *,
+    record: PortalSolicitation,
+    existing_pdf: Path | None,
+    downloads_root: Path,
+    reprocess_existing_pdfs: bool,
+    require_completion_metadata: bool,
+) -> bool:
+    if reprocess_existing_pdfs or not _is_valid_pdf(existing_pdf):
+        return False
+    metadata_path = find_existing_download_metadata(record.protocol, downloads_root)
+    if metadata_path is None:
+        return require_completion_metadata and _record_has_completion_value(record)
+    if require_completion_metadata and not _metadata_has_completion_value(metadata_path):
+        return _record_has_completion_value(record)
+    return True
+
+
 def _metadata_has_completion_value(metadata_path: Path) -> bool:
     metadata = _load_existing_download_metadata(Path(metadata_path))
     return bool(
@@ -1241,6 +1272,100 @@ def _metadata_has_completion_value(metadata_path: Path) -> bool:
 
 def _record_has_completion_value(record: PortalSolicitation) -> bool:
     return parse_date(record.completion_date) is not None
+
+
+def _batch_fast_cached_local_collection(
+    *,
+    settings,
+    downloads_root: Path,
+    limit: int | None,
+    reprocess_existing_pdfs: bool,
+    state_store=None,
+    skip_already_completed: bool = True,
+) -> dict | None:
+    if not _is_batch_fast_mode(settings):
+        return None
+    if int(limit or 0) <= 0:
+        return None
+    if getattr(settings, "op5_target_protocols", set()) or set():
+        return None
+    logs_dir = getattr(settings, "logs_dir_path", None)
+    if logs_dir is None:
+        return None
+    cache = load_eligibility_cache(
+        Path(logs_dir) / "op5_portal_eligibility_cache.json",
+        requested_limit=int(limit or 0),
+        reconciliation_mode="batch_fast",
+        ttl_minutes=int(getattr(settings, "OP5_ELIGIBILITY_CACHE_TTL_MINUTES", 30) or 30),
+    )
+    if not cache.get("cache_hit"):
+        return None
+
+    reusable_records: list[PortalSolicitation] = []
+    skipped_completed: list[str] = []
+    for item in cache.get("records") or []:
+        record = PortalSolicitation(
+            protocol=str(item.get("protocol") or "").strip(),
+            status=str(item.get("status") or "").strip(),
+            entry_date=str(item.get("entry_date") or "").strip() or None,
+            completion_date=str(item.get("completion_date") or "").strip() or None,
+            page_number=item.get("page_number"),
+            row_index=item.get("row_index"),
+            selection_reason=str(item.get("selection_reason") or "").strip() or None,
+        )
+        if not record.protocol:
+            continue
+        if skip_already_completed and _state_should_skip_completed(
+            state_store, record.protocol, settings
+        ):
+            skipped_completed.append(record.protocol)
+            continue
+        existing_pdf = find_existing_connection_budget_pdf(record.protocol, downloads_root)
+        if not _can_reuse_existing_pdf_without_detail(
+            record=record,
+            existing_pdf=existing_pdf,
+            downloads_root=downloads_root,
+            reprocess_existing_pdfs=reprocess_existing_pdfs,
+            require_completion_metadata=bool(
+                getattr(settings, "APPLY_EXCEL", False)
+                and _is_batch_fast_mode(settings)
+            ),
+        ):
+            continue
+        reusable_records.append(record)
+        if len(reusable_records) >= int(limit or 0):
+            break
+
+    if len(reusable_records) < int(limit or 0):
+        return None
+
+    return {
+        "pages_read": 0,
+        "total_rows": len(reusable_records),
+        "total_completed": len(reusable_records),
+        "completed_records": reusable_records,
+        "duplicates_skipped": [],
+        "pagination_warnings": [],
+        "pagination_enabled": False,
+        "pagination_complete": None,
+        "last_page_confirmed": None,
+        "last_page_number": None,
+        "next_page_available_after_stop": None,
+        "pagination_safety_cap": None,
+        "pages_visited": [],
+        "pagination_stop_reason": "eligibility_cache_hit",
+        "pagination_next_found": False,
+        "pagination_click_attempts": 0,
+        "pagination_mode": "eligibility_cache",
+        "pagination_current_page": None,
+        "pagination_target_page": None,
+        "pagination_numeric_links_found": [],
+        "pagination_diagnostics": [],
+        "eligibility_cache_hit": True,
+        "eligibility_cache_path": cache.get("cache_path"),
+        "eligibility_cache_structural_hash": cache.get("structural_hash"),
+        "eligibility_cache_skipped_completed": skipped_completed,
+    }
 
 
 def download_completed_budgets_from_current_page(
@@ -1295,7 +1420,17 @@ def download_completed_budgets_from_current_page(
         summary["total_errors"] = 1
         return summary
 
-    if settings.ENABLE_PORTAL_PAGINATION:
+    batch_fast_mode = _is_batch_fast_mode(settings)
+    collection = _batch_fast_cached_local_collection(
+        settings=settings,
+        downloads_root=downloads_root,
+        limit=limit,
+        reprocess_existing_pdfs=reprocess_existing_pdfs,
+        state_store=state_store,
+        skip_already_completed=skip_already_completed,
+    )
+
+    if collection is None and settings.ENABLE_PORTAL_PAGINATION:
         reset_result = ensure_listing_starts_on_page_one(page)
         summary["pagination_initial_active_page"] = reset_result.get(
             "initial_active_page"
@@ -1316,9 +1451,14 @@ def download_completed_budgets_from_current_page(
             _refresh_download_totals(summary)
             return summary
 
-    batch_fast_mode = _is_batch_fast_mode(settings)
     active_reconciliation_callback = None if batch_fast_mode else reconciliation_callback
-    if batch_fast_mode:
+    if collection is not None:
+        summary["eligibility_cache_hit"] = True
+        summary["eligibility_cache_path"] = collection.get("eligibility_cache_path")
+        summary["eligibility_cache_structural_hash"] = collection.get(
+            "eligibility_cache_structural_hash"
+        )
+    elif batch_fast_mode:
         collection = _collect_completed_listing_rows_across_pages(
             page,
             settings,
@@ -1328,7 +1468,10 @@ def download_completed_budgets_from_current_page(
         )
     else:
         collection = _collect_completed_listing_rows_across_pages(page, settings)
-    if collection["pages_read"] == 0 or collection["total_rows"] == 0:
+    if (
+        collection["pages_read"] == 0
+        and collection.get("pagination_stop_reason") != "eligibility_cache_hit"
+    ) or collection["total_rows"] == 0:
         raise RuntimeError("A pagina atual nao contem a tabela 'Minhas Solicitacoes'.")
     listing_url = listing_url or page.url
 
@@ -1606,13 +1749,13 @@ def download_completed_budgets_from_current_page(
                 result["existing_pdf_path"] = str(existing_pdf)
             if (
                 existing_pdf is not None
-                and not should_open_detail_for_budget(
-                    protocol,
-                    downloads_root,
-                    reprocess_existing_pdfs,
+                and _can_reuse_existing_pdf_without_detail(
+                    record=record,
+                    existing_pdf=existing_pdf,
+                    downloads_root=downloads_root,
+                    reprocess_existing_pdfs=reprocess_existing_pdfs,
                     require_completion_metadata=bool(
                         settings.APPLY_EXCEL and _is_batch_fast_mode(settings)
-                        and not _record_has_completion_value(record)
                     ),
                 )
             ):

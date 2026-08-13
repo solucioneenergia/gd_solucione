@@ -171,6 +171,63 @@ def test_workbook_index_cache_reuses_by_sha_and_rebuilds_when_workbook_changes(
     assert calls == ["versao-1", "versao-2"]
 
 
+def test_workbook_protocol_check_cache_reuses_by_workbook_sha_and_protocol(
+    tmp_path: Path,
+) -> None:
+    from automacao_gd.application.op5_optimization import cached_workbook_protocol_check
+
+    workbook = tmp_path / "planilha.xlsx"
+    cache_path = tmp_path / "workbook_protocol_check_cache.json"
+    workbook.write_bytes(b"versao-1")
+    calls: list[tuple[str, str]] = []
+
+    def checker(path: Path, protocol: str) -> dict:
+        calls.append((path.read_bytes().decode("utf-8"), protocol))
+        return {
+            "success": True,
+            "complete": protocol == "2600001048",
+            "worksheet": "2026",
+            "row": 49,
+            "missing_columns": [],
+        }
+
+    first = cached_workbook_protocol_check(
+        workbook,
+        "2600001048",
+        cache_path=cache_path,
+        checker=checker,
+    )
+    second = cached_workbook_protocol_check(
+        workbook,
+        "2600001048",
+        cache_path=cache_path,
+        checker=checker,
+    )
+    other_protocol = cached_workbook_protocol_check(
+        workbook,
+        "2600001049",
+        cache_path=cache_path,
+        checker=checker,
+    )
+    workbook.write_bytes(b"versao-2")
+    after_change = cached_workbook_protocol_check(
+        workbook,
+        "2600001048",
+        cache_path=cache_path,
+        checker=checker,
+    )
+
+    assert first["cache_hit"] is False
+    assert second["cache_hit"] is True
+    assert other_protocol["cache_hit"] is False
+    assert after_change["cache_hit"] is False
+    assert calls == [
+        ("versao-1", "2600001048"),
+        ("versao-1", "2600001049"),
+        ("versao-2", "2600001048"),
+    ]
+
+
 def test_parallel_pdf_extraction_preserves_order_and_rejects_excess_workers(
     tmp_path: Path,
 ) -> None:
@@ -835,6 +892,49 @@ def test_batch_fast_download_summary_persists_eligibility_cache(tmp_path: Path) 
     assert "CLIENTE SINTETICO LTDA" not in (tmp_path / "op5_portal_eligibility_cache.json").read_text(
         encoding="utf-8"
     )
+
+
+def test_batch_fast_eligibility_cache_persists_selected_candidates_before_pdf_results(
+    tmp_path: Path,
+) -> None:
+    settings = SimpleNamespace(
+        logs_dir_path=tmp_path,
+        OP5_RECONCILIATION_MODE="batch_fast",
+        MAX_COMPLETED_TO_PROCESS=10,
+        OP5_ELIGIBILITY_CACHE_TTL_MINUTES=30,
+    )
+    summary = {
+        "results": [],
+        "selected_protocols": [
+            {
+                "protocol": "2600001048",
+                "page_number": 3,
+                "row_index": 12,
+                "status": "CONCLUIDA",
+                "selection_reason": "eligible_new",
+                "client_name": "CLIENTE SINTETICO LTDA",
+            },
+            {
+                "protocol": "2600001049",
+                "page_number": 3,
+                "row_index": 13,
+                "status": "CONCLUIDA",
+                "selection_reason": "eligible_new",
+                "address": "RUA SINTETICA",
+            },
+        ],
+    }
+
+    metadata = full_pipeline._persist_eligibility_cache_if_applicable(settings, summary)
+    cache_text = (tmp_path / "op5_portal_eligibility_cache.json").read_text(
+        encoding="utf-8"
+    )
+
+    assert metadata["eligibility_cache_record_count"] == 2
+    assert "CLIENTE SINTETICO LTDA" not in cache_text
+    assert "RUA SINTETICA" not in cache_text
+    assert "2600001048" in cache_text
+    assert "2600001049" in cache_text
 
 
 def test_processing_reports_configured_pdf_workers_and_preserves_order(
