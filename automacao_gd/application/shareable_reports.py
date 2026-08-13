@@ -19,6 +19,7 @@ _TOTAL_FIELDS = (
     "total_excel_updated",
     "total_archived",
     "total_pending_review",
+    "total_client_folder_pending_review",
     "total_technical_pending_review",
     "total_selected",
     "total_downloaded",

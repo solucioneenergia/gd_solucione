@@ -1109,6 +1109,66 @@ def test_processing_metrics_distinguish_analyzed_safe_pending_and_applied(
     assert payload["total_updates_applied"] == 1
 
 
+def test_processing_metrics_do_not_count_resolved_client_folder_as_pending_review(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    pdf = tmp_path / "Orcamento_de_Conexao_2600001106.pdf"
+
+    def fake_process(pdf_path, *_args, dry_run=True, **_kwargs):
+        actual_dry_run = _args[2] if len(_args) >= 3 else dry_run
+        return {
+            **processing_service._empty_result(pdf_path),
+            "success": True,
+            "protocol": pdf_path.stem.rsplit("_", 1)[-1],
+            "action": "update_existing",
+            "technical_review_required": False,
+            "technical_validation_status": "approved",
+            "client_folder_match_type": "not_found",
+            "archive_match_type": "pending_manual_review",
+            "excel_status": {
+                "success": True,
+                "can_write": True,
+                "skipped": False,
+                "action": "update_existing",
+            },
+            "archive_status": {
+                "success": True,
+                "skipped": False,
+                "simulated": actual_dry_run,
+            },
+        }
+
+    monkeypatch.setattr(processing_service, "_process_single_pdf", fake_process)
+    monkeypatch.setattr(processing_service, "ensure_directories", lambda: None)
+    monkeypatch.setattr(processing_service, "clear_folder_cache", lambda: None)
+    monkeypatch.setattr(processing_service, "atomic_write_json", lambda *args, **kwargs: None)
+    monkeypatch.setattr(processing_service, "atomic_write_text", lambda *args, **kwargs: None)
+    monkeypatch.setattr(
+        processing_service,
+        "get_settings",
+        lambda: SimpleNamespace(logs_dir_path=tmp_path / "logs", BACKUP_EXCEL=True),
+    )
+
+    payload = processing_service.process_downloaded_pdfs(
+        downloads_root=tmp_path,
+        workbook_path=tmp_path / "planilha.xlsx",
+        clientes_root=tmp_path / "clientes",
+        dry_run=True,
+        pdf_paths=[pdf],
+        allowed_protocols={pdf.stem.rsplit("_", 1)[-1]},
+        apply_excel=True,
+        apply_archive=True,
+    )
+
+    assert payload["total_technically_approved"] == 1
+    assert payload["total_pending_protocols"] == 0
+    assert payload["total_pending_review"] == 0
+    assert payload["total_client_folder_pending_review"] == 1
+    assert payload["total_errors"] == 0
+    assert payload["status"] == "SUCESSO"
+
+
 def test_real_run_reuses_pending_simulation_result_without_second_warning(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

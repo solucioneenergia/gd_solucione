@@ -237,3 +237,26 @@ invalidar o fechamento de um `op5-plan` cujo processamento principal ja formou l
 ### Teste
 
 - `test_persistent_app_log_does_not_configure_windows_unsafe_rotation`
+
+## Adendo 2026-08-13 - total_pending_review nao mistura pasta de cliente
+
+### Problema
+
+Um `op5-plan` pode formar um lote com todos os resultados individuais aprovados, conclusao
+extraida e pasta/arquivamento resolvidos, mas o relatorio agregado ainda marcar
+`total_pending_review=1` e `total_errors=1`. Isso invalida o plano apesar de nao existir
+protocolo pendente no resultado individual.
+
+### Contrato
+
+- `total_pending_review` deve contar apenas protocolos tecnicamente pendentes ou que exigem
+  revisao operacional individual antes de Excel.
+- Pendencias de pasta/arquivamento devem usar contador separado
+  `total_client_folder_pending_review`.
+- `total_errors` nao deve incluir pendencia de pasta quando o item esta tecnicamente aprovado,
+  sem erro real de extracao/aplicacao e com arquivamento simulado/aplicavel.
+- O resumo consolidado deve ser derivavel dos resultados individuais sanitizados.
+
+### Teste
+
+- `test_processing_metrics_do_not_count_resolved_client_folder_as_pending_review`

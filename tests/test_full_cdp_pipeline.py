@@ -3173,6 +3173,68 @@ def test_consolidated_report_counts_skipped_completed_and_resumed(
     assert payload["total_archive_already_done"] == 1
 
 
+def test_consolidated_report_does_not_count_client_folder_pending_as_error(
+    tmp_path: Path,
+) -> None:
+    pdf_path = tmp_path / "Orcamento_de_Conexao_2600001107.pdf"
+    pdf_path.write_bytes(b"%PDF-1.4\n")
+    download_summary = {
+        "total_rows": 1,
+        "total_completed": 1,
+        "total_selected": 1,
+        "selected_protocols": [{"protocol": "2600001107"}],
+        "results": [
+            {
+                "protocol": "2600001107",
+                "download_status": "existing_pdf_after_skip",
+                "process_pdf_path": str(pdf_path),
+                "sent_to_processing": True,
+            }
+        ],
+    }
+    processing_summary = {
+        "status": "SUCESSO",
+        "total_success": 1,
+        "total_errors": 0,
+        "total_pdfs_analyzed": 1,
+        "total_technically_approved": 1,
+        "total_safe_protocols": 1,
+        "total_pending_protocols": 0,
+        "total_pending_review": 0,
+        "total_client_folder_pending_review": 1,
+        "total_updates_planned": 1,
+        "total_updates_applied": 0,
+        "total_real_extraction_errors": 0,
+        "total_real_application_errors": 0,
+        "results": [
+            {
+                "protocol": "2600001107",
+                "success": True,
+                "technical_validation_status": "approved",
+                "technical_review_required": False,
+                "client_folder_match_type": "not_found",
+                "archive_match_type": "pending_manual_review",
+                "excel_status": {"success": True, "can_write": True},
+                "archive_status": {"success": True, "simulated": True},
+            }
+        ],
+    }
+
+    payload = build_pipeline_payload(
+        settings=DummySettings(),
+        started_at=datetime(2026, 1, 1, 10, 0, 0),
+        finished_at=datetime(2026, 1, 1, 10, 1, 0),
+        download_summary=download_summary,
+        processing_summary=processing_summary,
+        download_report_path=tmp_path / "download.json",
+        pdf_paths=[pdf_path],
+    )
+
+    assert payload["total_pending_review"] == 0
+    assert payload["total_client_folder_pending_review"] == 1
+    assert payload["total_errors"] == 0
+
+
 def test_protocol_row_includes_listing_recovery_diagnostics() -> None:
     rows = _build_protocol_rows(
         {

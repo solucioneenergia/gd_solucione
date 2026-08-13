@@ -445,12 +445,11 @@ def _process_downloaded_pdfs_locked(
         "total_excel_updated": _count_excel_updates(results, dry_run, apply_excel),
         "total_updates_applied": _count_excel_updates(results, dry_run, apply_excel),
         "total_archived": _count_archived(results, dry_run, apply_archive),
-        "total_pending_review": sum(
+        "total_client_folder_pending_review": sum(
             1
             for item in results
             if item["client_folder_match_type"] in {"pending_review", "not_found"}
             or item.get("archive_match_type") == "pending_manual_review"
-            or item.get("technical_review_required")
         ),
         "total_technical_pending_review": sum(
             1 for item in results if item.get("technical_review_required")
@@ -2276,6 +2275,7 @@ def _privacy_safe_report_payload(payload: dict) -> dict:
         "total_excel_updated",
         "total_archived",
         "total_pending_review",
+        "total_client_folder_pending_review",
         "total_technical_pending_review",
         "total_completion_dates_found",
         "total_completion_dates_updated",

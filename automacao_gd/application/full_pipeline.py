@@ -2272,6 +2272,9 @@ def _build_pipeline_totals(
         "total_excel_updated": processing_summary.get("total_excel_updated", 0),
         "total_archived": processing_summary.get("total_archived", 0),
         "total_pending_review": total_pending_review,
+        "total_client_folder_pending_review": processing_summary.get(
+            "total_client_folder_pending_review", 0
+        ),
         "total_client_folder_cache_hits": processing_summary.get(
             "total_client_folder_cache_hits", 0
         ),
@@ -2481,7 +2484,8 @@ def _build_markdown_report(payload: dict) -> str:
         f"- Total PDFs mantidos para retomada: {payload.get('total_pdfs_retained_for_retry', 0)}",
         f"- Total sucesso processamento: {payload['total_processed_success']}",
         f"- Total erros processamento: {payload['total_processed_errors']}",
-        f"- Total pendencias de pasta: {payload['total_pending_review']}",
+        "- Total pendencias de pasta: "
+        f"{payload.get('total_client_folder_pending_review', 0)}",
         f"- Relatorio de download: {payload['download_report_path']}",
         f"- Relatorio offline JSON: {payload['processing'].get('json_report_path')}",
         f"- Relatorio offline Markdown: {payload['processing'].get('markdown_report_path')}",
