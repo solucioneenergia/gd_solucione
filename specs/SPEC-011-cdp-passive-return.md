@@ -29,12 +29,15 @@ manual do operador e recriar `Access Denied` no Portal GD.
   `op5-plan` pode acionar o controle visual `Home`/`Inicio`/icone de casa ja
   existente na pagina autenticada. Esse clique so e valido se nao montar URL,
   nao abrir nova aba, nao usar historico, nao usar reload, permanecer em HTTPS
-  no host do Portal, nao apontar para a raiz do Portal (`/` ou `/index.jsf`),
-  nao resultar em raiz/Access Denied e reconfirmar a tabela `Minhas
-  Solicitacoes` com linhas diretamente ou por um controle visual autenticado da
-  propria Home. Controles `Home`/`Inicio` com `href` absoluto ou relativo que
-  resolva para `http://`, raiz do Portal ou host diferente devem ser ignorados
-  antes do clique.
+  no host do Portal e reconfirmar a tabela `Minhas Solicitacoes` com linhas
+  diretamente ou por um controle visual autenticado da propria Home. Como o
+  Portal GD e JSF e pode renderizar telas autenticadas em `/` ou `/index.jsf`,
+  o `href` do proprio controle visual Home/Casa pode resolver para esses
+  caminhos somente quando o elemento ja estiver visivel no DOM autenticado; o
+  resultado ainda deve ser rejeitado se virar `http://`, host diferente,
+  `Access Denied` ou se a listagem nao for reconfirmada. Controles
+  `Home`/`Inicio` com `href` absoluto ou relativo que resolva para `http://` ou
+  host diferente devem ser ignorados antes do clique.
 - A revalidacao da pagina/linha de origem de um protocolo selecionado no
   `op5-plan` tambem deve operar em modo passivo: quando a listagem ja estiver
   visivel, pode usar apenas controles de paginacao existentes; quando a listagem
@@ -121,9 +124,10 @@ Dado um detalhe aberto na mesma aba, sem `Voltar`/`Retornar` util,
 quando houver botao visual `Home`/`Inicio`/icone de casa autenticado,
 entao a automacao pode clicar esse controle e so deve aceitar o retorno se a
 tabela `Minhas Solicitacoes` com linhas for reconfirmada sem URL manual,
-historico, reload, `http://`, raiz insegura ou nova aba. Se o `href` do
-controle resolver para `/`, `/index.jsf`, `http://` ou host diferente, o
-controle deve ser recusado antes do clique para preservar a sessao CDP.
+historico, reload, `http://` ou nova aba. Se o `href` do controle resolver para
+`/` ou `/index.jsf` no mesmo host HTTPS, o clique e permitido apenas para esse
+controle Home/Casa visivel; se resolver para `http://` ou host diferente, deve
+ser recusado antes do clique.
 
 Dado um protocolo concluido com PDF e `metadata.json` locais validos,
 quando `op5-plan` selecionar esse protocolo,

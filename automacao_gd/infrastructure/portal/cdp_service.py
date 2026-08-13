@@ -4369,7 +4369,7 @@ def _recover_listing_by_detail_return_control(
     if _page_is_closed(page):
         result["url_after"] = _safe_page_url(page)
         return result
-    if _is_unsafe_navigation_url(_safe_page_url(page), listing_url):
+    if _is_unsafe_authenticated_control_context_url(_safe_page_url(page), listing_url):
         result["error"] = manual_cdp_listing_recovery_message()
         result["url_after"] = _safe_page_url(page)
         return result
@@ -4413,7 +4413,7 @@ def _recover_listing_by_authenticated_home_icon(
         result["error"] = manual_cdp_listing_recovery_message()
         result["url_after"] = _safe_page_url(page)
         return result
-    if _is_unsafe_navigation_url(_safe_page_url(page), listing_url):
+    if _is_unsafe_authenticated_control_context_url(_safe_page_url(page), listing_url):
         result["error"] = manual_cdp_listing_recovery_message()
         result["url_after"] = _safe_page_url(page)
         return result
@@ -4766,6 +4766,23 @@ def _is_unsafe_navigation_url(current_url: str | None, listing_url: str | None) 
     return False
 
 
+def _is_unsafe_authenticated_control_context_url(
+    current_url: str | None,
+    listing_url: str | None,
+) -> bool:
+    current = urlparse(current_url or "")
+    if current.scheme.lower() in {"about", "edge", "chrome"}:
+        return True
+    if not current.netloc:
+        return True
+    if is_insecure_portal_http_url(current_url or ""):
+        return True
+    expected_host = urlparse(listing_url or "").netloc.lower()
+    if expected_host and current.netloc.lower() != expected_host:
+        return True
+    return False
+
+
 def _is_portal_root_or_index_url(url: str, expected_host: str | None = None) -> bool:
     parsed = urlparse(url or "")
     host = (expected_host or PORTAL_GD_HOST).lower()
@@ -4874,7 +4891,11 @@ def _click_authenticated_home_icon(page, listing_url: str) -> bool:
         ]
     except AttributeError:
         return False
-    return _click_first_visible_safe_portal_control(candidates, listing_url)
+    return _click_first_visible_safe_portal_control(
+        candidates,
+        listing_url,
+        allow_same_host_root_or_index=True,
+    )
 
 
 def _click_home_minhas_solicitacoes_control(page, listing_url: str) -> bool:
@@ -4903,12 +4924,18 @@ def _click_home_minhas_solicitacoes_control(page, listing_url: str) -> bool:
 def _click_first_visible_safe_portal_control(
     candidates: list,
     listing_url: str,
+    *,
+    allow_same_host_root_or_index: bool = False,
 ) -> bool:
     for locator in candidates:
         item = _first_visible(locator)
         if item is None:
             continue
-        if _locator_href_is_unsafe(item, listing_url):
+        if _locator_href_is_unsafe(
+            item,
+            listing_url,
+            allow_same_host_root_or_index=allow_same_host_root_or_index,
+        ):
             continue
         try:
             item.click(timeout=10_000)
@@ -4922,7 +4949,12 @@ def _click_first_visible_safe_portal_control(
     return False
 
 
-def _locator_href_is_unsafe(locator, listing_url: str) -> bool:
+def _locator_href_is_unsafe(
+    locator,
+    listing_url: str,
+    *,
+    allow_same_host_root_or_index: bool = False,
+) -> bool:
     try:
         href = locator.get_attribute("href", timeout=1_000)
     except (AttributeError, PlaywrightError):
@@ -4947,7 +4979,9 @@ def _locator_href_is_unsafe(locator, listing_url: str) -> bool:
         return True
     if expected_host and parsed.netloc.lower() != expected_host:
         return True
-    return _is_portal_root_or_index_url(normalized, expected_host)
+    if _is_portal_root_or_index_url(normalized, expected_host):
+        return not allow_same_host_root_or_index
+    return False
 
 
 def _context_pages_snapshot(page) -> list:
