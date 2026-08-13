@@ -4068,3 +4068,93 @@ def test_op5_plan_rejects_home_icon_when_it_points_to_http_or_access_denied(
     assert state["home_clicked"] is False
     assert navigation_calls == []
     assert page.context.new_page_called is False
+
+
+def test_op5_plan_rejects_home_icon_when_it_points_to_portal_root(
+    monkeypatch,
+) -> None:
+    state = {"home_clicked": False}
+    navigation_calls: list[str] = []
+
+    class FakeLocator:
+        def __init__(self, href: str) -> None:
+            self.href = href
+
+        def count(self) -> int:
+            return 1
+
+        def nth(self, index: int):
+            return self
+
+        def is_visible(self, timeout: int = 0) -> bool:
+            return True
+
+        def get_attribute(self, name: str, timeout: int = 0):
+            if name == "href":
+                return self.href
+            return None
+
+        def click(self, timeout: int = 0) -> None:
+            state["home_clicked"] = True
+
+    class EmptyLocator:
+        def count(self) -> int:
+            return 0
+
+    class SameTabDetailPage:
+        url = "https://gdneoenergiapernambuco.neoenergia.com/pages/detalhe/index.jsf"
+
+        def __init__(self) -> None:
+            self.context = RecoveryContext(self)
+
+        def is_closed(self) -> bool:
+            return False
+
+        def wait_for_timeout(self, timeout: int) -> None:
+            return None
+
+        def get_by_role(self, role: str, name=None):
+            pattern_text = getattr(name, "pattern", str(name or "")).lower()
+            if "home" in pattern_text or "cio" in pattern_text:
+                return FakeLocator("/")
+            return EmptyLocator()
+
+        def locator(self, selector: str):
+            if "fa-home" in selector:
+                return FakeLocator("/index.jsf")
+            return EmptyLocator()
+
+        def goto(self, *_args, **_kwargs) -> None:
+            navigation_calls.append("goto")
+
+        def reload(self, *_args, **_kwargs) -> None:
+            navigation_calls.append("reload")
+
+        def go_back(self, **_kwargs) -> None:
+            navigation_calls.append("go_back")
+
+    class RecoveryContext:
+        def __init__(self, page: SameTabDetailPage) -> None:
+            self.pages = [page]
+            self.new_page_called = False
+
+        def new_page(self):
+            self.new_page_called = True
+            raise AssertionError("CDP recovery must not open a new portal page")
+
+    page = SameTabDetailPage()
+    monkeypatch.setattr(cdp_portal_service, "_has_minhas_solicitacoes_table", lambda page: False)
+    monkeypatch.setattr(cdp_portal_service, "_listing_has_rows", lambda page: False)
+
+    recovered_page, recovery = cdp_portal_service._return_to_listing_after_detail(
+        page,
+        page,
+        "https://gdneoenergiapernambuco.neoenergia.com/pages/acompanhamento/index.jsf",
+    )
+
+    assert recovered_page is page
+    assert recovery["success"] is False
+    assert recovery["status"] == "failed_return_to_listing"
+    assert state["home_clicked"] is False
+    assert navigation_calls == []
+    assert page.context.new_page_called is False

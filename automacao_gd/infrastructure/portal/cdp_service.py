@@ -6,7 +6,7 @@ import hashlib
 from datetime import datetime
 from pathlib import Path
 from typing import Any
-from urllib.parse import urlparse
+from urllib.parse import urljoin, urlparse
 
 from playwright.sync_api import Error as PlaywrightError
 from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
@@ -4500,7 +4500,18 @@ def _is_unsafe_navigation_url(current_url: str | None, listing_url: str | None) 
     expected_host = urlparse(listing_url or "").netloc.lower()
     if expected_host and current.netloc.lower() != expected_host:
         return True
+    if _is_portal_root_or_index_url(current_url or "", expected_host):
+        return True
     return False
+
+
+def _is_portal_root_or_index_url(url: str, expected_host: str | None = None) -> bool:
+    parsed = urlparse(url or "")
+    host = (expected_host or PORTAL_GD_HOST).lower()
+    if parsed.netloc.lower() != host:
+        return False
+    path = (parsed.path or "/").rstrip("/").lower()
+    return path in {"", "/index.jsf"}
 
 
 def _listing_has_rows(page) -> bool:
@@ -4663,12 +4674,19 @@ def _locator_href_is_unsafe(locator, listing_url: str) -> bool:
     if normalized.lower().startswith("javascript:"):
         return False
     parsed = urlparse(normalized)
-    if not parsed.scheme and not parsed.netloc:
-        return False
     expected_host = urlparse(listing_url or "").netloc.lower()
+    if not parsed.scheme and not parsed.netloc:
+        if normalized.startswith(("/", ".")):
+            base_url = listing_url or f"https://{expected_host or PORTAL_GD_HOST}/"
+            normalized = urljoin(base_url, normalized)
+            parsed = urlparse(normalized)
+        else:
+            return False
     if parsed.scheme.lower() != "https":
         return True
-    return bool(expected_host and parsed.netloc.lower() != expected_host)
+    if expected_host and parsed.netloc.lower() != expected_host:
+        return True
+    return _is_portal_root_or_index_url(normalized, expected_host)
 
 
 def _context_pages_snapshot(page) -> list:
