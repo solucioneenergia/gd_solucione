@@ -1239,6 +1239,10 @@ def _metadata_has_completion_value(metadata_path: Path) -> bool:
     )
 
 
+def _record_has_completion_value(record: PortalSolicitation) -> bool:
+    return parse_date(record.completion_date) is not None
+
+
 def download_completed_budgets_from_current_page(
     page,
     downloads_root: Path | None = None,
@@ -1608,6 +1612,7 @@ def download_completed_budgets_from_current_page(
                     reprocess_existing_pdfs,
                     require_completion_metadata=bool(
                         settings.APPLY_EXCEL and _is_batch_fast_mode(settings)
+                        and not _record_has_completion_value(record)
                     ),
                 )
             ):
@@ -2075,6 +2080,7 @@ def _reuse_existing_pdf_without_detail(
             result["detail_client_name"] = result.get("detail_client_name") or metadata[
                 "client_name"
             ]
+    _apply_listing_completion_to_result(record, result)
 
     if state_store:
         state_store.update_section(
@@ -2109,6 +2115,24 @@ def _reuse_existing_pdf_without_detail(
             state_store.add_error(protocol, "download", result["download_error"])
 
     return result
+
+
+def _apply_listing_completion_to_result(
+    record: PortalSolicitation,
+    result: dict,
+) -> None:
+    if result.get("completion_date_raw") or result.get("completion_date_normalized"):
+        return
+    parsed = parse_date(record.completion_date)
+    if parsed is None:
+        return
+    raw = str(record.completion_date).strip()
+    result["completion_date_raw"] = raw
+    result["completion_date"] = parsed.isoformat()
+    result["completion_date_normalized"] = parsed.isoformat()
+    result["completion_source_stage"] = POINT_OF_CONNECTION_STAGE
+    result["completion_source_selector"] = "listing_completion_date"
+    result["completion_extraction_status"] = "FOUND_FROM_LISTING"
 
 
 def _load_existing_download_metadata(metadata_path: Path) -> dict[str, Any]:

@@ -72,6 +72,11 @@ manual do operador e recriar `Access Denied` no Portal GD.
 - Quando `op5-plan` encontra PDF local valido e `metadata.json` local valido
   para o protocolo selecionado, e `REPROCESS_EXISTING_PDFS=false`, ele deve
   reutilizar esses arquivos sem abrir a tela de detalhe do Portal.
+- Em modo `batch_fast`, quando existe PDF local valido e a propria linha da
+  listagem ja contem data de conclusao valida, a falta dessa data no
+  `metadata.json` local nao deve forcar abertura do detalhe. A automacao deve
+  propagar a data da listagem para o plano com fonte explicita
+  `listing_completion_date`.
 - Em modo `batch_fast`, se a paginacao do Portal falhar ou travar depois que
   pelo menos um protocolo elegivel ja foi coletado, o plano pode seguir com o
   lote parcial coletado, marcando explicitamente
@@ -102,6 +107,12 @@ Dado um protocolo concluido com PDF e `metadata.json` locais validos,
 quando `op5-plan` selecionar esse protocolo,
 entao o detalhe do Portal nao deve ser aberto e o PDF local deve entrar no
 plano.
+
+Dado um protocolo concluido com PDF local valido, `metadata.json` incompleto e
+data de conclusao valida na listagem,
+quando `op5-plan` rodar em modo `batch_fast`,
+entao o detalhe do Portal nao deve ser aberto apenas para completar metadata; a
+data da listagem deve ser usada no plano.
 
 Dado `batch_fast` com paginacao incompleta apos coletar protocolos elegiveis,
 quando a automacao nao conseguir avancar a pagina sem risco ao CDP,

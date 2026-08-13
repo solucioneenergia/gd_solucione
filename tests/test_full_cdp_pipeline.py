@@ -2555,6 +2555,99 @@ def test_download_reuses_existing_pdf_without_opening_detail(
     assert result["completion_date_normalized"] == "2026-02-01"
 
 
+def test_batch_fast_reuses_existing_pdf_with_listing_completion_without_opening_detail(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    class Settings(DummySettings):
+        ENABLE_PORTAL_PAGINATION = True
+        MAX_PORTAL_PAGES = 1
+        OP5_RECONCILIATION_MODE = "batch_fast"
+        REPROCESS_EXISTING_PDFS = False
+        PROCESS_EXISTING_AFTER_SKIP = True
+        APPLY_EXCEL = True
+
+    record = PortalSolicitation(
+        protocol="2600001048",
+        client_name="CLIENTE SINTETICO LTDA",
+        status="CONCLUIDA",
+        page_number=1,
+        entry_date="10/01/2026",
+        completion_date="01/02/2026",
+    )
+    protocol_dir = tmp_path / record.protocol
+    protocol_dir.mkdir()
+    pdf_path = protocol_dir / f"Orcamento_de_Conexao_{record.protocol}.pdf"
+    pdf_path.write_bytes(b"%PDF-1.4\n%%EOF")
+    metadata_path = protocol_dir / "metadata.json"
+    metadata_path.write_text(
+        """
+        {
+          "protocol": "2600001048",
+          "client_name": "CLIENTE SINTETICO LTDA"
+        }
+        """,
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr(cdp_portal_service, "get_settings", lambda: Settings())
+    monkeypatch.setattr(
+        cdp_portal_service,
+        "ensure_listing_starts_on_page_one",
+        lambda page: {
+            "success": True,
+            "status": "already_on_first_page",
+            "initial_active_page": 1,
+            "active_page_after": 1,
+        },
+    )
+    monkeypatch.setattr(
+        cdp_portal_service,
+        "_collect_completed_listing_rows_across_pages",
+        lambda page, settings, **kwargs: {
+            "pages_read": 1,
+            "total_rows": 1,
+            "total_completed": 1,
+            "completed_records": [record],
+            "duplicates_skipped": [],
+            "pagination_warnings": [],
+            "pagination_enabled": True,
+            "pagination_stop_reason": "last_page_reached",
+            "pagination_next_found": False,
+            "pagination_click_attempts": 0,
+            "pagination_mode": "numeric",
+            "pagination_current_page": 1,
+            "pagination_target_page": None,
+            "pagination_numeric_links_found": [],
+            "pagination_diagnostics": [],
+        },
+    )
+    monkeypatch.setattr(
+        cdp_portal_service,
+        "ensure_request_origin_page",
+        lambda *args, **kwargs: (_ for _ in ()).throw(
+            AssertionError("listing completion plus existing PDF must not open detail")
+        ),
+    )
+
+    summary = download_completed_budgets_from_current_page(
+        FakePage(),
+        downloads_root=tmp_path,
+        max_completed=1,
+        settings=Settings(),
+    )
+
+    assert summary["aborted"] is False
+    assert summary["total_errors"] == 0
+    assert summary["total_selected"] == 1
+    assert summary["total_for_processing"] == 1
+    [result] = summary["results"]
+    assert result["abriu_detalhe"] is False
+    assert result["download_status"] == "existing_pdf_after_skip"
+    assert result["process_pdf_path"] == str(pdf_path)
+    assert result["completion_date_raw"] == "01/02/2026"
+
+
 def test_download_uses_injected_settings_for_target_protocols(monkeypatch) -> None:
     class GlobalSettings(DummySettings):
         ENABLE_PORTAL_PAGINATION = True
