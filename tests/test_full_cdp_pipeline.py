@@ -2376,7 +2376,7 @@ def test_download_aborts_after_three_protocol_not_found_errors(monkeypatch) -> N
     assert calls == ["2601", "2602", "2603"]
 
 
-def test_download_aborts_after_failed_return_to_listing_even_with_reusable_pdf(
+def test_download_preserves_partial_batch_after_failed_return_with_reusable_pdf(
     tmp_path: Path,
     monkeypatch,
 ) -> None:
@@ -2501,10 +2501,126 @@ def test_download_aborts_after_failed_return_to_listing_even_with_reusable_pdf(
         settings=Settings(),
     )
 
-    assert summary["aborted"] is True
-    assert summary["abort_reason"] == "failed_return_to_listing"
+    assert summary["aborted"] is False
+    assert summary["run_error"] is None
+    assert summary["partial_batch_due_to_listing_recovery"] is True
+    assert summary["abort_reason"] == "stopped_after_failed_return_to_listing"
     assert origin_calls == ["2600001048"]
     assert [item["protocol"] for item in summary["results"]] == ["2600001048"]
+    assert summary["results"][0]["download_status"] == "existing_pdf_after_skip"
+    assert summary["results"][0]["selected_for_processing"] is True
+
+
+def test_download_aborts_after_failed_return_without_reusable_pdf(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    class Settings(DummySettings):
+        ENABLE_PORTAL_PAGINATION = True
+        MAX_PORTAL_PAGES = 1
+        REPROCESS_EXISTING_PDFS = False
+        PROCESS_EXISTING_AFTER_SKIP = True
+
+    record = PortalSolicitation(protocol="2600001048", status="CONCLUIDA", page_number=1)
+
+    class ListingPage:
+        url = "https://portal/listagem"
+
+        def __init__(self) -> None:
+            self.context = type("Context", (), {"pages": [self]})()
+
+        def wait_for_timeout(self, timeout: int) -> None:
+            return None
+
+    monkeypatch.setattr(cdp_portal_service, "get_settings", lambda: Settings())
+    monkeypatch.setattr(
+        cdp_portal_service,
+        "ensure_listing_starts_on_page_one",
+        lambda page: {
+            "success": True,
+            "status": "already_on_first_page",
+            "initial_active_page": 1,
+            "active_page_after": 1,
+        },
+    )
+    monkeypatch.setattr(
+        cdp_portal_service,
+        "_collect_completed_listing_rows_across_pages",
+        lambda page, settings, **kwargs: {
+            "pages_read": 1,
+            "total_rows": 1,
+            "total_completed": 1,
+            "completed_records": [record],
+            "duplicates_skipped": [],
+            "pagination_warnings": [],
+            "pagination_enabled": True,
+            "pagination_stop_reason": "last_page_reached",
+            "pagination_next_found": False,
+            "pagination_click_attempts": 0,
+            "pagination_mode": "numeric",
+            "pagination_current_page": 1,
+            "pagination_target_page": None,
+            "pagination_numeric_links_found": [],
+            "pagination_diagnostics": [],
+        },
+    )
+    monkeypatch.setattr(
+        cdp_portal_service,
+        "ensure_request_origin_page",
+        lambda page, request, listing_url=None, **_kwargs: {
+            "success": True,
+            "status": "protocol_found_on_origin_page",
+            "method": "current_page",
+            "protocol_found_on_origin_page": True,
+            "url_after": "https://portal/listagem",
+            "error": None,
+            "row": {
+                "record": request,
+                "row_locator": object(),
+                "action_cell_index": 6,
+            },
+        },
+    )
+    monkeypatch.setattr(cdp_portal_service, "click_follow_eye_button", lambda *args: None)
+    monkeypatch.setattr(cdp_portal_service, "wait_detail_loaded", lambda *args: None)
+    monkeypatch.setattr(cdp_portal_service, "extract_detail_header", lambda page: {})
+    monkeypatch.setattr(cdp_portal_service, "detail_has_completed_status", lambda page: True)
+    monkeypatch.setattr(
+        cdp_portal_service,
+        "extract_point_of_connection_completion",
+        lambda page, protocol: {},
+    )
+    monkeypatch.setattr(
+        cdp_portal_service,
+        "download_connection_budget",
+        lambda *args, **kwargs: None,
+    )
+    monkeypatch.setattr(
+        cdp_portal_service,
+        "_return_to_listing_after_detail",
+        lambda detail_page, listing_page, listing_url: (
+            listing_page,
+            {
+                "success": False,
+                "status": "failed_return_to_listing",
+                "method": "passive_return",
+                "url_after": "https://portal/detalhe",
+                "error": "manual recovery required",
+            },
+        ),
+    )
+
+    summary = download_completed_budgets_from_current_page(
+        ListingPage(),
+        downloads_root=tmp_path,
+        max_completed=1,
+        settings=Settings(),
+    )
+
+    assert summary["aborted"] is True
+    assert summary["run_error"] == "failed_return_to_listing"
+    assert summary["abort_reason"] == "failed_return_to_listing"
+    assert summary["results"][0]["selected_for_processing"] is False
 
 
 def test_download_reuses_existing_pdf_without_opening_detail(

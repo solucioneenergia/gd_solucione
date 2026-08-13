@@ -2017,16 +2017,28 @@ def download_completed_budgets_from_current_page(
                         "Nao foi possivel garantir retorno a listagem apos "
                         f"protocolo {protocol}: {message}"
                     )
-                    summary["run_error"] = "failed_return_to_listing"
-                    summary["aborted"] = True
-                    summary["abort_reason"] = "failed_return_to_listing"
                     abort_requested = True
-                    result["retorno_listagem_status"] = "failed_return_to_listing"
-                    result["metodo_retorno_listagem"] = (
-                        result.get("metodo_retorno_listagem") or "failed"
-                    )
-                    result["navigation_error"] = message
-                    if not _result_has_valid_pdf_for_processing(result):
+                    if _result_has_valid_pdf_for_processing(result):
+                        summary["partial_batch_due_to_listing_recovery"] = True
+                        summary["abort_reason"] = (
+                            "stopped_after_failed_return_to_listing"
+                        )
+                        result["retorno_listagem_status"] = (
+                            "stopped_after_failed_return_to_listing"
+                        )
+                        result["metodo_retorno_listagem"] = (
+                            result.get("metodo_retorno_listagem") or "failed"
+                        )
+                        result["navigation_warning"] = message
+                    else:
+                        summary["run_error"] = "failed_return_to_listing"
+                        summary["aborted"] = True
+                        summary["abort_reason"] = "failed_return_to_listing"
+                        result["retorno_listagem_status"] = "failed_return_to_listing"
+                        result["metodo_retorno_listagem"] = (
+                            result.get("metodo_retorno_listagem") or "failed"
+                        )
+                        result["navigation_error"] = message
                         result["cdp_error"] = result.get("cdp_error") or message
                         if not result.get("download_status"):
                             result["download_status"] = "cdp_error"

@@ -88,6 +88,12 @@ manual do operador e recriar `Access Denied` no Portal GD.
   pelo menos um protocolo elegivel ja foi coletado, o plano pode seguir com o
   lote parcial coletado, marcando explicitamente
   `partial_batch_due_to_pagination=true`.
+- Se o retorno pos-detalhe falhar depois que o item atual ja tiver PDF local
+  valido para processamento, o `op5-plan` deve parar a navegacao CDP, marcar
+  `partial_batch_due_to_listing_recovery=true` e preservar o lote parcial
+  processavel. Essa regra nao autoriza continuar navegando sem listagem segura.
+  Se o item atual nao tiver PDF valido para processamento, a falha continua
+  bloqueante com `run_error=failed_return_to_listing`.
 - Lote parcial por falha de paginacao nao autoriza extrapolar escopo nem reler
   Portal durante `op5-apply`; a aplicacao real continua limitada ao plano
   congelado.
@@ -132,6 +138,12 @@ Dado `batch_fast` com paginacao incompleta apos coletar protocolos elegiveis,
 quando a automacao nao conseguir avancar a pagina sem risco ao CDP,
 entao o plano deve seguir com o lote parcial ja coletado e reportar a causa,
 sem bloquear por reconciliacao global.
+
+Dado um detalhe aberto com PDF ja reutilizado e valido para processamento,
+quando o retorno seguro para a listagem falhar,
+entao a automacao deve parar a navegacao CDP, preservar esse PDF no lote parcial
+e nao marcar `run_error`; se nao houver PDF valido, deve manter
+`failed_return_to_listing` como erro bloqueante.
 
 Dado um protocolo coletado originalmente em pagina posterior,
 quando a listagem reaparecer em pagina incorreta apos detalhe,
