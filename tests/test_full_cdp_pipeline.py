@@ -1,5 +1,8 @@
 import json
+import hashlib
 from datetime import datetime
+from datetime import timedelta
+from datetime import timezone
 from pathlib import Path
 
 from openpyxl import Workbook
@@ -297,6 +300,318 @@ def test_batch_fast_paginates_past_page_fully_completed_locally(
     assert summary["completed_pages_skipped_already_completed"] == [1]
     assert summary["total_completed_pages_skipped_already_completed"] == 1
     assert summary["pagination_stop_reason"] == "incremental_batch_limit_reached"
+
+
+def test_batch_fast_plan_starts_from_completed_index_anchor_page(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    workbook_path = tmp_path / "planilha.xlsx"
+    workbook_path.write_bytes(b"workbook-after-last-apply")
+    workbook_sha = hashlib.sha256(workbook_path.read_bytes()).hexdigest()
+    downloads_root = tmp_path / "downloads"
+    archived_root = tmp_path / "clientes"
+    index_path = tmp_path / "state" / "op5_completed_index.json"
+    logs_dir = tmp_path / "logs"
+    index_path.parent.mkdir()
+    logs_dir.mkdir()
+    active_page = {"value": 1}
+    navigate_targets: list[int] = []
+    read_pages: list[int] = []
+
+    class Settings(DummySettings):
+        OP5_RECONCILIATION_MODE = "batch_fast"
+        ENABLE_PORTAL_PAGINATION = True
+        MAX_PORTAL_PAGES = 5
+        MAX_COMPLETED_TO_PROCESS = 2
+        APPLY_EXCEL = True
+        downloads_dir_path = downloads_root
+        planilha_path = workbook_path
+        logs_dir_path = logs_dir
+        op5_completed_index_path = index_path
+
+    page_three = [
+        _row("2600001048"),
+        _row("2600001049"),
+        _row("2600001050"),
+        _row("2600001051"),
+    ]
+
+    index_protocols = {}
+    for protocol in ["2600001048", "2600001049"]:
+        download_pdf = downloads_root / protocol / f"Orcamento_de_Conexao_{protocol}.pdf"
+        archived_pdf = archived_root / protocol / f"Orcamento_de_Conexao_{protocol}.pdf"
+        download_pdf.parent.mkdir(parents=True, exist_ok=True)
+        archived_pdf.parent.mkdir(parents=True, exist_ok=True)
+        download_pdf.write_bytes(b"%PDF-1.4\ncompleted\n%%EOF\n")
+        archived_pdf.write_bytes(download_pdf.read_bytes())
+        pdf_sha = hashlib.sha256(download_pdf.read_bytes()).hexdigest()
+        index_protocols[protocol] = {
+            "status": "completed",
+            "download_pdf_path": str(download_pdf),
+            "download_pdf_sha256": pdf_sha,
+            "archived_pdf_path": str(archived_pdf),
+            "archived_pdf_sha256": pdf_sha,
+            "workbook_sheet": "2026",
+            "workbook_row": 40,
+            "workbook_sha256": workbook_sha,
+            "portal_anchor_scope": "global_batch_fast",
+            "portal_page_number": 3,
+            "portal_row_index": 10,
+            "technical_extractor_version": "synthetic",
+            "equipment_rules_version": "synthetic",
+            "updated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+            "expires_at": (
+                datetime.now(timezone.utc) + timedelta(days=14)
+            ).isoformat(timespec="seconds"),
+        }
+    index_path.write_text(
+        json.dumps(
+            {
+                "schema_version": "op5-completed-index-v1",
+                "protocols": index_protocols,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    for protocol in ["2600001050", "2600001051"]:
+        protocol_dir = downloads_root / protocol
+        protocol_dir.mkdir(parents=True)
+        (protocol_dir / f"Orcamento_de_Conexao_{protocol}.pdf").write_bytes(
+            b"%PDF-1.4\nnew\n%%EOF\n"
+        )
+        (protocol_dir / "metadata.json").write_text(
+            json.dumps({"protocol": protocol, "completion_date": "01/02/2026"}),
+            encoding="utf-8",
+        )
+
+    def fake_navigate(page, target: int) -> dict:
+        navigate_targets.append(target)
+        active_page["value"] = target
+        return {
+            "success": True,
+            "status": "recovered_listing_by_numeric_page",
+            "method": "numeric_page_navigation",
+            "target_page_number": target,
+            "active_page_before": 1,
+            "active_page_after": target,
+            "error": None,
+        }
+
+    def fake_read_rows(page) -> list[dict]:
+        read_pages.append(active_page["value"])
+        assert active_page["value"] == 3
+        return page_three
+
+    monkeypatch.setattr(cdp_portal_service, "get_active_numeric_page", lambda page: active_page["value"])
+    monkeypatch.setattr(cdp_portal_service, "navigate_to_numeric_page", fake_navigate)
+    monkeypatch.setattr(
+        cdp_portal_service,
+        "ensure_listing_starts_on_page_one",
+        lambda page: (_ for _ in ()).throw(
+            AssertionError("plano batch_fast deve iniciar pela pagina ancora")
+        ),
+    )
+    monkeypatch.setattr(
+        cdp_portal_service, "read_current_page_table_with_row_handles", fake_read_rows
+    )
+    monkeypatch.setattr(
+        cdp_portal_service,
+        "protocol_row_has_required_values",
+        lambda path, protocol: {
+            "success": True,
+            "complete": False,
+            "worksheet": "",
+            "row": None,
+            "missing_columns": ["Conclusao"],
+        },
+    )
+
+    summary = download_completed_budgets_from_current_page(
+        FakePage(),
+        downloads_root=downloads_root,
+        max_completed=2,
+        settings=Settings(),
+    )
+
+    assert navigate_targets == [3]
+    assert read_pages == [3]
+    assert summary["completed_index_resume_page"] == 3
+    assert summary["completed_index_resume_status"] == "recovered_listing_by_numeric_page"
+    assert summary["pages_visited"] == [3]
+    assert [item["protocol"] for item in summary["selected_protocols"]] == [
+        "2600001050",
+        "2600001051",
+    ]
+    assert summary["total_already_completed_in_state"] == 2
+    assert summary["total_errors"] == 0
+
+
+def test_batch_fast_anchor_navigation_requires_confirmed_target_page(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    workbook_path = tmp_path / "planilha.xlsx"
+    workbook_path.write_bytes(b"workbook-after-last-apply")
+    workbook_sha = hashlib.sha256(workbook_path.read_bytes()).hexdigest()
+    index_path = tmp_path / "state" / "op5_completed_index.json"
+    pdf = tmp_path / "downloads" / "2600001048" / "Orcamento_de_Conexao_2600001048.pdf"
+    archived = tmp_path / "clientes" / "2600001048.pdf"
+    index_path.parent.mkdir()
+    pdf.parent.mkdir(parents=True)
+    archived.parent.mkdir(parents=True)
+    pdf.write_bytes(b"%PDF-1.4\ncompleted\n%%EOF\n")
+    archived.write_bytes(pdf.read_bytes())
+    pdf_sha = hashlib.sha256(pdf.read_bytes()).hexdigest()
+    index_path.write_text(
+        json.dumps(
+            {
+                "schema_version": "op5-completed-index-v1",
+                "protocols": {
+                    "2600001048": {
+                        "status": "completed",
+                        "download_pdf_path": str(pdf),
+                        "download_pdf_sha256": pdf_sha,
+                        "archived_pdf_path": str(archived),
+                        "archived_pdf_sha256": pdf_sha,
+                        "workbook_sheet": "2026",
+                        "workbook_row": 40,
+                        "workbook_sha256": workbook_sha,
+                        "portal_anchor_scope": "global_batch_fast",
+                        "portal_page_number": 3,
+                        "portal_row_index": 10,
+                        "updated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+                        "expires_at": (
+                            datetime.now(timezone.utc) + timedelta(days=14)
+                        ).isoformat(timespec="seconds"),
+                    }
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    class Settings(DummySettings):
+        OP5_RECONCILIATION_MODE = "batch_fast"
+        APPLY_EXCEL = True
+        planilha_path = workbook_path
+        op5_completed_index_path = index_path
+
+    monkeypatch.setattr(
+        cdp_portal_service,
+        "navigate_to_numeric_page",
+        lambda page, target: {
+            "success": True,
+            "status": "recovered_listing_by_numeric_page_unconfirmed_active",
+            "method": "recovered_listing_by_numeric_page_unconfirmed_active",
+            "target_page_number": target,
+            "active_page_before": 1,
+            "active_page_after": 2,
+            "error": None,
+        },
+    )
+
+    navigation = cdp_portal_service._navigate_to_batch_fast_completed_index_anchor(
+        FakePage(),
+        Settings(),
+        state_store=None,
+        skip_already_completed=True,
+    )
+
+    assert navigation is not None
+    assert navigation["success"] is False
+    assert navigation["status"] == "completed_index_anchor_unconfirmed_page"
+
+
+def test_batch_fast_anchor_ignores_target_protocol_index_scope(
+    tmp_path: Path,
+) -> None:
+    workbook_path = tmp_path / "planilha.xlsx"
+    workbook_path.write_bytes(b"workbook-after-target-apply")
+    workbook_sha = hashlib.sha256(workbook_path.read_bytes()).hexdigest()
+    index_path = tmp_path / "state" / "op5_completed_index.json"
+    pdf = tmp_path / "downloads" / "2600001048" / "Orcamento_de_Conexao_2600001048.pdf"
+    archived = tmp_path / "clientes" / "2600001048.pdf"
+    index_path.parent.mkdir()
+    pdf.parent.mkdir(parents=True)
+    archived.parent.mkdir(parents=True)
+    pdf.write_bytes(b"%PDF-1.4\ncompleted\n%%EOF\n")
+    archived.write_bytes(pdf.read_bytes())
+    pdf_sha = hashlib.sha256(pdf.read_bytes()).hexdigest()
+    index_path.write_text(
+        json.dumps(
+            {
+                "schema_version": "op5-completed-index-v1",
+                "protocols": {
+                    "2600001048": {
+                        "status": "completed",
+                        "download_pdf_path": str(pdf),
+                        "download_pdf_sha256": pdf_sha,
+                        "archived_pdf_path": str(archived),
+                        "archived_pdf_sha256": pdf_sha,
+                        "workbook_sheet": "2026",
+                        "workbook_row": 40,
+                        "workbook_sha256": workbook_sha,
+                        "portal_anchor_scope": "target_protocols",
+                        "portal_page_number": 8,
+                        "portal_row_index": 10,
+                        "updated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+                        "expires_at": (
+                            datetime.now(timezone.utc) + timedelta(days=14)
+                        ).isoformat(timespec="seconds"),
+                    }
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    class Settings(DummySettings):
+        OP5_RECONCILIATION_MODE = "batch_fast"
+        APPLY_EXCEL = True
+        planilha_path = workbook_path
+        op5_completed_index_path = index_path
+
+    page = cdp_portal_service._batch_fast_completed_index_anchor_page(
+        Settings(),
+        state_store=None,
+        skip_already_completed=True,
+    )
+
+    assert page is None
+
+
+def test_batch_fast_anchor_falls_back_when_workbook_sha_cannot_be_read(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    index_path = tmp_path / "state" / "op5_completed_index.json"
+    index_path.parent.mkdir()
+    index_path.write_text(
+        json.dumps({"schema_version": "op5-completed-index-v1", "protocols": {}}),
+        encoding="utf-8",
+    )
+
+    class Settings(DummySettings):
+        OP5_RECONCILIATION_MODE = "batch_fast"
+        APPLY_EXCEL = True
+        planilha_path = tmp_path / "planilha.xlsx"
+        op5_completed_index_path = index_path
+
+    monkeypatch.setattr(
+        cdp_portal_service,
+        "_settings_workbook_sha256",
+        lambda settings: (_ for _ in ()).throw(PermissionError("locked workbook")),
+    )
+
+    page = cdp_portal_service._batch_fast_completed_index_anchor_page(
+        Settings(),
+        state_store=None,
+        skip_already_completed=True,
+    )
+
+    assert page is None
 
 
 def test_target_protocols_restrict_batch_fast_selection() -> None:

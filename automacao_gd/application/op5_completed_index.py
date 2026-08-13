@@ -28,6 +28,9 @@ def record_completed_protocol(
     workbook_row: int | None,
     source_pdf_sha256: str | None = None,
     archived_pdf_sha256: str | None = None,
+    portal_page_number: int | None = None,
+    portal_row_index: int | None = None,
+    portal_anchor_scope: str | None = None,
     updated_at: datetime | None = None,
 ) -> dict[str, Any]:
     now = _normalize_datetime(updated_at or datetime.now(timezone.utc))
@@ -44,6 +47,9 @@ def record_completed_protocol(
         "workbook_sheet": workbook_sheet,
         "workbook_row": workbook_row,
         "workbook_sha256": _sha256_file(Path(workbook_path)),
+        "portal_page_number": portal_page_number,
+        "portal_row_index": portal_row_index,
+        "portal_anchor_scope": portal_anchor_scope,
         "technical_extractor_version": TECHNICAL_PROCESSING_FORMAT_VERSION,
         "equipment_rules_version": EQUIPMENT_RULES_VERSION,
         "updated_at": now.isoformat(timespec="seconds"),
@@ -56,24 +62,34 @@ def record_completed_protocol(
     return entry
 
 
+def load_valid_completed_entries(
+    index_path: Path,
+    *,
+    now: datetime | None = None,
+) -> dict[str, dict[str, Any]]:
+    payload = _load_index(index_path)
+    valid: dict[str, dict[str, Any]] = {}
+    for protocol, entry in (payload.get("protocols") or {}).items():
+        if not isinstance(entry, dict) or entry.get("status") != "completed":
+            continue
+        try:
+            expires_at = datetime.fromisoformat(str(entry["expires_at"]))
+        except (KeyError, ValueError):
+            continue
+        current = _normalize_datetime(now or datetime.now(timezone.utc))
+        if expires_at <= current:
+            continue
+        valid[str(protocol)] = entry
+    return valid
+
+
 def load_valid_completed_entry(
     index_path: Path,
     protocol: str,
     *,
     now: datetime | None = None,
 ) -> dict[str, Any] | None:
-    payload = _load_index(index_path)
-    entry = payload.get("protocols", {}).get(str(protocol))
-    if not isinstance(entry, dict) or entry.get("status") != "completed":
-        return None
-    try:
-        expires_at = datetime.fromisoformat(str(entry["expires_at"]))
-    except (KeyError, ValueError):
-        return None
-    current = _normalize_datetime(now or datetime.now(timezone.utc))
-    if expires_at <= current:
-        return None
-    return entry
+    return load_valid_completed_entries(index_path, now=now).get(str(protocol))
 
 
 def _load_index(index_path: Path) -> dict[str, Any]:

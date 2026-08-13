@@ -1081,6 +1081,7 @@ def _process_single_pdf(
                     workbook_path=workbook_path,
                     excel_status=excel_status,
                     archive_status=archive_status,
+                    portal_metadata=portal_metadata,
                     dry_run=dry_run,
                 ),
                 "error": None,
@@ -1157,6 +1158,7 @@ def _record_completed_index_best_effort(
     excel_status: dict[str, Any],
     archive_status: dict[str, Any],
     dry_run: bool,
+    portal_metadata: dict[str, Any] | None = None,
 ) -> str:
     if dry_run:
         return "not_applicable"
@@ -1180,11 +1182,26 @@ def _record_completed_index_best_effort(
             or excel_status.get("existing_row"),
             source_pdf_sha256=archive_status.get("source_pdf_sha256"),
             archived_pdf_sha256=archive_status.get("archived_pdf_sha256"),
+            portal_page_number=_optional_int(portal_metadata.get("page_number"))
+            if portal_metadata
+            else None,
+            portal_row_index=_optional_int(portal_metadata.get("row_index"))
+            if portal_metadata
+            else None,
+            portal_anchor_scope=str(portal_metadata.get("op5_selection_scope") or "")
+            if portal_metadata
+            else None,
         )
     except (AttributeError, OSError, TypeError, ValueError):
         logger.error("Falha ao persistir indice mestre OP5 privado.")
         return "failed"
     return "persisted"
+
+
+def _optional_int(value: Any) -> int | None:
+    if value in (None, ""):
+        return None
+    return int(value)
 
 
 def _add_state_error_best_effort(

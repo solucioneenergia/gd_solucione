@@ -30,6 +30,9 @@ def build_portal_metadata(data: dict[str, Any]) -> dict:
         "completion_extraction_status": data.get("completion_extraction_status"),
         "consumer_unit_code": data.get("consumer_unit_code"),
         "address": data.get("address"),
+        "page_number": data.get("page_number"),
+        "row_index": data.get("row_index"),
+        "op5_selection_scope": data.get("op5_selection_scope"),
     }
 
 

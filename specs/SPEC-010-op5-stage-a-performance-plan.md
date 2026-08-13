@@ -169,10 +169,23 @@ alteração, ações Excel planejadas e ações Excel aplicadas.
 Em `batch_fast`, protocolos com entrada valida e nao expirada em
 `DATA_DIR/state/op5_completed_index.json` devem ser tratados como concluidos localmente quando
 o PDF local existir com SHA-256 igual ao registrado, a entrada tiver aba/linha da planilha e o
-protocolo nao estiver em `FORCE_REPROCESS_PROTOCOLS`. Esses protocolos nao devem consumir o
-limite de updates planejados; o planejador deve seguir paginando para encontrar novos updates.
-Essa regra nao autoriza limpeza de `data/downloads`, nao substitui plano congelado e nao
-dispensa a validacao da planilha/PDF no `op5-apply`.
+SHA-256 atual da planilha coincidir com o SHA-256 registrado no indice. Esses protocolos nao
+devem consumir o limite de updates planejados; o planejador deve seguir paginando para encontrar
+novos updates. Essa regra nao autoriza limpeza de `data/downloads`, nao substitui plano
+congelado e nao dispensa a validacao da planilha/PDF no `op5-apply`.
+
+Em `batch_fast`, apos uma aplicacao real bem-sucedida, o indice mestre deve registrar tambem a
+pagina e a linha de origem do protocolo no Portal quando essa informacao existir no plano
+congelado/metadados do download. Essa entrada deve indicar se a selecao veio de um plano global
+`batch_fast` ou de um plano direcionado por protocolos explicitos. Em uma nova geracao de plano
+global, se houver entradas validas do indice mestre vinculadas ao SHA-256 atual da planilha,
+marcadas como selecao global e com pagina de Portal conhecida, o planejador pode navegar
+diretamente para a maior pagina registrada como ancora inicial, validar que a pagina ativa apos a
+navegacao e exatamente a pagina alvo e continuar a selecao dali. Entradas vindas de
+`op5-plan --protocols` nao podem servir como ancora global futura. Se a navegacao para a pagina
+ancora falhar, estiver sem indicador confiavel, confirmar pagina diferente da alvo, ou a evidencia
+local nao bater com o SHA atual da planilha, o fluxo deve voltar ao reset/paginacao segura a partir
+da pagina 1.
 
 Em `batch_fast`, quando todos os protocolos concluídos visíveis em uma página validada do
 Portal já estiverem comprovadamente completos por estado mestre, state operacional ou índice

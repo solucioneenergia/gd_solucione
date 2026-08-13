@@ -17,7 +17,10 @@ from automacao_gd.infrastructure.excel.service import protocol_row_has_required_
 from automacao_gd.infrastructure.files.file_service import sanitize_filename
 from automacao_gd.infrastructure.logging import logger
 from automacao_gd.infrastructure.metadata.service import save_download_metadata
-from automacao_gd.application.op5_completed_index import load_valid_completed_entry
+from automacao_gd.application.op5_completed_index import (
+    load_valid_completed_entries,
+    load_valid_completed_entry,
+)
 from automacao_gd.application.op5_optimization import (
     cached_workbook_protocol_check,
     load_eligibility_cache,
@@ -768,6 +771,20 @@ def _op5_completed_index_should_skip(protocol: str, settings=None) -> bool:
     entry = load_valid_completed_entry(Path(index_path), protocol)
     if entry is None:
         return False
+    return _op5_completed_index_entry_is_locally_valid(entry, settings)
+
+
+def _op5_completed_index_entry_is_locally_valid(
+    entry: dict[str, Any],
+    settings=None,
+    *,
+    current_workbook_sha: str | None = None,
+) -> bool:
+    current_workbook_sha = current_workbook_sha or _settings_workbook_sha256(settings)
+    if not current_workbook_sha:
+        return False
+    if str(entry.get("workbook_sha256") or "").lower() != current_workbook_sha:
+        return False
     if not entry.get("workbook_sheet") or not entry.get("workbook_row"):
         return False
     download_path = Path(str(entry.get("download_pdf_path") or ""))
@@ -779,6 +796,111 @@ def _op5_completed_index_should_skip(protocol: str, settings=None) -> bool:
     if not _file_matches_sha256(archived_path, archived_sha):
         return False
     return True
+
+
+def _settings_workbook_sha256(settings) -> str | None:
+    workbook_path = getattr(settings, "planilha_path", None)
+    if workbook_path is None:
+        return None
+    workbook = Path(workbook_path)
+    if not workbook.is_file():
+        return None
+    digest = hashlib.sha256()
+    try:
+        with workbook.open("rb") as handle:
+            for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+                digest.update(chunk)
+    except OSError as exc:
+        logger.warning(f"SHA da planilha nao pode ser calculado para OP5: {exc}")
+        return None
+    return digest.hexdigest()
+
+
+def _navigate_to_batch_fast_completed_index_anchor(
+    page,
+    settings,
+    *,
+    state_store=None,
+    skip_already_completed: bool,
+) -> dict | None:
+    target_page = _batch_fast_completed_index_anchor_page(
+        settings,
+        state_store=state_store,
+        skip_already_completed=skip_already_completed,
+    )
+    if target_page is None or target_page <= 1:
+        return None
+    logger.info(
+        "Navegando diretamente para pagina ancora do indice mestre OP5: "
+        f"{target_page}."
+    )
+    navigation = navigate_to_numeric_page(page, target_page)
+    if navigation.get("active_page_after") != target_page:
+        return {
+            **navigation,
+            "success": False,
+            "status": "completed_index_anchor_unconfirmed_page",
+            "error": (
+                "Pagina ativa apos navegacao por indice mestre OP5: "
+                f"{navigation.get('active_page_after')}; esperado: {target_page}."
+            ),
+        }
+    if navigation.get("success"):
+        return {
+            **navigation,
+            "status": navigation.get("status") or "completed_index_anchor_page",
+            "method": navigation.get("method") or "completed_index_anchor_page",
+        }
+    logger.warning(
+        "Nao foi possivel usar pagina ancora do indice mestre OP5; "
+        "voltando ao reset seguro para pagina 1."
+    )
+    return navigation
+
+
+def _batch_fast_completed_index_anchor_page(
+    settings,
+    *,
+    state_store=None,
+    skip_already_completed: bool,
+) -> int | None:
+    if not skip_already_completed or not _is_batch_fast_mode(settings):
+        return None
+    if getattr(settings, "op5_target_protocols", set()) or set():
+        return None
+    index_path = getattr(settings, "op5_completed_index_path", None)
+    if index_path is None:
+        return None
+    try:
+        current_workbook_sha = _settings_workbook_sha256(settings)
+    except OSError as exc:
+        logger.warning(
+            "SHA da planilha nao pode ser calculado para ancora OP5; "
+            f"usando paginacao segura. Motivo: {exc}"
+        )
+        return None
+    if not current_workbook_sha:
+        return None
+    pages: list[int] = []
+    for protocol, entry in load_valid_completed_entries(Path(index_path)).items():
+        if entry.get("portal_anchor_scope") != "global_batch_fast":
+            continue
+        if not _op5_completed_index_entry_is_locally_valid(
+            entry, settings, current_workbook_sha=current_workbook_sha
+        ):
+            continue
+        if state_store is not None and hasattr(state_store, "is_force_reprocess"):
+            if state_store.is_force_reprocess(protocol):
+                continue
+        if protocol in (getattr(settings, "force_reprocess_protocols", set()) or set()):
+            continue
+        try:
+            page_number = int(entry.get("portal_page_number") or 0)
+        except (TypeError, ValueError):
+            continue
+        if page_number > 1:
+            pages.append(page_number)
+    return max(pages) if pages else None
 
 
 def _file_matches_sha256(path: Path, expected_sha256: str) -> bool:
@@ -1543,13 +1665,34 @@ def download_completed_budgets_from_current_page(
         state_store=state_store,
         skip_already_completed=skip_already_completed,
     )
+    completed_index_resume = None
 
     if collection is None and settings.ENABLE_PORTAL_PAGINATION:
-        reset_result = ensure_listing_starts_on_page_one(page)
-        summary["pagination_initial_active_page"] = reset_result.get(
-            "initial_active_page"
+        completed_index_resume = _navigate_to_batch_fast_completed_index_anchor(
+            page,
+            settings,
+            state_store=state_store,
+            skip_already_completed=skip_already_completed,
         )
-        summary["pagination_reset_to_first_page"] = reset_result
+        if completed_index_resume is not None:
+            summary["completed_index_resume_page"] = completed_index_resume.get(
+                "target_page_number"
+            )
+            summary["completed_index_resume_status"] = completed_index_resume.get(
+                "status"
+            )
+            summary["completed_index_resume_navigation"] = completed_index_resume
+            summary["pagination_initial_active_page"] = completed_index_resume.get(
+                "active_page_before"
+            )
+        if completed_index_resume is None or not completed_index_resume.get("success"):
+            reset_result = ensure_listing_starts_on_page_one(page)
+            summary["pagination_initial_active_page"] = reset_result.get(
+                "initial_active_page"
+            )
+            summary["pagination_reset_to_first_page"] = reset_result
+        else:
+            reset_result = {"success": True}
         if not reset_result["success"]:
             message = (
                 "cannot_confirm_active_page_in_production"
@@ -1828,6 +1971,12 @@ def download_completed_budgets_from_current_page(
         detail_page = None
         protocol = record.protocol
         append_result = True
+        if batch_fast_mode:
+            result["op5_selection_scope"] = (
+                "target_protocols"
+                if (getattr(settings, "op5_target_protocols", set()) or set())
+                else "global_batch_fast"
+            )
         try:
             previous_entry = state_store.get_protocol(protocol) if state_store else None
             if previous_entry:
@@ -2341,6 +2490,7 @@ def _reuse_existing_pdf_without_detail(
                 "entry_date_raw": record.entry_date,
                 "consumer_unit_code": record.consumer_unit_code,
                 "address": record.address,
+                "op5_selection_scope": result.get("op5_selection_scope"),
             },
         )
         result["metadata_created_from_listing"] = True

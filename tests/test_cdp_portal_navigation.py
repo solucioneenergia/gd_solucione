@@ -164,7 +164,69 @@ def test_batch_fast_selection_skips_valid_op5_completed_master_index(
     pdf.write_bytes(b"%PDF-1.4 synthetic completed")
     archived.write_bytes(pdf.read_bytes())
     pdf_sha = hashlib.sha256(pdf.read_bytes()).hexdigest()
+    workbook = tmp_path / "planilha.xlsx"
+    workbook.write_bytes(b"workbook-current")
+    workbook_sha = hashlib.sha256(workbook.read_bytes()).hexdigest()
     expires_at = datetime.now(timezone.utc) + timedelta(days=14)
+    index_path = tmp_path / "state" / "op5_completed_index.json"
+    index_path.parent.mkdir(parents=True, exist_ok=True)
+    index_path.write_text(
+        json.dumps(
+            {
+                "schema_version": "op5-completed-index-v1",
+                "protocols": {
+                    completed_protocol: {
+                        "status": "completed",
+                        "download_pdf_path": str(pdf),
+                        "download_pdf_sha256": pdf_sha,
+                        "archived_pdf_path": str(archived),
+                        "archived_pdf_sha256": pdf_sha,
+                        "workbook_sheet": "2026",
+                        "workbook_row": 42,
+                        "workbook_sha256": workbook_sha,
+                        "technical_extractor_version": "synthetic",
+                        "equipment_rules_version": "synthetic",
+                        "updated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+                        "expires_at": expires_at.isoformat(timespec="seconds"),
+                    }
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    settings = SimpleNamespace(
+        OP5_RECONCILIATION_MODE="batch_fast",
+        APPLY_EXCEL=True,
+        planilha_path=workbook,
+        op5_completed_index_path=index_path,
+        force_reprocess_protocols=set(),
+    )
+
+    selection = cdp_service.select_eligible_completed_requests(
+        completed_requests=[_record(completed_protocol), _record(new_protocol)],
+        pipeline_state=None,
+        max_completed_to_process=1,
+        skip_already_completed=True,
+        settings=settings,
+    )
+
+    assert [record.protocol for record in selection["selected_records"]] == [new_protocol]
+    assert selection["skipped_completed"][0]["protocol"] == completed_protocol
+
+
+def test_batch_fast_completed_master_index_requires_current_workbook_sha(
+    tmp_path: Path,
+) -> None:
+    completed_protocol = "2600001048"
+    pdf = tmp_path / "downloads" / completed_protocol / f"Orcamento_de_Conexao_{completed_protocol}.pdf"
+    archived = tmp_path / "clientes" / f"Orcamento_de_Conexao_{completed_protocol}.pdf"
+    workbook = tmp_path / "planilha.xlsx"
+    pdf.parent.mkdir(parents=True, exist_ok=True)
+    archived.parent.mkdir(parents=True, exist_ok=True)
+    pdf.write_bytes(b"%PDF-1.4 synthetic completed")
+    archived.write_bytes(pdf.read_bytes())
+    workbook.write_bytes(b"workbook-current")
+    pdf_sha = hashlib.sha256(pdf.read_bytes()).hexdigest()
     index_path = tmp_path / "state" / "op5_completed_index.json"
     index_path.parent.mkdir(parents=True, exist_ok=True)
     index_path.write_text(
@@ -184,7 +246,9 @@ def test_batch_fast_selection_skips_valid_op5_completed_master_index(
                         "technical_extractor_version": "synthetic",
                         "equipment_rules_version": "synthetic",
                         "updated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
-                        "expires_at": expires_at.isoformat(timespec="seconds"),
+                        "expires_at": (
+                            datetime.now(timezone.utc) + timedelta(days=14)
+                        ).isoformat(timespec="seconds"),
                     }
                 },
             }
@@ -194,17 +258,20 @@ def test_batch_fast_selection_skips_valid_op5_completed_master_index(
     settings = SimpleNamespace(
         OP5_RECONCILIATION_MODE="batch_fast",
         APPLY_EXCEL=True,
+        planilha_path=workbook,
         op5_completed_index_path=index_path,
         force_reprocess_protocols=set(),
     )
 
     selection = cdp_service.select_eligible_completed_requests(
-        completed_requests=[_record(completed_protocol), _record(new_protocol)],
+        completed_requests=[_record(completed_protocol)],
         pipeline_state=None,
         max_completed_to_process=1,
         skip_already_completed=True,
         settings=settings,
     )
 
-    assert [record.protocol for record in selection["selected_records"]] == [new_protocol]
-    assert selection["skipped_completed"][0]["protocol"] == completed_protocol
+    assert [record.protocol for record in selection["selected_records"]] == [
+        completed_protocol
+    ]
+    assert selection["skipped_completed"] == []

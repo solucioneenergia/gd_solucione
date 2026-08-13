@@ -170,7 +170,16 @@ def test_successful_real_op5_processing_records_completed_master_index(
     monkeypatch.setattr(
         processing_service,
         "load_portal_metadata",
-        lambda *args: ({"entry_date": "2026-01-16", "completion_date": "2026-01-20"}, None),
+        lambda *args: (
+            {
+                "entry_date": "2026-01-16",
+                "completion_date": "2026-01-20",
+                "page_number": 3,
+                "row_index": 12,
+                "op5_selection_scope": "global_batch_fast",
+            },
+            None,
+        ),
     )
     monkeypatch.setattr(
         processing_service,
@@ -251,6 +260,9 @@ def test_successful_real_op5_processing_records_completed_master_index(
     assert entry["workbook_sheet"] == "2026"
     assert entry["workbook_row"] == 42
     assert entry["workbook_sha256"] == expected_workbook_sha
+    assert entry["portal_anchor_scope"] == "global_batch_fast"
+    assert entry["portal_page_number"] == 3
+    assert entry["portal_row_index"] == 12
     assert entry["technical_extractor_version"] == processing_service.TECHNICAL_PROCESSING_FORMAT_VERSION
     assert entry["equipment_rules_version"] == processing_service.EQUIPMENT_RULES_VERSION
     updated_at = datetime.fromisoformat(entry["updated_at"])
