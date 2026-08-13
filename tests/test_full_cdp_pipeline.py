@@ -606,6 +606,98 @@ def test_reset_listing_to_first_page_clicks_page_one(monkeypatch) -> None:
     assert targets == [1]
 
 
+def test_reset_listing_recovers_after_context_destroyed_during_initial_reset(
+    monkeypatch,
+) -> None:
+    active_pages = iter([2, 1])
+    waits = []
+    row_reads = []
+
+    monkeypatch.setattr(
+        cdp_portal_service,
+        "get_active_numeric_page",
+        lambda page: next(active_pages),
+    )
+    monkeypatch.setattr(
+        cdp_portal_service,
+        "navigate_to_numeric_page",
+        lambda page, target: {
+            "success": False,
+            "status": "pagination_numeric_click_error",
+            "method": "numeric_page_navigation",
+            "target_page_number": target,
+            "error": (
+                "Page.evaluate: Execution context was destroyed, "
+                "most likely because of a navigation"
+            ),
+        },
+    )
+    monkeypatch.setattr(
+        cdp_portal_service,
+        "_wait_after_pagination_click",
+        lambda page: waits.append("wait"),
+    )
+    monkeypatch.setattr(
+        cdp_portal_service,
+        "read_current_page_table_with_row_handles",
+        lambda page: row_reads.append("rows") or [_row("2600001107")],
+    )
+
+    result = ensure_listing_starts_on_page_one(FakePage())
+
+    assert result["success"] is True
+    assert result["status"] == "reset_to_first_page_after_context_recovery"
+    assert result["initial_active_page"] == 2
+    assert result["active_page_after"] == 1
+    assert waits == ["wait"]
+    assert row_reads == ["rows"]
+
+
+def test_reset_listing_fails_closed_when_context_destroyed_and_listing_not_confirmed(
+    monkeypatch,
+) -> None:
+    active_pages = iter([2, None])
+    waits = []
+
+    monkeypatch.setattr(
+        cdp_portal_service,
+        "get_active_numeric_page",
+        lambda page: next(active_pages),
+    )
+    monkeypatch.setattr(
+        cdp_portal_service,
+        "navigate_to_numeric_page",
+        lambda page, target: {
+            "success": False,
+            "status": "pagination_numeric_click_error",
+            "method": "numeric_page_navigation",
+            "target_page_number": target,
+            "error": (
+                "Page.evaluate: Execution context was destroyed, "
+                "most likely because of a navigation"
+            ),
+        },
+    )
+    monkeypatch.setattr(
+        cdp_portal_service,
+        "_wait_after_pagination_click",
+        lambda page: waits.append("wait"),
+    )
+    monkeypatch.setattr(
+        cdp_portal_service,
+        "read_current_page_table_with_row_handles",
+        lambda page: [],
+    )
+
+    result = ensure_listing_starts_on_page_one(FakePage())
+
+    assert result["success"] is False
+    assert result["status"] == "pagination_context_destroyed_during_reset"
+    assert "Execution context was destroyed" in result["error"]
+    assert result["active_page_after"] is None
+    assert waits == ["wait"]
+
+
 def test_reset_listing_accepts_disabled_page_one_when_active_indicator_missing(
     monkeypatch,
 ) -> None:

@@ -2191,6 +2191,26 @@ def ensure_listing_starts_on_page_one(page) -> dict:
     logger.info(f"Pagina ativa inicial e {active_page}; resetando para pagina 1.")
     navigation = navigate_to_numeric_page(page, 1)
     result["click_result"] = navigation
+    if _is_execution_context_destroyed_error(navigation.get("error")):
+        recovery = _recover_first_page_after_context_destruction(page, navigation)
+        result["context_recovery"] = recovery
+        result["active_page_after"] = recovery.get("active_page_after")
+        if recovery.get("success"):
+            result.update(
+                {
+                    "success": True,
+                    "status": "reset_to_first_page_after_context_recovery",
+                    "error": None,
+                }
+            )
+            return result
+        result.update(
+            {
+                "status": "pagination_context_destroyed_during_reset",
+                "error": recovery.get("error") or navigation.get("error"),
+            }
+        )
+        return result
     active_after = get_active_numeric_page(page)
     result["active_page_after"] = active_after
     if navigation["success"] and active_after == 1:
@@ -2205,6 +2225,44 @@ def ensure_listing_starts_on_page_one(page) -> dict:
                 or f"Pagina ativa apos reset: {active_after}; esperado: 1."
             ),
         }
+    )
+    return result
+
+
+def _is_execution_context_destroyed_error(error: Any) -> bool:
+    if not error:
+        return False
+    return "execution context was destroyed" in str(error).casefold()
+
+
+def _recover_first_page_after_context_destruction(page, navigation: dict) -> dict:
+    result = {
+        "success": False,
+        "status": "pagination_context_destroyed_during_reset",
+        "method": "passive_context_revalidation_after_reset",
+        "active_page_after": None,
+        "error": navigation.get("error"),
+    }
+    _wait_after_pagination_click(page)
+    try:
+        active_after = get_active_numeric_page(page)
+        result["active_page_after"] = active_after
+        rows_after = read_current_page_table_with_row_handles(page)
+    except Exception as exc:
+        result["error"] = str(exc)
+        return result
+    if active_after == 1 and rows_after:
+        result.update(
+            {
+                "success": True,
+                "status": "reset_to_first_page_after_context_recovery",
+                "error": None,
+            }
+        )
+        return result
+    result["error"] = (
+        navigation.get("error")
+        or f"Pagina ativa apos contexto destruido: {active_after}; esperado: 1."
     )
     return result
 

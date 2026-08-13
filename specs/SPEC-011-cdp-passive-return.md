@@ -54,6 +54,14 @@ manual do operador e recriar `Access Denied` no Portal GD.
   `op5_plan_latest.json` anterior deve ser removido ou sobrescrito por marcador
   invalido com `stale_after_failed_plan=true`; `op5-apply` nao pode aceitar esse
   plano.
+- No reset inicial da listagem para a pagina 1, se o contexto Playwright/CDP for
+  destruido durante uma navegacao ja disparada pelo proprio Portal, a automacao
+  pode aguardar apenas a estabilizacao curta ja existente e revalidar
+  passivamente a tabela/paginador na aba atual. O reset so pode ser aceito se a
+  pagina 1 e a tabela com linhas forem reconfirmadas; caso contrario deve falhar
+  fechado com diagnostico especifico de contexto destruido. Essa recuperacao
+  continua proibida de usar `goto()`, `reload()`, `go_back()`, nova aba ou URL
+  raiz.
 - A mensagem operacional deve orientar o operador a reabrir o Edge pelo comando
   PowerShell aprovado, fazer login manual e deixar a listagem aberta.
 - `op5-apply` continua proibido de reler Portal/CDP e aplica somente plano
@@ -104,3 +112,10 @@ Dado um `op5_plan_latest.json` valido anterior,
 quando um novo `op5-plan` falhar por retorno/listagem/paginacao,
 entao o plano anterior deve ficar explicitamente inutilizavel antes de qualquer
 `op5-apply`.
+
+Dado que o Portal destrua temporariamente o contexto CDP durante o reset inicial
+para a pagina 1,
+quando a aba atual estabilizar novamente na listagem autenticada,
+entao a automacao deve aceitar o reset somente apos reconfirmar pagina 1 e
+tabela com linhas; se nao houver essa evidencia, deve falhar fechado sem
+navegacao agressiva.
