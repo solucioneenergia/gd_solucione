@@ -352,6 +352,7 @@ def _collect_completed_listing_rows_across_pages(
     next_page_available_after_stop = False
     pages_visited: list[int] = []
     visited_page_numbers: set[int] = set()
+    completed_pages_skipped_already_completed: list[int] = []
 
     while True:
         if max_pages > 0 and len(page_rows) >= max_pages:
@@ -427,6 +428,17 @@ def _collect_completed_listing_rows_across_pages(
             f"Pagina {current_active_page} lida no portal: "
             f"{len(rows)} linhas, assinatura={signature}."
         )
+        if _completed_page_is_fully_local_done(
+            rows,
+            settings,
+            state_store=state_store,
+            skip_already_completed=skip_already_completed,
+        ):
+            completed_pages_skipped_already_completed.append(current_active_page)
+            logger.info(
+                f"Pagina {current_active_page} pulada para processamento: todos os "
+                "protocolos concluidos ja estao completos localmente."
+            )
         if _incremental_batch_limit_reached(
             page_rows,
             settings,
@@ -542,6 +554,12 @@ def _collect_completed_listing_rows_across_pages(
             "pagination_target_page": pagination_target_page,
             "pagination_numeric_links_found": pagination_numeric_links_found,
             "pagination_diagnostics": diagnostics,
+            "completed_pages_skipped_already_completed": (
+                completed_pages_skipped_already_completed
+            ),
+            "total_completed_pages_skipped_already_completed": len(
+                completed_pages_skipped_already_completed
+            ),
         }
     )
     return summary
@@ -591,6 +609,28 @@ def _incremental_batch_limit_reached(
         ),
     )
     return len(reusable_records) >= limit
+
+
+def _completed_page_is_fully_local_done(
+    rows: list[dict],
+    settings,
+    *,
+    state_store=None,
+    skip_already_completed: bool = True,
+) -> bool:
+    if not skip_already_completed or not _is_batch_fast_mode(settings):
+        return False
+    completed_records: list[PortalSolicitation] = []
+    for row in rows:
+        record = _record_with_origin(row, int(row.get("page_number") or 1))
+        if is_completed_status(record.status):
+            completed_records.append(record)
+    if not completed_records:
+        return False
+    return all(
+        _state_should_skip_completed(state_store, record.protocol, settings)
+        for record in completed_records
+    )
 
 
 def consolidate_listing_page_rows(
@@ -1711,6 +1751,12 @@ def download_completed_budgets_from_current_page(
         "pagination_numeric_links_found", []
     )
     summary["pagination_diagnostics"] = collection.get("pagination_diagnostics", [])
+    summary["completed_pages_skipped_already_completed"] = collection.get(
+        "completed_pages_skipped_already_completed", []
+    )
+    summary["total_completed_pages_skipped_already_completed"] = collection.get(
+        "total_completed_pages_skipped_already_completed", 0
+    )
     summary["listing_context"] = {
         "pages_read": collection["pages_read"],
         "pagination_warnings": collection["pagination_warnings"],
@@ -1733,6 +1779,12 @@ def download_completed_budgets_from_current_page(
         "pagination_target_page": summary["pagination_target_page"],
         "pagination_numeric_links_found": summary["pagination_numeric_links_found"],
         "pagination_diagnostics": summary["pagination_diagnostics"],
+        "completed_pages_skipped_already_completed": summary[
+            "completed_pages_skipped_already_completed"
+        ],
+        "total_completed_pages_skipped_already_completed": summary[
+            "total_completed_pages_skipped_already_completed"
+        ],
     }
     summary["total_selected"] = len(selected_records)
     summary["selected_protocols"] = [

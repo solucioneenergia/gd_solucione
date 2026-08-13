@@ -174,6 +174,16 @@ limite de updates planejados; o planejador deve seguir paginando para encontrar 
 Essa regra nao autoriza limpeza de `data/downloads`, nao substitui plano congelado e nao
 dispensa a validacao da planilha/PDF no `op5-apply`.
 
+Em `batch_fast`, quando todos os protocolos concluídos visíveis em uma página validada do
+Portal já estiverem comprovadamente completos por estado mestre, state operacional ou índice
+cacheado da planilha, a página deve ser contabilizada como página já completa localmente. Esses
+protocolos não podem consumir o limite de updates planejados, não devem abrir detalhe, não devem
+baixar PDF e não devem impedir a paginação para páginas seguintes. O relatório operacional deve
+registrar `completed_pages_skipped_already_completed` e
+`total_completed_pages_skipped_already_completed`. Essa regra não autoriza saltar páginas
+cegamente sem validar a página atual do Portal; ela apenas evita trabalho operacional sobre
+linhas já comprovadamente completas.
+
 Em `batch_fast`, a parada incremental e a ordem de processamento devem favorecer candidatos
 processaveis localmente. A leitura do Portal nao deve parar somente porque encontrou N
 protocolos elegiveis brutos quando ainda nao existem N candidatos com PDF local valido e

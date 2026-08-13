@@ -226,6 +226,79 @@ def test_batch_fast_selection_reuses_cached_workbook_protocol_check(
     assert calls == ["2600001048", "2600001049"]
 
 
+def test_batch_fast_paginates_past_page_fully_completed_locally(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    first_page = _page(1048, 2)
+    second_page = _page(1050, 2)
+    active_page = {"value": 1}
+    next_clicks: list[int] = []
+
+    class Settings(DummySettings):
+        OP5_RECONCILIATION_MODE = "batch_fast"
+        ENABLE_PORTAL_PAGINATION = True
+        MAX_PORTAL_PAGES = 3
+        MAX_COMPLETED_TO_PROCESS = 2
+        APPLY_EXCEL = True
+        downloads_dir_path = tmp_path
+
+    class StateStore:
+        def should_skip_completed(self, protocol: str, settings=None) -> bool:
+            return protocol in {"2600001048", "2600001049"}
+
+    for protocol in ["2600001050", "2600001051"]:
+        protocol_dir = tmp_path / protocol
+        protocol_dir.mkdir()
+        (protocol_dir / f"Orcamento_de_Conexao_{protocol}.pdf").write_bytes(
+            b"%PDF-1.4\n% synthetic\n%%EOF\n"
+        )
+        (protocol_dir / "metadata.json").write_text(
+            json.dumps({"protocol": protocol, "completion_date": "01/02/2026"}),
+            encoding="utf-8",
+        )
+
+    def fake_active_page(page) -> int:
+        return active_page["value"]
+
+    def fake_read_rows(page) -> list[dict]:
+        return first_page if active_page["value"] == 1 else second_page
+
+    def fake_next_page(page, current_page: int) -> dict:
+        next_clicks.append(current_page)
+        active_page["value"] = current_page + 1
+        return {
+            "found": True,
+            "enabled": True,
+            "clicked": True,
+            "target_page_number": current_page + 1,
+            "next_page_available": True,
+            "numeric_page_links_found": [str(current_page + 1)],
+        }
+
+    monkeypatch.setattr(cdp_portal_service, "get_active_numeric_page", fake_active_page)
+    monkeypatch.setattr(
+        cdp_portal_service, "read_current_page_table_with_row_handles", fake_read_rows
+    )
+    monkeypatch.setattr(
+        cdp_portal_service, "find_and_click_next_listing_page", fake_next_page
+    )
+    monkeypatch.setattr(cdp_portal_service, "_wait_after_pagination_click", lambda page: None)
+
+    summary = _collect_completed_listing_rows_across_pages(
+        FakePage(),
+        Settings(),
+        state_store=StateStore(),
+        max_completed=2,
+    )
+
+    assert summary["pages_visited"] == [1, 2]
+    assert next_clicks == [1]
+    assert summary["completed_pages_skipped_already_completed"] == [1]
+    assert summary["total_completed_pages_skipped_already_completed"] == 1
+    assert summary["pagination_stop_reason"] == "incremental_batch_limit_reached"
+
+
 def test_target_protocols_restrict_batch_fast_selection() -> None:
     requests = [
         _row("2600001048")["record"],
