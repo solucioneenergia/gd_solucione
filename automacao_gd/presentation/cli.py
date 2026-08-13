@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import json
 from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
@@ -42,10 +43,12 @@ from automacao_gd.application.workbook_format_flow import (
 )
 from automacao_gd.application.full_pipeline import (
     BatchAuthorizationError,
+    BatchAuthorization,
     OP5_PLAN_JSON_REPORT_NAME,
     StrongConfirmationError,
     batch_authorization_policy_from_settings,
     build_option5_strong_confirmation,
+    load_frozen_dry_run_plan,
     run_op5_archive_plan,
     run_op5_audit_global,
     validate_option5_strong_confirmation,
@@ -61,6 +64,7 @@ from automacao_gd.infrastructure.log_privacy import (
     sanitize_log_with_backup,
 )
 from automacao_gd.domain.errors import OperationalBlockError
+from automacao_gd.domain.errors import PreflightBlockedError
 from automacao_gd.presentation.controller import ApplicationController
 from automacao_gd.presentation.operational_output import print_operation_summary
 
@@ -272,23 +276,32 @@ def _interactive_option5_plan_apply(controller: ApplicationController):
     confirmation = build_option5_strong_confirmation(
         authorization.requested_batch_limit
     )
-    plan_settings = _copy_settings(
+    reusable_plan = _load_reusable_interactive_option5_plan(
         base_settings,
-        {
-            "DRY_RUN": True,
-            "MAX_COMPLETED_TO_PROCESS": authorization.requested_batch_limit,
-            "OP5_RECONCILIATION_MODE": "batch_fast",
-            "APPLY_EXCEL": True,
-        },
+        authorization,
     )
-    print("")
-    print("Fase 1/2: gerando plano OP5 em simulacao.")
-    plan_result = ApplicationController(plan_settings).run_pipeline(
-        confirmation=confirmation
-    )
-    print_operation_summary("pipeline", plan_result)
-    if _operation_status(plan_result) is not OperationStatus.SUCESSO:
-        return plan_result
+    if reusable_plan is not None:
+        plan_result = reusable_plan
+        print("")
+        print("Fase 1/2: plano OP5 existente validado; pulando Portal/CDP.")
+    else:
+        plan_settings = _copy_settings(
+            base_settings,
+            {
+                "DRY_RUN": True,
+                "MAX_COMPLETED_TO_PROCESS": authorization.requested_batch_limit,
+                "OP5_RECONCILIATION_MODE": "batch_fast",
+                "APPLY_EXCEL": True,
+            },
+        )
+        print("")
+        print("Fase 1/2: gerando plano OP5 em simulacao.")
+        plan_result = ApplicationController(plan_settings).run_pipeline(
+            confirmation=confirmation
+        )
+        print_operation_summary("pipeline", plan_result)
+        if _operation_status(plan_result) is not OperationStatus.SUCESSO:
+            return plan_result
     plan_block = _validate_interactive_option5_plan(
         plan_result.payload,
         requested_limit=authorization.requested_batch_limit,
@@ -379,6 +392,47 @@ def _interactive_option5_plan_apply(controller: ApplicationController):
     )
     return ApplicationController(apply_settings).run_pipeline(
         confirmation=operator_confirmation
+    )
+
+
+def _load_reusable_interactive_option5_plan(
+    base_settings,
+    authorization: BatchAuthorization,
+) -> OperationResult | None:
+    plan_path = Path(base_settings.logs_dir_path) / OP5_PLAN_JSON_REPORT_NAME
+    if not plan_path.is_file():
+        return None
+    try:
+        payload = json.loads(plan_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    if _validate_interactive_option5_plan(
+        payload,
+        requested_limit=authorization.requested_batch_limit,
+    ) is not None:
+        return None
+    validation_settings = _copy_settings(
+        base_settings,
+        {
+            "DRY_RUN": False,
+            "MAX_COMPLETED_TO_PROCESS": authorization.requested_batch_limit,
+            "OP5_PLAN_PATH": plan_path,
+        },
+    )
+    try:
+        plan = load_frozen_dry_run_plan(validation_settings, authorization)
+    except PreflightBlockedError:
+        return None
+    payload = dict(payload)
+    payload["op5_plan_path"] = str(plan.source_path)
+    payload["op5_plan_reused_by_interactive_menu"] = True
+    payload["op5_plan_source_kind"] = plan.source_kind
+    payload["cdp_selection_skipped"] = True
+    return OperationResult(
+        True,
+        "Plano OP5 existente validado e reutilizado.",
+        payload,
+        status=OperationStatus.SUCESSO,
     )
 
 

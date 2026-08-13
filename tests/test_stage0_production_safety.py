@@ -1119,6 +1119,95 @@ def _menu_option5_settings(tmp_path: Path) -> _MenuOption5Settings:
     )
 
 
+def _write_valid_menu_op5_plan(
+    settings: _MenuOption5Settings,
+    *,
+    protocol: str = "2600001048",
+    action: str = "update_existing",
+    requested_limit: int = 1,
+) -> Path:
+    pdf = settings.logs_dir_path.parent / "downloads" / protocol / f"Orcamento_de_Conexao_{protocol}.pdf"
+    pdf.parent.mkdir(parents=True, exist_ok=True)
+    pdf.write_bytes(b"%PDF-1.4 synthetic menu op5 plan")
+    pdf_sha = hashlib.sha256(pdf.read_bytes()).hexdigest()
+    digest = hashlib.sha256(f"{protocol}:{pdf_sha}".encode("utf-8")).hexdigest()
+    settings.logs_dir_path.mkdir(parents=True, exist_ok=True)
+    plan_path = settings.logs_dir_path / "op5_plan_latest.json"
+    plan = {
+        "schema_version": 1,
+        "created_at": "2026-08-13T00:00:00",
+        "source_report_path": "pipeline_cdp_completo.json",
+        "dry_run": True,
+        "status": OperationStatus.SUCESSO.value,
+        "requested_batch_limit": requested_limit,
+        "authorized_batch_limit": 60,
+        "authorization_scope": full_pipeline.CONTROLLED_PRODUCTION_UP_TO_60_AUTHORIZATION_SCOPE,
+        "strong_confirmation_contract": full_pipeline.build_option5_strong_confirmation(requested_limit),
+        "workbook_sha256": hashlib.sha256(Path(settings.planilha_path).read_bytes()).hexdigest(),
+        "workbook_path": str(settings.planilha_path),
+        "apply_excel": True,
+        "apply_archive": True,
+        "total_selected": requested_limit,
+        "total_updates_planned": requested_limit,
+        "total_updates_applied": 0,
+        "total_errors": 0,
+        "frozen_batch": {
+            "requested_limit": requested_limit,
+            "authorized_limit": 60,
+            "authorization_scope": full_pipeline.CONTROLLED_PRODUCTION_UP_TO_60_AUTHORIZATION_SCOPE,
+            "protocols": [protocol],
+            "unique_before_limit": requested_limit,
+            "dropped_by_limit": 0,
+            "duplicate_protocols_in_frozen_batch": 0,
+            "protocols_added_after_freeze": 0,
+        },
+        "frozen_pdf_scope": {
+            "digest": digest,
+            "artifacts": [{"protocol": protocol, "path": str(pdf), "sha256": pdf_sha}],
+        },
+        "planned_excel_actions": [{"protocol": protocol, "action": action}],
+        "download": {
+            "run_error": None,
+            "total_selected": requested_limit,
+            "total_for_processing": requested_limit,
+            "total_sent_to_processing": requested_limit,
+            "total_existing_reused": requested_limit,
+            "total_downloaded": 0,
+            "total_cdp_errors": 0,
+            "total_errors": 0,
+            "selected_protocols": [{"protocol": protocol, "client_name": "CLIENTE SINTETICO"}],
+            "results": [
+                {
+                    "protocol": protocol,
+                    "client_name": "CLIENTE SINTETICO",
+                    "download_status": "existing_pdf_after_skip",
+                    "process_pdf_path": str(pdf),
+                    "selected_for_processing": True,
+                    "selected_by_global_limit": True,
+                    "global_limit_status": "selected",
+                }
+            ],
+            "frozen_batch_created": True,
+            "frozen_batch": {
+                "requested_limit": requested_limit,
+                "authorized_limit": 60,
+                "authorization_scope": full_pipeline.CONTROLLED_PRODUCTION_UP_TO_60_AUTHORIZATION_SCOPE,
+                "protocols": [protocol],
+                "unique_before_limit": requested_limit,
+                "dropped_by_limit": 0,
+                "duplicate_protocols_in_frozen_batch": 0,
+                "protocols_added_after_freeze": 0,
+            },
+            "frozen_pdf_scope": {
+                "digest": digest,
+                "artifacts": [{"protocol": protocol, "path": str(pdf), "sha256": pdf_sha}],
+            },
+        },
+    }
+    plan_path.write_text(json.dumps(plan), encoding="utf-8")
+    return plan_path
+
+
 def test_interactive_option5_orchestrates_plan_backup_and_frozen_apply(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -1190,6 +1279,52 @@ def test_interactive_option5_orchestrates_plan_backup_and_frozen_apply(
     assert apply_settings.DRY_RUN is False
     assert apply_settings.OP5_PLAN_PATH == plan_path
     assert apply_confirmation == full_pipeline.build_option5_strong_confirmation(2)
+
+
+def test_interactive_option5_reuses_valid_pending_plan_without_new_cdp_dry_run(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    settings = _menu_option5_settings(tmp_path)
+    plan_path = _write_valid_menu_op5_plan(settings, requested_limit=1)
+    backup_path = tmp_path / "planilha_backup.xlsx"
+    calls: list[tuple[object, str | None]] = []
+
+    class FakeController:
+        def __init__(self, active_settings=None):
+            self.settings = active_settings or settings
+
+        def run_pipeline(self, *, confirmation: str | None = None):
+            calls.append((self.settings, confirmation))
+            if self.settings.DRY_RUN:
+                raise AssertionError("dry-run/CDP nao deve ser reexecutado")
+            return OperationResult(
+                True,
+                "apply executado",
+                {"status": OperationStatus.SUCESSO.value, "total_updates_applied": 1},
+                status=OperationStatus.SUCESSO,
+            )
+
+    answers = iter(["1", full_pipeline.build_option5_strong_confirmation(1)])
+    monkeypatch.setattr("builtins.input", lambda _prompt="": next(answers))
+    monkeypatch.setattr(cli, "ApplicationController", FakeController)
+    monkeypatch.setattr(cli, "print_operation_summary", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(
+        cli,
+        "validate_workbook_availability",
+        lambda *_args, **_kwargs: SimpleNamespace(ok=True, user_message=""),
+    )
+    monkeypatch.setattr(cli, "create_workbook_backup", lambda _path: backup_path, raising=False)
+    monkeypatch.setattr(cli, "_sha256_file", lambda _path: "a" * 64, raising=False)
+
+    result = cli._interactive_option5_plan_apply(FakeController(settings))
+
+    assert result.status is OperationStatus.SUCESSO
+    assert len(calls) == 1
+    apply_settings, apply_confirmation = calls[0]
+    assert apply_settings.DRY_RUN is False
+    assert apply_settings.OP5_PLAN_PATH == plan_path
+    assert apply_confirmation == full_pipeline.build_option5_strong_confirmation(1)
 
 
 def test_interactive_option5_rejects_generic_confirmation_before_backup_or_apply(

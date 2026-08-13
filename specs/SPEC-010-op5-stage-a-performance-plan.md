@@ -121,6 +121,17 @@ A aplicação real deve bloquear antes de qualquer escrita se:
 - SHA atual da planilha divergir de `workbook_sha256`;
 - o plano não contiver ações planejadas coerentes.
 
+A opcao 5 interativa pode pular a fase de novo dry-run quando encontrar
+`LOGS_DIR/op5_plan_latest.json` pendente e validado para o mesmo limite, autorizacao, SHA da
+planilha, `APPLY_ARCHIVE`, PDFs e acoes planejadas. Esse reaproveitamento deve:
+
+- nao acessar Portal/CDP;
+- nao baixar PDFs;
+- registrar que o plano existente validado foi reutilizado;
+- continuar exigindo confirmacao forte, backup da planilha e aplicacao pelo plano congelado;
+- rejeitar plano `stale_after_failed_plan=true`, com erro, com limite divergente, com
+  `APPLY_ARCHIVE` divergente, com SHA de planilha/PDF divergente ou sem acoes planejadas.
+
 ### RF-003 — Separação da reconciliação global
 
 A reconciliação global da SPEC-004 permanece válida, mas deve ser controlada por modo explícito:
@@ -154,6 +165,14 @@ planejamento deve continuar a seleção segura até encontrar até N ações pla
 atingir fim/safety cap da listagem ou encontrar erro bloqueante. O relatório deve manter
 separados: concluídos lidos no Portal, selecionados para análise, completos/sem
 alteração, ações Excel planejadas e ações Excel aplicadas.
+
+Em `batch_fast`, protocolos com entrada valida e nao expirada em
+`DATA_DIR/state/op5_completed_index.json` devem ser tratados como concluidos localmente quando
+o PDF local existir com SHA-256 igual ao registrado, a entrada tiver aba/linha da planilha e o
+protocolo nao estiver em `FORCE_REPROCESS_PROTOCOLS`. Esses protocolos nao devem consumir o
+limite de updates planejados; o planejador deve seguir paginando para encontrar novos updates.
+Essa regra nao autoriza limpeza de `data/downloads`, nao substitui plano congelado e nao
+dispensa a validacao da planilha/PDF no `op5-apply`.
 
 Se a paginação terminar antes de N ações planejadas, o lote menor pode prosseguir em dry-run, desde que
 o relatório registre o motivo e a quantidade efetiva. Em execução real, o plano congelado define

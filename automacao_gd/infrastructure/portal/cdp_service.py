@@ -2,6 +2,7 @@ import json
 import re
 import time
 import unicodedata
+import hashlib
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -16,6 +17,7 @@ from automacao_gd.infrastructure.excel.service import protocol_row_has_required_
 from automacao_gd.infrastructure.files.file_service import sanitize_filename
 from automacao_gd.infrastructure.logging import logger
 from automacao_gd.infrastructure.metadata.service import save_download_metadata
+from automacao_gd.application.op5_completed_index import load_valid_completed_entry
 from automacao_gd.domain.models import PortalSolicitation
 from automacao_gd.infrastructure.pdf.service import extract_generation_data
 
@@ -690,6 +692,8 @@ def _selection_skip_dict(
 
 
 def _state_should_skip_completed(pipeline_state, protocol: str, settings=None) -> bool:
+    if _op5_completed_index_should_skip(protocol, settings):
+        return True
     if pipeline_state is None:
         return _workbook_should_skip_completed(protocol, settings)
     if hasattr(pipeline_state, "should_skip_completed"):
@@ -700,6 +704,38 @@ def _state_should_skip_completed(pipeline_state, protocol: str, settings=None) -
     return bool(entry and entry.get("status") == "completed") or (
         _workbook_should_skip_completed(protocol, settings)
     )
+
+
+def _op5_completed_index_should_skip(protocol: str, settings=None) -> bool:
+    if settings is None or _op5_reconciliation_mode(settings) != "batch_fast":
+        return False
+    index_path = getattr(settings, "op5_completed_index_path", None)
+    if index_path is None:
+        return False
+    entry = load_valid_completed_entry(Path(index_path), protocol)
+    if entry is None:
+        return False
+    if not entry.get("workbook_sheet") or not entry.get("workbook_row"):
+        return False
+    download_path = Path(str(entry.get("download_pdf_path") or ""))
+    archived_path = Path(str(entry.get("archived_pdf_path") or ""))
+    download_sha = str(entry.get("download_pdf_sha256") or "")
+    archived_sha = str(entry.get("archived_pdf_sha256") or "")
+    if not _file_matches_sha256(download_path, download_sha):
+        return False
+    if not _file_matches_sha256(archived_path, archived_sha):
+        return False
+    return True
+
+
+def _file_matches_sha256(path: Path, expected_sha256: str) -> bool:
+    if len(expected_sha256) != 64 or not path.is_file():
+        return False
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest() == expected_sha256.lower()
 
 
 def _workbook_should_skip_completed(protocol: str, settings=None) -> bool:
