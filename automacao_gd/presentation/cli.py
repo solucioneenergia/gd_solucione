@@ -493,6 +493,12 @@ def _validate_interactive_option5_plan(
         blockers.append("stale_plan")
     if payload.get("run_error"):
         blockers.append("run_error")
+    download_raw = payload.get("download")
+    download = download_raw if isinstance(download_raw, dict) else {}
+    if download.get("partial_batch_due_to_listing_recovery"):
+        blockers.append("partial_listing_recovery")
+    if download.get("abort_reason") == "stopped_after_failed_return_to_listing":
+        blockers.append("listing_recovery_stopped")
     if blockers:
         return OperationResult(
             False,

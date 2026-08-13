@@ -1748,6 +1748,7 @@ def _classify_pipeline_result(payload: dict) -> tuple[OperationStatus, str]:
     selected = int(payload.get("total_selected", 0) or 0)
     eligible = int(payload.get("total_eligible_after_skip", 0) or 0)
     processing = payload.get("processing") or {}
+    download = payload.get("download") or {}
     blocked_after_download = bool(processing.get("blocked_real_run"))
     useful_work = downloaded + reused + processed + updated
 
@@ -1763,6 +1764,11 @@ def _classify_pipeline_result(payload: dict) -> tuple[OperationStatus, str]:
         )
         status = OperationStatus.PARCIAL if downloaded + reused else OperationStatus.BLOQUEADO
         return status, message
+    if download.get("partial_batch_due_to_listing_recovery"):
+        return (
+            OperationStatus.PARCIAL,
+            "O lote parcial foi preservado, mas a listagem do Portal foi perdida.",
+        )
     if payload.get("run_error"):
         if payload.get("download", {}).get("abort_reason") == "PORTAL_PAGINATION_INCOMPLETE":
             return (

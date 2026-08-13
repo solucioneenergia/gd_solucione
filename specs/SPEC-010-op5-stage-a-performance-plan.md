@@ -174,6 +174,17 @@ limite de updates planejados; o planejador deve seguir paginando para encontrar 
 Essa regra nao autoriza limpeza de `data/downloads`, nao substitui plano congelado e nao
 dispensa a validacao da planilha/PDF no `op5-apply`.
 
+Em `batch_fast`, a parada incremental e a ordem de processamento devem favorecer candidatos
+processaveis localmente. A leitura do Portal nao deve parar somente porque encontrou N
+protocolos elegiveis brutos quando ainda nao existem N candidatos com PDF local valido e
+metadata/conclusao suficiente. Depois da coleta, esses candidatos locais devem ser processados
+antes dos protocolos que exigem abertura de detalhe, reduzindo navegacao CDP e risco de
+`failed_return_to_listing`.
+
+Se a leitura de detalhe ainda causar `partial_batch_due_to_listing_recovery=true`, o plano
+resultante nao e considerado sucesso aplicavel pela opcao 5 interativa. O sistema deve reportar
+estado parcial ou bloquear a aplicacao real ate que novo plano valido seja gerado.
+
 Se a paginação terminar antes de N ações planejadas, o lote menor pode prosseguir em dry-run, desde que
 o relatório registre o motivo e a quantidade efetiva. Em execução real, o plano congelado define
 o escopo; não há nova seleção.

@@ -1421,6 +1421,56 @@ def test_interactive_option5_prints_exact_apply_confirmation_on_dedicated_line(
     )
 
 
+def test_partial_listing_recovery_batch_is_not_classified_as_success() -> None:
+    payload = {
+        "dry_run": True,
+        "requested_batch_limit": 55,
+        "download": {
+            "partial_batch_due_to_listing_recovery": True,
+            "abort_reason": "stopped_after_failed_return_to_listing",
+        },
+        "total_downloaded": 0,
+        "total_existing_reused": 14,
+        "total_processed_success": 14,
+        "total_excel_updated": 0,
+        "total_errors": 0,
+        "total_selected": 55,
+        "total_eligible_after_skip": 97,
+        "total_updates_planned": 14,
+        "processing": {
+            "total_updates_planned": 14,
+            "blocked_real_run": False,
+        },
+    }
+
+    status, message = full_pipeline._classify_pipeline_result(payload)
+
+    assert status is OperationStatus.PARCIAL
+    assert "listagem" in message.lower()
+
+
+def test_interactive_option5_rejects_partial_listing_recovery_plan_even_if_counts_match() -> None:
+    block = cli._validate_interactive_option5_plan(
+        {
+            "status": OperationStatus.SUCESSO.value,
+            "dry_run": True,
+            "apply_archive": True,
+            "total_updates_planned": 10,
+            "total_updates_applied": 0,
+            "total_errors": 0,
+            "download": {
+                "partial_batch_due_to_listing_recovery": True,
+                "abort_reason": "stopped_after_failed_return_to_listing",
+            },
+        },
+        requested_limit=10,
+    )
+
+    assert block is not None
+    assert block.status is OperationStatus.BLOQUEADO
+    assert "partial_listing_recovery" in block.payload["blockers"]
+
+
 @pytest.mark.parametrize(
     ("status", "expected"),
     [

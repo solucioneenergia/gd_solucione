@@ -94,6 +94,15 @@ manual do operador e recriar `Access Denied` no Portal GD.
   processavel. Essa regra nao autoriza continuar navegando sem listagem segura.
   Se o item atual nao tiver PDF valido para processamento, a falha continua
   bloqueante com `run_error=failed_return_to_listing`.
+- Um lote com `partial_batch_due_to_listing_recovery=true` nao pode ser
+  classificado como `SUCESSO` aplicavel pela opcao 5 interativa. O dry-run deve
+  reportar `PARCIAL` ou bloquear a aplicacao real, invalidando o plano latest
+  para impedir que um lote menor que o solicitado seja aplicado por engano.
+- Em `batch_fast`, antes de abrir qualquer detalhe, a selecao deve priorizar
+  protocolos com PDF local valido e metadata/conclusao suficiente. Protocolos
+  que exigem detalhe so entram depois de esgotados os candidatos processaveis
+  localmente. A paginacao incremental nao deve parar apenas por atingir N
+  elegiveis brutos se ainda nao houver N candidatos locais seguros.
 - Lote parcial por falha de paginacao nao autoriza extrapolar escopo nem reler
   Portal durante `op5-apply`; a aplicacao real continua limitada ao plano
   congelado.
@@ -144,6 +153,17 @@ quando o retorno seguro para a listagem falhar,
 entao a automacao deve parar a navegacao CDP, preservar esse PDF no lote parcial
 e nao marcar `run_error`; se nao houver PDF valido, deve manter
 `failed_return_to_listing` como erro bloqueante.
+
+Dado um dry-run OP5 em `batch_fast`,
+quando a selecao ainda nao tiver N protocolos com PDF local e conclusao
+suficientes,
+entao a paginacao nao deve parar apenas por existir N protocolos concluidos
+brutos; e, se houver candidatos locais em paginas posteriores, eles devem ser
+priorizados antes de qualquer abertura de detalhe.
+
+Dado um dry-run que preserve lote parcial por perda de listagem pos-detalhe,
+quando a opcao 5 interativa avaliar o plano,
+entao o plano nao deve ser aceito para aplicacao real sem nova geracao valida.
 
 Dado um protocolo coletado originalmente em pagina posterior,
 quando a listagem reaparecer em pagina incorreta apos detalhe,

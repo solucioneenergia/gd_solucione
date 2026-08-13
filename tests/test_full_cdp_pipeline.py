@@ -66,6 +66,31 @@ def _page(start: int, count: int, status: str = "CONCLUIDA") -> list[dict]:
     return [_row(f"2600{index:06d}", status=status) for index in range(start, start + count)]
 
 
+class _SyntheticGenerationData:
+    equipment_parse_warning = None
+
+    def format_module_for_excel(self) -> str:
+        return "MODULO SINTETICO | Total: 1 modulo"
+
+    def format_inverter_for_excel(self) -> str:
+        return "INVERSOR SINTETICO | Total: 1 inversor"
+
+    def model_dump(self, mode: str = "json") -> dict:
+        return {"source": "synthetic"}
+
+    def multiple_module_models(self) -> bool:
+        return False
+
+    def multiple_inverter_models(self) -> bool:
+        return False
+
+    def module_pairs_count(self) -> int:
+        return 1
+
+    def inverter_pairs_count(self) -> int:
+        return 1
+
+
 class FakePage:
     url = "https://portal/listagem"
 
@@ -1199,12 +1224,24 @@ def test_download_blocks_operational_lot_when_reconciliation_pagination_incomple
     assert reconciliation_calls and reconciliation_calls[0][0] == "before_limit"
 
 
-def test_batch_fast_collect_stops_when_requested_limit_is_reached(monkeypatch) -> None:
+def test_batch_fast_collect_stops_when_requested_local_limit_is_reached(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
     class Settings(DummySettings):
         ENABLE_PORTAL_PAGINATION = True
         MAX_PORTAL_PAGES = 15
         MAX_COMPLETED_TO_PROCESS = 2
         OP5_RECONCILIATION_MODE = "batch_fast"
+        APPLY_EXCEL = False
+        downloads_dir_path = tmp_path
+
+    for protocol in ("2600000001", "2600000002"):
+        protocol_dir = tmp_path / protocol
+        protocol_dir.mkdir()
+        (protocol_dir / f"Orcamento_de_Conexao_{protocol}.pdf").write_bytes(
+            b"%PDF-1.4\n%%EOF"
+        )
 
     active_pages = iter([1, 2])
     reads: list[int] = []
@@ -1244,6 +1281,7 @@ def test_batch_fast_collect_stops_when_requested_limit_is_reached(monkeypatch) -
 
 
 def test_op5_plan_limit_50_continues_across_pages_without_active_root_navigation(
+    tmp_path: Path,
     monkeypatch,
 ) -> None:
     class Settings(DummySettings):
@@ -1251,6 +1289,16 @@ def test_op5_plan_limit_50_continues_across_pages_without_active_root_navigation
         MAX_PORTAL_PAGES = 10
         MAX_COMPLETED_TO_PROCESS = 50
         OP5_RECONCILIATION_MODE = "batch_fast"
+        APPLY_EXCEL = False
+        downloads_dir_path = tmp_path
+
+    for index in range(50):
+        protocol = f"2600{index:06d}"
+        protocol_dir = tmp_path / protocol
+        protocol_dir.mkdir()
+        (protocol_dir / f"Orcamento_de_Conexao_{protocol}.pdf").write_bytes(
+            b"%PDF-1.4\n%%EOF"
+        )
 
     active_page = {"value": 1}
     reads: list[int] = []
@@ -2477,8 +2525,28 @@ def test_download_preserves_partial_batch_after_failed_return_with_reusable_pdf(
     monkeypatch.setattr(
         cdp_portal_service,
         "find_existing_connection_budget_pdf",
-        lambda protocol, downloads_root: existing_pdf,
+        lambda protocol, downloads_root: existing_pdf
+        if protocol == "2600001048"
+        else None,
     )
+    downloaded_pdf = tmp_path / "Orcamento_de_Conexao_2600001049.pdf"
+
+    monkeypatch.setattr(
+        cdp_portal_service,
+        "find_connection_budget_target",
+        lambda page: object(),
+    )
+    monkeypatch.setattr(
+        cdp_portal_service,
+        "download_connection_budget",
+        lambda page, protocol, downloads_root, target: downloaded_pdf,
+    )
+    monkeypatch.setattr(
+        cdp_portal_service,
+        "extract_generation_data",
+        lambda pdf_path: _SyntheticGenerationData(),
+    )
+    downloaded_pdf.write_bytes(b"%PDF-1.4\n%%EOF")
     monkeypatch.setattr(
         cdp_portal_service,
         "_return_to_listing_after_detail",
@@ -2505,10 +2573,161 @@ def test_download_preserves_partial_batch_after_failed_return_with_reusable_pdf(
     assert summary["run_error"] is None
     assert summary["partial_batch_due_to_listing_recovery"] is True
     assert summary["abort_reason"] == "stopped_after_failed_return_to_listing"
-    assert origin_calls == ["2600001048"]
-    assert [item["protocol"] for item in summary["results"]] == ["2600001048"]
+    assert origin_calls == ["2600001049"]
+    assert [item["protocol"] for item in summary["results"]] == [
+        "2600001048",
+        "2600001049",
+    ]
     assert summary["results"][0]["download_status"] == "existing_pdf_after_skip"
     assert summary["results"][0]["selected_for_processing"] is True
+
+
+def test_batch_fast_does_not_stop_pagination_until_local_reusable_limit(
+    tmp_path: Path,
+) -> None:
+    class Settings(DummySettings):
+        OP5_RECONCILIATION_MODE = "batch_fast"
+        APPLY_EXCEL = True
+        downloads_dir_path = tmp_path
+        planilha_path = tmp_path / "planilha.xlsx"
+        logs_dir_path = tmp_path / "logs"
+
+    settings = Settings()
+    settings.planilha_path.write_bytes(b"workbook")
+    settings.logs_dir_path.mkdir()
+    reusable_protocol = "2600001048"
+    reusable_dir = tmp_path / reusable_protocol
+    reusable_dir.mkdir()
+    (reusable_dir / f"Orcamento_de_Conexao_{reusable_protocol}.pdf").write_bytes(
+        b"%PDF-1.4\n%%EOF"
+    )
+
+    rows = [
+        [
+            _row("2600001047"),
+            {
+                "record": PortalSolicitation(
+                    protocol=reusable_protocol,
+                    status="CONCLUIDA",
+                    completion_date="01/02/2026",
+                )
+            },
+        ]
+    ]
+
+    reached = cdp_portal_service._incremental_batch_limit_reached(
+        rows,
+        settings,
+        max_completed=2,
+    )
+
+    assert reached is False
+
+
+def test_batch_fast_prioritizes_local_reusable_pdfs_before_opening_detail(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    class Settings(DummySettings):
+        ENABLE_PORTAL_PAGINATION = True
+        MAX_PORTAL_PAGES = 3
+        OP5_RECONCILIATION_MODE = "batch_fast"
+        REPROCESS_EXISTING_PDFS = False
+        PROCESS_EXISTING_AFTER_SKIP = True
+        APPLY_EXCEL = True
+        logs_dir_path = tmp_path / "logs"
+        planilha_path = tmp_path / "planilha.xlsx"
+
+    settings = Settings()
+    settings.logs_dir_path.mkdir()
+    settings.planilha_path.write_bytes(b"workbook")
+    local_protocols = ["2600001049", "2600001050"]
+    for protocol in local_protocols:
+        protocol_dir = tmp_path / protocol
+        protocol_dir.mkdir()
+        (protocol_dir / f"Orcamento_de_Conexao_{protocol}.pdf").write_bytes(
+            b"%PDF-1.4\n%%EOF"
+        )
+
+    records = [
+        PortalSolicitation(
+            protocol="2600001048",
+            status="CONCLUIDA",
+            page_number=1,
+            completion_date="01/02/2026",
+        ),
+        PortalSolicitation(
+            protocol="2600001049",
+            status="CONCLUIDA",
+            page_number=1,
+            completion_date="01/02/2026",
+        ),
+        PortalSolicitation(
+            protocol="2600001050",
+            status="CONCLUIDA",
+            page_number=2,
+            completion_date="01/02/2026",
+        ),
+    ]
+
+    monkeypatch.setattr(cdp_portal_service, "get_settings", lambda: settings)
+    monkeypatch.setattr(
+        cdp_portal_service,
+        "ensure_listing_starts_on_page_one",
+        lambda page: {
+            "success": True,
+            "status": "already_on_first_page",
+            "initial_active_page": 1,
+            "active_page_after": 1,
+        },
+    )
+    monkeypatch.setattr(
+        cdp_portal_service,
+        "_collect_completed_listing_rows_across_pages",
+        lambda page, settings, **kwargs: {
+            "pages_read": 2,
+            "total_rows": 3,
+            "total_completed": 3,
+            "completed_records": records,
+            "duplicates_skipped": [],
+            "pagination_warnings": [],
+            "pagination_enabled": True,
+            "pagination_complete": False,
+            "last_page_confirmed": False,
+            "last_page_number": None,
+            "next_page_available_after_stop": True,
+            "pagination_safety_cap": 3,
+            "pages_visited": [1, 2],
+            "pagination_stop_reason": "incremental_batch_limit_reached",
+            "pagination_next_found": True,
+            "pagination_click_attempts": 1,
+            "pagination_mode": "numeric",
+            "pagination_current_page": 2,
+            "pagination_target_page": 3,
+            "pagination_numeric_links_found": ["1", "2", "3"],
+            "pagination_diagnostics": [],
+        },
+    )
+    monkeypatch.setattr(
+        cdp_portal_service,
+        "ensure_request_origin_page",
+        lambda *args, **kwargs: (_ for _ in ()).throw(
+            AssertionError("local reusable PDFs must be processed before detail")
+        ),
+    )
+
+    summary = download_completed_budgets_from_current_page(
+        FakePage(),
+        downloads_root=tmp_path,
+        max_completed=2,
+        settings=settings,
+    )
+
+    assert summary["aborted"] is False
+    assert summary["total_errors"] == 0
+    assert [item["protocol"] for item in summary["results"]] == local_protocols
+    assert all(item["abriu_detalhe"] is False for item in summary["results"])
+    assert summary["total_for_processing"] == 2
 
 
 def test_download_aborts_after_failed_return_without_reusable_pdf(

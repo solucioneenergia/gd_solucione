@@ -581,7 +581,16 @@ def _incremental_batch_limit_reached(
     if target_protocols:
         selected_protocols = {record.protocol for record in selection["selected_records"]}
         return target_protocols <= selected_protocols
-    return len(selection["selected_records"]) >= limit
+    downloads_root = Path(getattr(settings, "downloads_dir_path", Path("data/downloads")))
+    reusable_records = _batch_fast_local_reusable_records(
+        selection["eligible_records"],
+        downloads_root=downloads_root,
+        settings=settings,
+        reprocess_existing_pdfs=bool(
+            getattr(settings, "REPROCESS_EXISTING_PDFS", False)
+        ),
+    )
+    return len(reusable_records) >= limit
 
 
 def consolidate_listing_page_rows(
@@ -1253,10 +1262,75 @@ def _can_reuse_existing_pdf_without_detail(
         return False
     metadata_path = find_existing_download_metadata(record.protocol, downloads_root)
     if metadata_path is None:
-        return require_completion_metadata and _record_has_completion_value(record)
+        return not require_completion_metadata or _record_has_completion_value(record)
     if require_completion_metadata and not _metadata_has_completion_value(metadata_path):
         return _record_has_completion_value(record)
     return True
+
+
+def _record_can_reuse_existing_pdf_without_detail(
+    record: PortalSolicitation,
+    *,
+    downloads_root: Path,
+    settings,
+    reprocess_existing_pdfs: bool,
+) -> bool:
+    existing_pdf = find_existing_connection_budget_pdf(record.protocol, downloads_root)
+    return _can_reuse_existing_pdf_without_detail(
+        record=record,
+        existing_pdf=existing_pdf,
+        downloads_root=downloads_root,
+        reprocess_existing_pdfs=reprocess_existing_pdfs,
+        require_completion_metadata=bool(
+            getattr(settings, "APPLY_EXCEL", False) and _is_batch_fast_mode(settings)
+        ),
+    )
+
+
+def _batch_fast_local_reusable_records(
+    records: list[PortalSolicitation],
+    *,
+    downloads_root: Path,
+    settings,
+    reprocess_existing_pdfs: bool,
+) -> list[PortalSolicitation]:
+    return [
+        record
+        for record in records
+        if _record_can_reuse_existing_pdf_without_detail(
+            record,
+            downloads_root=downloads_root,
+            settings=settings,
+            reprocess_existing_pdfs=reprocess_existing_pdfs,
+        )
+    ]
+
+
+def _prioritize_batch_fast_selected_records(
+    eligible_records: list[PortalSolicitation],
+    *,
+    limit: int,
+    downloads_root: Path,
+    settings,
+    reprocess_existing_pdfs: bool,
+) -> list[PortalSolicitation]:
+    if not _is_batch_fast_mode(settings):
+        return eligible_records if limit <= 0 else eligible_records[:limit]
+    if getattr(settings, "op5_target_protocols", set()) or set():
+        return eligible_records if limit <= 0 else eligible_records[:limit]
+
+    local_records = _batch_fast_local_reusable_records(
+        eligible_records,
+        downloads_root=downloads_root,
+        settings=settings,
+        reprocess_existing_pdfs=reprocess_existing_pdfs,
+    )
+    local_protocols = {record.protocol for record in local_records}
+    detail_records = [
+        record for record in eligible_records if record.protocol not in local_protocols
+    ]
+    ordered = [*local_records, *detail_records]
+    return ordered if limit <= 0 else ordered[:limit]
 
 
 def _metadata_has_completion_value(metadata_path: Path) -> bool:
@@ -1573,12 +1647,20 @@ def download_completed_budgets_from_current_page(
     selection = select_eligible_completed_requests(
         completed_requests=completed_records,
         pipeline_state=state_store,
-        max_completed_to_process=limit,
+        max_completed_to_process=0 if batch_fast_mode else limit,
         skip_already_completed=skip_already_completed,
         force_reprocess_protocols=settings.force_reprocess_protocols,
         settings=settings,
     )
-    selected_records = selection["selected_records"]
+    selected_records = _prioritize_batch_fast_selected_records(
+        selection["selected_records"],
+        limit=int(limit or 0),
+        downloads_root=downloads_root,
+        settings=settings,
+        reprocess_existing_pdfs=reprocess_existing_pdfs,
+    )
+    if batch_fast_mode:
+        selection["selected_records"] = selected_records
     if active_reconciliation_callback is not None:
         summary["reconciliation"] = active_reconciliation_callback(
             "after_selection",
