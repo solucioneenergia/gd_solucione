@@ -307,7 +307,8 @@ def _interactive_option5_plan_apply(controller: ApplicationController):
     print(f"Plano: {plan_path}")
     print(f"Updates planejados: {plan_result.payload.get('total_updates_planned')}")
     print(f"Arquivamento: {plan_result.payload.get('apply_archive')}")
-    print(f"Digite {confirmation} para aplicar este plano.")
+    print("Para aplicar este plano, digite exatamente:")
+    print(confirmation)
     operator_confirmation = input("Confirmar apply OP5: ").strip()
     try:
         validate_option5_strong_confirmation(operator_confirmation, authorization)

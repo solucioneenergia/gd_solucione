@@ -487,6 +487,11 @@ O terminal deve deixar claro quando a execução real reutilizou plano OP5 e qua
 pulado. Em `batch_fast`, deve informar que a reconciliação global não foi executada e pode ser
 rodada separadamente.
 
+Na aplicacao interativa da opcao 5, a frase de confirmacao forte deve ser exibida em linha
+propria, sem texto explicativo antes ou depois na mesma linha. Textos como "para aplicar este
+plano" devem ficar em linha separada para evitar que o operador copie sufixos que invalidam a
+confirmacao.
+
 ## Observabilidade
 
 Relatórios devem registrar:

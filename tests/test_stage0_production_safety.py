@@ -1238,6 +1238,54 @@ def test_interactive_option5_rejects_generic_confirmation_before_backup_or_apply
     backup.assert_not_called()
 
 
+def test_interactive_option5_prints_exact_apply_confirmation_on_dedicated_line(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    settings = _menu_option5_settings(tmp_path)
+    plan_path = tmp_path / "logs" / "op5_plan_latest.json"
+    confirmation = full_pipeline.build_option5_strong_confirmation(2)
+
+    class FakeController:
+        def __init__(self, active_settings=None):
+            self.settings = active_settings or settings
+
+        def run_pipeline(self, *, confirmation: str | None = None):
+            return OperationResult(
+                True,
+                "plano gerado",
+                {
+                    "status": OperationStatus.SUCESSO.value,
+                    "dry_run": True,
+                    "apply_archive": True,
+                    "requested_batch_limit": 2,
+                    "authorized_batch_limit": 60,
+                    "total_updates_planned": 2,
+                    "total_updates_applied": 0,
+                    "total_errors": 0,
+                    "op5_plan_path": str(plan_path),
+                },
+                status=OperationStatus.SUCESSO,
+            )
+
+    answers = iter(["2", "Confirmar"])
+    monkeypatch.setattr("builtins.input", lambda _prompt="": next(answers))
+    monkeypatch.setattr(cli, "ApplicationController", FakeController)
+    monkeypatch.setattr(cli, "print_operation_summary", lambda *_args, **_kwargs: None)
+
+    result = cli._interactive_option5_plan_apply(FakeController(settings))
+
+    output_lines = capsys.readouterr().out.splitlines()
+    assert result.status is OperationStatus.BLOQUEADO
+    assert "Para aplicar este plano, digite exatamente:" in output_lines
+    assert confirmation in output_lines
+    assert all(
+        line == confirmation or confirmation not in line
+        for line in output_lines
+    )
+
+
 @pytest.mark.parametrize(
     ("status", "expected"),
     [
