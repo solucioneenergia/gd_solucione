@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
@@ -41,6 +42,7 @@ from automacao_gd.application.workbook_format_flow import (
 )
 from automacao_gd.application.full_pipeline import (
     BatchAuthorizationError,
+    OP5_PLAN_JSON_REPORT_NAME,
     StrongConfirmationError,
     batch_authorization_policy_from_settings,
     build_option5_strong_confirmation,
@@ -51,6 +53,7 @@ from automacao_gd.application.full_pipeline import (
 )
 from automacao_gd.infrastructure.config import get_settings
 from automacao_gd.infrastructure.excel.availability import validate_workbook_availability
+from automacao_gd.infrastructure.excel.service import create_workbook_backup
 from automacao_gd.infrastructure.files.file_service import ensure_directories
 from automacao_gd.infrastructure.logging import setup_logger
 from automacao_gd.infrastructure.log_privacy import (
@@ -115,7 +118,11 @@ def main(argv: Sequence[str] | None = None) -> int:
         "2": ("inspect_portal", "Inspecionando Portal GD...", lambda: controller.inspect_portal()),
         "3": ("process_dry_run", "Executando processamento em simulação...", lambda: controller.process_downloads(dry_run=True)),
         "4": ("process_real", "Executando processamento real...", lambda: _confirmed_real_processing(controller)),
-        "5": ("pipeline", "Executando pipeline CDP...", lambda: _confirmed_pipeline(controller)),
+        "5": (
+            "pipeline",
+            "Executando pipeline CDP seguro...",
+            lambda: _interactive_option5_plan_apply(controller),
+        ),
     }
     while True:
         print("\nAutomação GD Neoenergia — versão 2")
@@ -248,6 +255,214 @@ def _run_op5_apply(plan_path: Path | None) -> int:
     result = _confirmed_pipeline(controller)
     print_operation_summary("pipeline", result)
     return exit_code_for_status(result.status or OperationStatus.FALHOU)
+
+
+def _interactive_option5_plan_apply(controller: ApplicationController):
+    base_settings = controller.settings
+    requested_limit = _prompt_option5_limit(base_settings)
+    if requested_limit is None:
+        return _cancelled_operation_result("INVALID_BATCH_LIMIT", require_cdp=True)
+    try:
+        authorization = validate_requested_batch_limit(
+            requested_limit,
+            batch_authorization_policy_from_settings(base_settings),
+        )
+    except BatchAuthorizationError as exc:
+        return _cancelled_operation_result(exc.code, require_cdp=True)
+    confirmation = build_option5_strong_confirmation(
+        authorization.requested_batch_limit
+    )
+    plan_settings = _copy_settings(
+        base_settings,
+        {
+            "DRY_RUN": True,
+            "MAX_COMPLETED_TO_PROCESS": authorization.requested_batch_limit,
+            "OP5_RECONCILIATION_MODE": "batch_fast",
+            "APPLY_EXCEL": True,
+        },
+    )
+    print("")
+    print("Fase 1/2: gerando plano OP5 em simulacao.")
+    plan_result = ApplicationController(plan_settings).run_pipeline(
+        confirmation=confirmation
+    )
+    print_operation_summary("pipeline", plan_result)
+    if _operation_status(plan_result) is not OperationStatus.SUCESSO:
+        return plan_result
+    plan_block = _validate_interactive_option5_plan(
+        plan_result.payload,
+        requested_limit=authorization.requested_batch_limit,
+    )
+    if plan_block is not None:
+        return plan_block
+
+    plan_path = Path(
+        str(
+            plan_result.payload.get("op5_plan_path")
+            or Path(base_settings.logs_dir_path) / OP5_PLAN_JSON_REPORT_NAME
+        )
+    )
+    print("")
+    print("Fase 2/2: aplicacao real a partir do plano congelado.")
+    print(f"Plano: {plan_path}")
+    print(f"Updates planejados: {plan_result.payload.get('total_updates_planned')}")
+    print(f"Arquivamento: {plan_result.payload.get('apply_archive')}")
+    print(f"Digite {confirmation} para aplicar este plano.")
+    operator_confirmation = input("Confirmar apply OP5: ").strip()
+    try:
+        validate_option5_strong_confirmation(operator_confirmation, authorization)
+    except StrongConfirmationError as exc:
+        return _cancelled_operation_result(
+            exc.code,
+            require_cdp=False,
+            confirmation_required=confirmation,
+        )
+
+    availability = validate_workbook_availability(
+        base_settings.planilha_path,
+        require_writable=True,
+        stage="aplicacao OP5 interativa",
+    )
+    if not availability.ok:
+        return OperationResult(
+            False,
+            availability.user_message,
+            {
+                "code": getattr(availability, "code", "WORKBOOK_UNAVAILABLE"),
+                "stage": "preflight workbook",
+                "total_updates_applied": 0,
+            },
+            status=OperationStatus.BLOQUEADO,
+        )
+
+    try:
+        workbook_sha = _sha256_file(base_settings.planilha_path)
+        backup_path = create_workbook_backup(base_settings.planilha_path)
+        backup_sha = _sha256_file(backup_path)
+    except OSError as exc:
+        return OperationResult(
+            False,
+            "Backup da planilha nao pode ser criado com seguranca.",
+            {
+                "code": "WORKBOOK_BACKUP_FAILED",
+                "stage": "backup workbook",
+                "technical_cause": type(exc).__name__,
+                "total_updates_applied": 0,
+            },
+            status=OperationStatus.BLOQUEADO,
+        )
+    if workbook_sha != backup_sha:
+        return OperationResult(
+            False,
+            "Backup da planilha nao confere com o SHA-256 original.",
+            {
+                "code": "WORKBOOK_BACKUP_HASH_MISMATCH",
+                "stage": "backup workbook",
+                "workbook_sha256": workbook_sha,
+                "backup_sha256": backup_sha,
+                "total_updates_applied": 0,
+            },
+            status=OperationStatus.BLOQUEADO,
+        )
+    print(f"SHA-256 planilha antes da escrita: {workbook_sha}")
+    print(f"Backup criado e validado: {backup_path}")
+    print(f"SHA-256 backup: {backup_sha}")
+
+    apply_settings = _copy_settings(
+        base_settings,
+        {
+            "DRY_RUN": False,
+            "MAX_COMPLETED_TO_PROCESS": authorization.requested_batch_limit,
+            "OP5_PLAN_PATH": plan_path,
+        },
+    )
+    return ApplicationController(apply_settings).run_pipeline(
+        confirmation=operator_confirmation
+    )
+
+
+def _prompt_option5_limit(settings) -> int | None:
+    raw = input(
+        "Limite do lote OP5 (1-"
+        f"{getattr(settings, 'OPTION5_AUTHORIZED_MAX_PROTOCOLS', 5)}): "
+    ).strip()
+    if not raw:
+        raw = str(getattr(settings, "MAX_COMPLETED_TO_PROCESS", 0) or "")
+    try:
+        value = int(raw)
+    except ValueError:
+        return None
+    return value if value > 0 else None
+
+
+def _copy_settings(settings, updates: dict[str, object]):
+    if hasattr(settings, "model_copy"):
+        return settings.model_copy(update=updates)
+    data = {
+        name: getattr(settings, name)
+        for name in dir(settings)
+        if not name.startswith("_") and not callable(getattr(settings, name))
+    }
+    data.update(updates)
+    from types import SimpleNamespace
+
+    return SimpleNamespace(**data)
+
+
+def _operation_status(result: OperationResult) -> OperationStatus:
+    if isinstance(result.status, OperationStatus):
+        return result.status
+    return OperationStatus(str(result.status))
+
+
+def _validate_interactive_option5_plan(
+    payload: dict[str, Any],
+    *,
+    requested_limit: int,
+) -> OperationResult | None:
+    blockers: list[str] = []
+    if str(payload.get("status") or "") != OperationStatus.SUCESSO.value:
+        blockers.append("status_not_success")
+    if payload.get("dry_run") is not True:
+        blockers.append("not_dry_run")
+    if payload.get("apply_archive") is not True:
+        blockers.append("apply_archive_not_enabled")
+    if int(payload.get("total_updates_applied", 0) or 0) != 0:
+        blockers.append("dry_run_applied_updates")
+    if int(payload.get("total_errors", 0) or 0) != 0:
+        blockers.append("dry_run_errors")
+    planned = int(payload.get("total_updates_planned", 0) or 0)
+    if planned != requested_limit:
+        blockers.append("planned_updates_mismatch")
+    if payload.get("stale_after_failed_plan") is True:
+        blockers.append("stale_plan")
+    if payload.get("run_error"):
+        blockers.append("run_error")
+    if blockers:
+        return OperationResult(
+            False,
+            "Plano OP5 interativo nao atende aos criterios de aplicacao real.",
+            {
+                "code": "OP5_INTERACTIVE_PLAN_NOT_APPROVED",
+                "stage": "validacao do plano OP5",
+                "blockers": blockers,
+                "total_updates_planned": planned,
+                "total_updates_applied": int(
+                    payload.get("total_updates_applied", 0) or 0
+                ),
+                "total_errors": int(payload.get("total_errors", 0) or 0),
+            },
+            status=OperationStatus.BLOQUEADO,
+        )
+    return None
+
+
+def _sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with Path(path).open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest().upper()
 
 
 def _run_op5_archive_plan(plan_path: Path | None) -> int:

@@ -1097,6 +1097,147 @@ def test_status_exit_codes(status: OperationStatus, exit_code: int) -> None:
     assert exit_code_for_status(status) == exit_code
 
 
+class _MenuOption5Settings(SimpleNamespace):
+    def model_copy(self, *, update: dict):
+        data = dict(self.__dict__)
+        data.update(update)
+        return _MenuOption5Settings(**data)
+
+
+def _menu_option5_settings(tmp_path: Path) -> _MenuOption5Settings:
+    workbook = tmp_path / "planilha.xlsx"
+    workbook.write_bytes(b"workbook sintetico")
+    return _MenuOption5Settings(
+        DRY_RUN=False,
+        APPLY_EXCEL=True,
+        APPLY_ARCHIVE=True,
+        MAX_COMPLETED_TO_PROCESS=5,
+        OPTION5_AUTHORIZED_MAX_PROTOCOLS=60,
+        OP5_RECONCILIATION_MODE="inline_global",
+        planilha_path=workbook,
+        logs_dir_path=tmp_path / "logs",
+    )
+
+
+def test_interactive_option5_orchestrates_plan_backup_and_frozen_apply(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    settings = _menu_option5_settings(tmp_path)
+    plan_path = tmp_path / "logs" / "op5_plan_latest.json"
+    backup_path = tmp_path / "planilha_backup.xlsx"
+    calls: list[tuple[object, str | None]] = []
+    summaries: list[str] = []
+
+    class FakeController:
+        def __init__(self, active_settings=None):
+            self.settings = active_settings or settings
+
+        def run_pipeline(self, *, confirmation: str | None = None):
+            calls.append((self.settings, confirmation))
+            if self.settings.DRY_RUN:
+                return OperationResult(
+                    True,
+                    "plano gerado",
+                    {
+                        "status": OperationStatus.SUCESSO.value,
+                        "dry_run": True,
+                        "apply_archive": True,
+                        "requested_batch_limit": 2,
+                        "authorized_batch_limit": 60,
+                        "total_updates_planned": 2,
+                        "total_updates_applied": 0,
+                        "total_errors": 0,
+                        "op5_plan_path": str(plan_path),
+                    },
+                    status=OperationStatus.SUCESSO,
+                )
+            return OperationResult(
+                True,
+                "apply executado",
+                {"status": OperationStatus.SUCESSO.value, "total_updates_applied": 2},
+                status=OperationStatus.SUCESSO,
+            )
+
+    answers = iter(["2", full_pipeline.build_option5_strong_confirmation(2)])
+    monkeypatch.setattr("builtins.input", lambda _prompt="": next(answers))
+    monkeypatch.setattr(cli, "ApplicationController", FakeController)
+    monkeypatch.setattr(cli, "print_operation_summary", lambda label, _result: summaries.append(label))
+    monkeypatch.setattr(
+        cli,
+        "validate_workbook_availability",
+        lambda *_args, **_kwargs: SimpleNamespace(ok=True, user_message=""),
+    )
+    monkeypatch.setattr(cli, "create_workbook_backup", lambda _path: backup_path, raising=False)
+    monkeypatch.setattr(
+        cli,
+        "_sha256_file",
+        lambda _path: "a" * 64,
+        raising=False,
+    )
+
+    result = cli._interactive_option5_plan_apply(FakeController(settings))
+
+    assert result.status is OperationStatus.SUCESSO
+    assert summaries == ["pipeline"]
+    assert len(calls) == 2
+    plan_settings, plan_confirmation = calls[0]
+    apply_settings, apply_confirmation = calls[1]
+    assert plan_settings.DRY_RUN is True
+    assert plan_settings.MAX_COMPLETED_TO_PROCESS == 2
+    assert plan_settings.OP5_RECONCILIATION_MODE == "batch_fast"
+    assert plan_confirmation == full_pipeline.build_option5_strong_confirmation(2)
+    assert apply_settings.DRY_RUN is False
+    assert apply_settings.OP5_PLAN_PATH == plan_path
+    assert apply_confirmation == full_pipeline.build_option5_strong_confirmation(2)
+
+
+def test_interactive_option5_rejects_generic_confirmation_before_backup_or_apply(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    settings = _menu_option5_settings(tmp_path)
+    plan_path = tmp_path / "logs" / "op5_plan_latest.json"
+    calls: list[tuple[object, str | None]] = []
+    backup = Mock(side_effect=AssertionError("backup nao deve ser criado"))
+
+    class FakeController:
+        def __init__(self, active_settings=None):
+            self.settings = active_settings or settings
+
+        def run_pipeline(self, *, confirmation: str | None = None):
+            calls.append((self.settings, confirmation))
+            return OperationResult(
+                True,
+                "plano gerado",
+                {
+                    "status": OperationStatus.SUCESSO.value,
+                    "dry_run": True,
+                    "apply_archive": True,
+                    "requested_batch_limit": 2,
+                    "authorized_batch_limit": 60,
+                    "total_updates_planned": 2,
+                    "total_updates_applied": 0,
+                    "total_errors": 0,
+                    "op5_plan_path": str(plan_path),
+                },
+                status=OperationStatus.SUCESSO,
+            )
+
+    answers = iter(["2", "Confirmar"])
+    monkeypatch.setattr("builtins.input", lambda _prompt="": next(answers))
+    monkeypatch.setattr(cli, "ApplicationController", FakeController)
+    monkeypatch.setattr(cli, "print_operation_summary", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(cli, "create_workbook_backup", backup, raising=False)
+
+    result = cli._interactive_option5_plan_apply(FakeController(settings))
+
+    assert result.status is OperationStatus.BLOQUEADO
+    assert result.payload["code"] == "STRONG_CONFIRMATION_MISMATCH"
+    assert len(calls) == 1
+    backup.assert_not_called()
+
+
 @pytest.mark.parametrize(
     ("status", "expected"),
     [
@@ -1109,25 +1250,24 @@ def test_status_exit_codes(status: OperationStatus, exit_code: int) -> None:
 def test_interactive_cli_returns_last_operation_exit_code(
     status: OperationStatus, expected: int, monkeypatch
 ) -> None:
-    answers = iter(
-        ["5", full_pipeline.build_option5_strong_confirmation(5), "0"]
-    )
+    answers = iter(["5", "0"])
 
     class FakeController:
         settings = SimpleNamespace(DRY_RUN=True)
 
-        def run_pipeline(self, *, confirmation: str | None = None):
-            assert confirmation == full_pipeline.build_option5_strong_confirmation(5)
-            return OperationResult(
-                status is OperationStatus.SUCESSO,
-                "resultado",
-                {},
-                status=status,
-            )
-
     monkeypatch.setattr(cli, "ensure_directories", lambda: None)
     monkeypatch.setattr(cli, "setup_logger", lambda **_kwargs: None)
     monkeypatch.setattr(cli, "ApplicationController", FakeController)
+    monkeypatch.setattr(
+        cli,
+        "_interactive_option5_plan_apply",
+        lambda _controller: OperationResult(
+            status is OperationStatus.SUCESSO,
+            "resultado",
+            {},
+            status=status,
+        ),
+    )
     monkeypatch.setattr("builtins.input", lambda _prompt="": next(answers))
 
     assert cli.main([]) == expected

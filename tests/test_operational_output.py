@@ -271,16 +271,10 @@ def test_cli_never_prints_complete_payload(
 ) -> None:
     configured: list[bool] = []
     prompts: list[str] = []
-    answers = iter(
-        ["5", cli.build_option5_strong_confirmation(5), "0"]
-    )
+    answers = iter(["5", "0"])
 
     class FakeController:
         settings = SimpleNamespace(DRY_RUN=True)
-
-        def run_pipeline(self, *, confirmation: str | None = None) -> OperationResult:
-            assert confirmation == cli.build_option5_strong_confirmation(5)
-            return _pipeline_result()
 
     monkeypatch.setattr(cli, "ensure_directories", lambda: None)
     monkeypatch.setattr(
@@ -290,6 +284,11 @@ def test_cli_never_prints_complete_payload(
     )
     monkeypatch.setattr(cli, "ApplicationController", FakeController)
     monkeypatch.setattr(
+        cli,
+        "_interactive_option5_plan_apply",
+        lambda _controller: _pipeline_result(),
+    )
+    monkeypatch.setattr(
         "builtins.input",
         lambda prompt="": prompts.append(prompt) or next(answers),
     )
@@ -298,9 +297,7 @@ def test_cli_never_prints_complete_payload(
 
     output = capsys.readouterr().out
     assert configured == [expected_verbose]
-    assert "Confirme simulacao com acesso ao Portal/CDP" in output
-    assert "Digite APLICAR OPÇÃO 5 COM CONCLUSÃO EM 5 PROTOCOLOS" in output
-    assert "Confirmar: " in prompts
+    assert "Executando pipeline CDP seguro" in output
     assert "raw_text" not in output
     assert "protocol_results" not in output
     assert "generation_data" not in output

@@ -559,6 +559,22 @@ temporariamente se passarem pelos validadores da SPEC-009.
 - [ ] `workbook-format-apply` aplica somente com plano e SHA da planilha inalterado.
 - [ ] Testes direcionados, Ruff, MyPy e scanner permanecem verdes.
 
+## Adendo 2026-08-13 - Opcao 5 interativa como orquestrador seguro
+
+A opcao `5 - Executar pipeline CDP completo` do menu interativo de `app.py`
+deve orquestrar o mesmo fluxo seguro dos comandos explicitos:
+
+- pedir o limite do lote;
+- gerar `op5-plan` em dry-run;
+- exibir o resumo do plano;
+- aceitar apply somente quando o plano estiver `SUCESSO`, `dry_run=true`, sem
+  erros e sem updates aplicados;
+- exigir confirmacao forte vinculada ao limite autorizado;
+- registrar SHA-256 da planilha antes da escrita;
+- criar backup validado antes da escrita;
+- executar producao apenas a partir do `op5_plan_latest.json` congelado;
+- nao reler Portal/CDP durante o apply.
+
 ## Rollout
 
 1. Implementar e validar offline/sintético.
