@@ -243,3 +243,37 @@ def test_setup_logger_uses_safe_frozen_fallback_without_configured_sink(
         logger.remove()
 
     assert (local_app_data / "AutomacaoGDNeoenergia" / "logs" / "app.log").is_file()
+
+
+def test_persistent_app_log_does_not_configure_windows_unsafe_rotation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    added_sinks: list[tuple[object, dict[str, object]]] = []
+
+    monkeypatch.setattr(
+        "automacao_gd.infrastructure.logging.get_settings",
+        lambda: SimpleNamespace(LOG_LEVEL="INFO", logs_dir_path=tmp_path),
+    )
+
+    def capture_add(sink: object, **kwargs: object) -> int:
+        added_sinks.append((sink, kwargs))
+        return len(added_sinks)
+
+    monkeypatch.setattr(
+        "automacao_gd.infrastructure.logging.logger.remove",
+        lambda *args, **kwargs: None,
+    )
+    monkeypatch.setattr(
+        "automacao_gd.infrastructure.logging.logger.add",
+        capture_add,
+    )
+
+    setup_logger(tmp_path)
+
+    file_sinks = [
+        (sink, kwargs)
+        for sink, kwargs in added_sinks
+        if Path(str(sink)).name == "app.log"
+    ]
+    assert len(file_sinks) == 1
+    assert file_sinks[0][1].get("rotation") is None

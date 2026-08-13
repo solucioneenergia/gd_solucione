@@ -215,3 +215,25 @@ historico quando a pagina atual ou a `listing_url` capturada apontavam para
 - `test_recover_listing_does_not_goto_http_listing_url`
 - `test_download_step_aborts_before_pagination_when_portal_turns_access_denied`
 - `test_find_portal_page_selects_https_portal_tab_without_dom_probe`
+
+## Adendo 2026-08-13 - logging terminal sem rotacao automatica compartilhada
+
+### Problema
+
+Em Windows, mais de um processo `app.py` pode manter `data/logs/app.log` aberto ao mesmo
+tempo. Quando o Loguru tenta rotacionar esse arquivo compartilhado, a chamada de rename pode
+falhar com `PermissionError WinError 32`. Esse erro e exclusivamente de logging e nao pode
+invalidar o fechamento de um `op5-plan` cujo processamento principal ja formou lote aprovado.
+
+### Contrato
+
+- O sink persistente `app.log` deve continuar sanitizado e gravado em modo append.
+- O sink persistente `app.log` nao deve configurar `rotation` automatica.
+- Falhas de rotacao de log nao podem transformar uma operacao principal bem-sucedida em
+  `PARCIAL`, nem deixar `op5_plan_latest.json` stale.
+- Limpeza, retencao e auditoria historica de logs permanecem fluxo separado e explicito.
+- A correcao nao altera CDP, Portal, Excel, download, arquivamento ou `op5-apply`.
+
+### Teste
+
+- `test_persistent_app_log_does_not_configure_windows_unsafe_rotation`

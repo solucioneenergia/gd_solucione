@@ -33,8 +33,6 @@ def setup_logger(logs_dir: Path | None = None, *, verbose: bool = False) -> None
     logger.add(
         target_dir / "app.log",
         level="DEBUG",
-        rotation="5 MB",
-        retention="30 days",
         encoding="utf-8",
         enqueue=True,
         format=_file_format,
