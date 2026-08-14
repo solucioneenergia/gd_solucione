@@ -43,6 +43,14 @@ manual do operador e recriar `Access Denied` no Portal GD.
   visivel, pode usar apenas controles de paginacao existentes; quando a listagem
   nao estiver visivel, deve falhar fechado sem menu, historico, reload, URL
   salva ou nova aba.
+- Se a coleta terminar em pagina posterior e o proximo protocolo selecionado
+  pertencer a pagina 1, a revalidacao de origem pode voltar para a pagina 1
+  apenas por paginacao numerica/reversa existente e reconfirmar o protocolo na
+  tabela; isso nao autoriza `goto()`, `reload()`, `go_back()`, menu ou URL salva.
+- Se a recuperacao por menu autenticado reabrir a listagem em pagina numerica
+  diferente de 1, o reset inicial da listagem deve tentar corrigir para a pagina
+  1 usando apenas paginacao numerica existente; a recuperacao so pode ser aceita
+  depois de confirmar pagina 1 com tabela visivel.
 - Nesse retorno pos-detalhe, a automacao nao pode chamar:
   - `goto()`;
   - `reload()`;

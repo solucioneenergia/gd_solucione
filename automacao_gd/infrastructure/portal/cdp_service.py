@@ -24,7 +24,9 @@ from automacao_gd.application.op5_completed_index import (
 from automacao_gd.application.op5_optimization import (
     cached_workbook_protocol_check,
     load_eligibility_cache,
+    load_or_build_workbook_index,
 )
+from automacao_gd.application.reconciliation_service import build_workbook_protocol_index
 from automacao_gd.domain.models import PortalSolicitation
 from automacao_gd.infrastructure.pdf.service import extract_generation_data
 
@@ -322,9 +324,15 @@ def _collect_completed_listing_rows_across_pages(
     state_store=None,
     max_completed: int | None = None,
     skip_already_completed: bool = True,
+    max_portal_pages: int | None = None,
 ) -> dict:
     pagination_enabled = bool(getattr(settings, "ENABLE_PORTAL_PAGINATION", False))
-    max_pages = int(getattr(settings, "MAX_PORTAL_PAGES", 0) or 0)
+    max_pages = int(
+        max_portal_pages
+        if max_portal_pages is not None
+        else getattr(settings, "MAX_PORTAL_PAGES", 0)
+        or 0
+    )
     logger.info(
         "Configuracao efetiva de paginacao do portal: "
         f"ENABLE_PORTAL_PAGINATION={pagination_enabled}; "
@@ -656,6 +664,297 @@ def _completed_page_is_fully_local_done(
     )
 
 
+def _batch_fast_page_local_state(
+    rows: list[dict],
+    settings,
+    *,
+    state_store=None,
+    skip_already_completed: bool = True,
+) -> dict:
+    completed_protocols: list[str] = []
+    locally_complete_protocols: list[str] = []
+    pending_protocols: list[str] = []
+    for row in rows:
+        record = _record_with_origin(row, int(row.get("page_number") or 1))
+        if not is_completed_status(record.status):
+            continue
+        completed_protocols.append(record.protocol)
+        if skip_already_completed and _state_should_skip_completed(
+            state_store,
+            record.protocol,
+            settings,
+        ):
+            locally_complete_protocols.append(record.protocol)
+        else:
+            pending_protocols.append(record.protocol)
+    return {
+        "completed_count": len(completed_protocols),
+        "completed_protocols": completed_protocols,
+        "locally_complete_count": len(locally_complete_protocols),
+        "locally_complete_protocols": locally_complete_protocols,
+        "pending_count": len(pending_protocols),
+        "pending_protocols": pending_protocols,
+        "fully_local_done": bool(completed_protocols) and not pending_protocols,
+    }
+
+
+def _batch_fast_light_scan_first_pending_page(
+    page,
+    settings,
+    *,
+    state_store=None,
+    skip_already_completed: bool = True,
+) -> dict | None:
+    if not _is_batch_fast_mode(settings):
+        return None
+    if not bool(getattr(settings, "ENABLE_PORTAL_PAGINATION", False)):
+        return None
+    if not skip_already_completed:
+        return None
+    if getattr(settings, "op5_target_protocols", set()) or set():
+        return None
+
+    max_pages = int(getattr(settings, "MAX_PORTAL_PAGES", 0) or 0)
+    pages_visited: list[int] = []
+    completed_pages_skipped: list[int] = []
+    page_states: list[dict] = []
+    diagnostics: list[dict] = []
+    warnings: list[str] = []
+    visited_page_numbers: set[int] = set()
+    seen_signatures: set[tuple[str | None, str | None, int]] = set()
+    pagination_click_attempts = 0
+    next_page_available_after_stop = False
+    pagination_target_page = None
+    pagination_numeric_links_found: list[str] = []
+
+    while True:
+        if max_pages > 0 and len(pages_visited) >= max_pages:
+            current_page = pages_visited[-1] if pages_visited else 1
+            availability = inspect_next_page_availability(page, current_page)
+            next_page_available_after_stop = bool(
+                availability.get("next_page_available")
+            )
+            pagination_target_page = availability.get("target_page_number")
+            pagination_numeric_links_found = list(
+                availability.get("numeric_page_links_found") or []
+            )
+            warnings.append(f"MAX_PORTAL_PAGES atingido: {max_pages}.")
+            return {
+                "success": False,
+                "status": (
+                    "light_scan_safety_cap_reached_with_next_page"
+                    if next_page_available_after_stop
+                    else "light_scan_no_pending_until_last_page"
+                ),
+                "pages_visited": pages_visited,
+                "completed_pages_skipped_already_completed": completed_pages_skipped,
+                "page_states": page_states,
+                "warnings": warnings,
+                "diagnostics": diagnostics,
+                "pagination_click_attempts": pagination_click_attempts,
+                "next_page_available_after_stop": next_page_available_after_stop,
+                "target_page_number": None,
+                "pagination_target_page": pagination_target_page,
+                "pagination_numeric_links_found": pagination_numeric_links_found,
+            }
+
+        current_active_page = get_active_numeric_page(page)
+        if current_active_page is None:
+            return {
+                "success": False,
+                "status": "light_scan_cannot_confirm_active_page",
+                "pages_visited": pages_visited,
+                "completed_pages_skipped_already_completed": completed_pages_skipped,
+                "page_states": page_states,
+                "warnings": [*warnings, "cannot_confirm_active_page"],
+                "diagnostics": diagnostics,
+                "pagination_click_attempts": pagination_click_attempts,
+                "next_page_available_after_stop": next_page_available_after_stop,
+                "target_page_number": None,
+                "pagination_target_page": pagination_target_page,
+                "pagination_numeric_links_found": pagination_numeric_links_found,
+            }
+        if current_active_page in visited_page_numbers:
+            return {
+                "success": False,
+                "status": "light_scan_pagination_loop_detected",
+                "pages_visited": pages_visited,
+                "completed_pages_skipped_already_completed": completed_pages_skipped,
+                "page_states": page_states,
+                "warnings": [*warnings, "PAGINATION_LOOP_DETECTED"],
+                "diagnostics": diagnostics,
+                "pagination_click_attempts": pagination_click_attempts,
+                "next_page_available_after_stop": next_page_available_after_stop,
+                "target_page_number": None,
+                "pagination_target_page": pagination_target_page,
+                "pagination_numeric_links_found": pagination_numeric_links_found,
+            }
+
+        rows = _annotate_listing_rows(
+            read_current_page_table_with_row_handles(page),
+            current_active_page,
+        )
+        signature = _listing_rows_signature(rows)
+        if signature in seen_signatures:
+            return {
+                "success": False,
+                "status": "light_scan_repeated_signature",
+                "pages_visited": pages_visited,
+                "completed_pages_skipped_already_completed": completed_pages_skipped,
+                "page_states": page_states,
+                "warnings": [
+                    *warnings,
+                    "Pagina repetida detectada durante varredura leve.",
+                ],
+                "diagnostics": diagnostics,
+                "pagination_click_attempts": pagination_click_attempts,
+                "next_page_available_after_stop": next_page_available_after_stop,
+                "target_page_number": None,
+                "pagination_target_page": pagination_target_page,
+                "pagination_numeric_links_found": pagination_numeric_links_found,
+            }
+
+        visited_page_numbers.add(current_active_page)
+        seen_signatures.add(signature)
+        pages_visited.append(current_active_page)
+        local_state = _batch_fast_page_local_state(
+            rows,
+            settings,
+            state_store=state_store,
+            skip_already_completed=skip_already_completed,
+        )
+        page_state = {
+            "page_number": current_active_page,
+            "completed_count": local_state["completed_count"],
+            "locally_complete_count": local_state["locally_complete_count"],
+            "pending_count": local_state["pending_count"],
+            "pending_protocols": local_state["pending_protocols"],
+        }
+        page_states.append(page_state)
+        logger.info(
+            f"Varredura leve OP5 pagina {current_active_page}: "
+            f"{local_state['completed_count']} concluidos, "
+            f"{local_state['locally_complete_count']} completos localmente, "
+            f"{local_state['pending_count']} pendentes locais."
+        )
+        if local_state["pending_count"] > 0:
+            return {
+                "success": True,
+                "status": "light_scan_first_pending_page_found",
+                "target_page_number": current_active_page,
+                "pages_visited": pages_visited,
+                "completed_pages_skipped_already_completed": completed_pages_skipped,
+                "page_states": page_states,
+                "warnings": warnings,
+                "diagnostics": diagnostics,
+                "pagination_click_attempts": pagination_click_attempts,
+                "next_page_available_after_stop": True,
+                "pagination_target_page": current_active_page,
+                "pagination_numeric_links_found": pagination_numeric_links_found,
+                "pending_protocols": local_state["pending_protocols"],
+            }
+        if local_state["fully_local_done"]:
+            completed_pages_skipped.append(current_active_page)
+
+        if max_pages > 0 and len(pages_visited) >= max_pages:
+            continue
+
+        next_diagnostic = find_and_click_next_listing_page(page, current_active_page)
+        next_diagnostic["page_number"] = current_active_page
+        next_diagnostic["signature_before"] = signature
+        diagnostics.append(next_diagnostic)
+        pagination_target_page = next_diagnostic.get("target_page_number")
+        pagination_numeric_links_found = list(
+            next_diagnostic.get("numeric_page_links_found") or []
+        )
+        if next_diagnostic.get("found"):
+            pagination_click_attempts += 1
+        if next_diagnostic.get("stop_reason") == "last_page_reached":
+            return {
+                "success": False,
+                "status": "light_scan_no_pending_until_last_page",
+                "target_page_number": None,
+                "pages_visited": pages_visited,
+                "completed_pages_skipped_already_completed": completed_pages_skipped,
+                "page_states": page_states,
+                "warnings": warnings,
+                "diagnostics": diagnostics,
+                "pagination_click_attempts": pagination_click_attempts,
+                "next_page_available_after_stop": False,
+                "pagination_target_page": pagination_target_page,
+                "pagination_numeric_links_found": pagination_numeric_links_found,
+            }
+        if not (
+            next_diagnostic.get("found")
+            and next_diagnostic.get("enabled")
+            and next_diagnostic.get("clicked")
+        ):
+            status = next_diagnostic.get("stop_reason") or "light_scan_click_failed"
+            return {
+                "success": False,
+                "status": status,
+                "target_page_number": None,
+                "pages_visited": pages_visited,
+                "completed_pages_skipped_already_completed": completed_pages_skipped,
+                "page_states": page_states,
+                "warnings": [*warnings, status],
+                "diagnostics": diagnostics,
+                "pagination_click_attempts": pagination_click_attempts,
+                "next_page_available_after_stop": bool(
+                    next_diagnostic.get("next_page_available")
+                ),
+                "pagination_target_page": pagination_target_page,
+                "pagination_numeric_links_found": pagination_numeric_links_found,
+            }
+        _wait_after_pagination_click(page)
+
+
+def _batch_fast_remaining_collection_page_budget(
+    light_scan: dict | None,
+    settings,
+) -> int | None:
+    if not light_scan:
+        return None
+    max_pages = int(getattr(settings, "MAX_PORTAL_PAGES", 0) or 0)
+    if max_pages <= 0:
+        return None
+    pages_visited = list(light_scan.get("pages_visited") or [])
+    pages_already_consumed_before_collection = max(0, len(pages_visited) - 1)
+    return max(1, max_pages - pages_already_consumed_before_collection)
+
+
+def _merge_batch_fast_light_scan_collection(
+    collection: dict,
+    light_scan: dict | None,
+) -> None:
+    if light_scan is None:
+        return
+    skipped_pages = [
+        *list(light_scan.get("completed_pages_skipped_already_completed") or []),
+        *list(collection.get("completed_pages_skipped_already_completed") or []),
+    ]
+    collection["completed_pages_skipped_already_completed"] = list(
+        dict.fromkeys(skipped_pages)
+    )
+    collection["total_completed_pages_skipped_already_completed"] = len(
+        collection["completed_pages_skipped_already_completed"]
+    )
+    collection["batch_fast_light_scan_status"] = light_scan.get("status")
+    collection["batch_fast_light_scan_pages_visited"] = list(
+        light_scan.get("pages_visited") or []
+    )
+    collection["batch_fast_light_scan_completed_pages_skipped"] = list(
+        light_scan.get("completed_pages_skipped_already_completed") or []
+    )
+    collection["batch_fast_light_scan_first_pending_page"] = light_scan.get(
+        "target_page_number"
+    )
+    collection["batch_fast_light_scan_stop_reason"] = light_scan.get("status")
+    collection["batch_fast_light_scan_page_states"] = list(
+        light_scan.get("page_states") or []
+    )
+
+
 def consolidate_listing_page_rows(
     page_rows: list[list[dict]], max_pages: int = 0
 ) -> dict:
@@ -772,8 +1071,9 @@ def _state_should_skip_completed(pipeline_state, protocol: str, settings=None) -
         return True
     if pipeline_state is None:
         return _workbook_should_skip_completed(protocol, settings)
-    if hasattr(pipeline_state, "should_skip_completed"):
-        return bool(pipeline_state.should_skip_completed(protocol, settings)) or (
+    should_skip_completed = getattr(pipeline_state, "should_skip_completed", None)
+    if callable(should_skip_completed):
+        return bool(should_skip_completed(protocol, settings)) or (
             _workbook_should_skip_completed(protocol, settings)
         )
     entry = _state_entry(pipeline_state, protocol)
@@ -848,13 +1148,21 @@ def _navigate_to_batch_fast_completed_index_anchor(
         state_store=state_store,
         skip_already_completed=skip_already_completed,
     )
+    anchor_source = "completed_index"
+    if target_page is None:
+        target_page = _batch_fast_workbook_completion_estimated_anchor_page(
+            settings,
+            skip_already_completed=skip_already_completed,
+        )
+        anchor_source = "workbook_completion_estimate"
     if target_page is None or target_page <= 1:
         return None
     logger.info(
-        "Navegando diretamente para pagina ancora do indice mestre OP5: "
-        f"{target_page}."
+        "Navegando diretamente para pagina ancora OP5 "
+        f"({anchor_source}): {target_page}."
     )
     navigation = navigate_to_numeric_page(page, target_page)
+    navigation["anchor_source"] = anchor_source
     if navigation.get("active_page_after") != target_page:
         return {
             **navigation,
@@ -870,6 +1178,7 @@ def _navigate_to_batch_fast_completed_index_anchor(
             **navigation,
             "status": navigation.get("status") or "completed_index_anchor_page",
             "method": navigation.get("method") or "completed_index_anchor_page",
+            "anchor_source": anchor_source,
         }
     logger.warning(
         "Nao foi possivel usar pagina ancora do indice mestre OP5; "
@@ -905,14 +1214,13 @@ def _batch_fast_completed_index_anchor_page(
     for protocol, entry in load_valid_completed_entries(Path(index_path)).items():
         if entry.get("portal_anchor_scope") != "global_batch_fast":
             continue
-        if not entry.get("portal_page_proof_sha256"):
-            continue
         if not _op5_completed_index_entry_is_locally_valid(
             entry, settings, current_workbook_sha=current_workbook_sha
         ):
             continue
-        if state_store is not None and hasattr(state_store, "is_force_reprocess"):
-            if state_store.is_force_reprocess(protocol):
+        is_force_reprocess = getattr(state_store, "is_force_reprocess", None)
+        if callable(is_force_reprocess):
+            if is_force_reprocess(protocol):
                 continue
         if protocol in (getattr(settings, "force_reprocess_protocols", set()) or set()):
             continue
@@ -923,6 +1231,55 @@ def _batch_fast_completed_index_anchor_page(
         if page_number > 1:
             pages.append(page_number)
     return max(pages) if pages else None
+
+
+def _batch_fast_workbook_completion_estimated_anchor_page(
+    settings,
+    *,
+    skip_already_completed: bool,
+) -> int | None:
+    if not skip_already_completed or not _is_batch_fast_mode(settings):
+        return None
+    if getattr(settings, "op5_target_protocols", set()) or set():
+        return None
+    if not bool(getattr(settings, "APPLY_EXCEL", False)):
+        return None
+    workbook_path = getattr(settings, "planilha_path", None)
+    if workbook_path is None:
+        return None
+    workbook = Path(workbook_path)
+    if not workbook.is_file():
+        return None
+    logs_dir = Path(getattr(settings, "logs_dir_path", Path("data/logs")))
+    try:
+        index = load_or_build_workbook_index(
+            workbook,
+            cache_path=logs_dir / "op5_workbook_completion_index_cache.json",
+            builder=_build_workbook_completion_index,
+        )
+    except Exception as exc:
+        logger.warning(
+            "Indice de completude da planilha indisponivel para ancora OP5; "
+            f"usando paginacao segura. Motivo: {exc}"
+        )
+        return None
+    protocols = index.get("protocols") if isinstance(index, dict) else None
+    if not isinstance(protocols, dict):
+        return None
+    complete_count = sum(
+        1
+        for item in protocols.values()
+        if isinstance(item, dict)
+        and item.get("success")
+        and item.get("complete")
+    )
+    page_size = int(getattr(settings, "PORTAL_LISTING_PAGE_SIZE", 50) or 50)
+    if page_size <= 0:
+        page_size = 50
+    anchor_page = complete_count // page_size
+    if anchor_page <= 1:
+        return None
+    return anchor_page
 
 
 def _file_matches_sha256(path: Path, expected_sha256: str) -> bool:
@@ -950,25 +1307,127 @@ def _workbook_should_skip_completed(protocol: str, settings=None) -> bool:
     if not workbook.is_file():
         return False
     logs_dir = Path(getattr(settings, "logs_dir_path", Path("data/logs")))
-    validation = cached_workbook_protocol_check(
+    validation = _workbook_completion_validation(
         workbook,
         protocol,
-        cache_path=logs_dir / "op5_workbook_protocol_check_cache.json",
-        checker=protocol_row_has_required_values,
+        cache_path=logs_dir / "op5_workbook_completion_index_cache.json",
+        fallback_cache_path=logs_dir / "op5_workbook_protocol_check_cache.json",
     )
     return bool(validation.get("success") and validation.get("complete"))
+
+
+def _workbook_completion_validation(
+    workbook: Path,
+    protocol: str,
+    *,
+    cache_path: Path,
+    fallback_cache_path: Path,
+) -> dict[str, Any]:
+    try:
+        index = load_or_build_workbook_index(
+            workbook,
+            cache_path=cache_path,
+            builder=_build_workbook_completion_index,
+        )
+    except Exception:
+        return cached_workbook_protocol_check(
+            workbook,
+            protocol,
+            cache_path=fallback_cache_path,
+            checker=protocol_row_has_required_values,
+        )
+    protocols = index.get("protocols") if isinstance(index, dict) else None
+    validation = (
+        dict(protocols.get(str(protocol).strip()) or {})
+        if isinstance(protocols, dict)
+        else {}
+    )
+    if validation:
+        validation["cache_hit"] = bool(index.get("cache_hit"))
+        validation["workbook_sha256"] = index.get("workbook_sha256")
+        return validation
+    return {
+        "success": False,
+        "complete": False,
+        "protocol": str(protocol).strip(),
+        "worksheet": None,
+        "row": None,
+        "missing_columns": [],
+        "error": "Protocolo nao encontrado na planilha",
+        "cache_hit": bool(index.get("cache_hit")) if isinstance(index, dict) else False,
+        "workbook_sha256": index.get("workbook_sha256") if isinstance(index, dict) else None,
+    }
+
+
+def _build_workbook_completion_index(workbook: Path) -> dict[str, Any]:
+    index = build_workbook_protocol_index(workbook)
+    protocols: dict[str, dict[str, Any]] = {}
+    for protocol, records in index.records_by_protocol.items():
+        if len(records) != 1:
+            protocols[protocol] = {
+                "success": False,
+                "complete": False,
+                "worksheet": None,
+                "row": None,
+                "missing_columns": [],
+                "error": "Protocolo duplicado na planilha",
+            }
+            continue
+        record = records[0]
+        missing = _missing_required_workbook_columns(record)
+        protocols[protocol] = {
+            "success": True,
+            "complete": not missing,
+            "worksheet": str(getattr(record, "sheet_name", "") or ""),
+            "row": getattr(record, "row_number", None),
+            "missing_columns": missing,
+            "error": "",
+        }
+    return {"protocols": protocols}
+
+
+def _missing_required_workbook_columns(record: object) -> list[str]:
+    missing: list[str] = []
+    checks = (
+        ("Cliente", bool(getattr(record, "client_present", False))),
+        ("Protocolo", _has_workbook_value(getattr(record, "protocol_normalized", None))),
+        (
+            "Data de ingresso",
+            _has_workbook_value(getattr(record, "ingress_date_raw", None)),
+        ),
+        ("Conclusao", _has_workbook_value(getattr(record, "completion_raw", None))),
+        ("Parecer", _has_workbook_value(getattr(record, "parecer_raw", None))),
+        ("Placa", _has_workbook_value(getattr(record, "placa_raw", None))),
+        ("Inversor", _has_workbook_value(getattr(record, "inversor_raw", None))),
+    )
+    for column, present in checks:
+        if not present:
+            missing.append(column)
+    return missing
+
+
+def _has_workbook_value(value: object) -> bool:
+    return bool(str(value or "").strip())
 
 
 def _state_entry(pipeline_state, protocol: str) -> dict | None:
     if pipeline_state is None:
         return None
-    if hasattr(pipeline_state, "get_protocol"):
-        entry = pipeline_state.get_protocol(protocol)
+    get_protocol = getattr(pipeline_state, "get_protocol", None)
+    if callable(get_protocol):
+        entry = get_protocol(protocol)
         return entry if isinstance(entry, dict) else None
     if isinstance(pipeline_state, dict):
         protocols = pipeline_state.get("protocols", pipeline_state)
         entry = protocols.get(protocol) if isinstance(protocols, dict) else None
         return entry if isinstance(entry, dict) else None
+    return None
+
+
+def _call_state_store(state_store, method_name: str, *args, **kwargs):
+    method = getattr(state_store, method_name, None) if state_store else None
+    if callable(method):
+        return method(*args, **kwargs)
     return None
 
 
@@ -1022,9 +1481,9 @@ def select_eligible_completed_requests(
             continue
         seen_protocols.add(request.protocol)
 
+        is_force_reprocess = getattr(pipeline_state, "is_force_reprocess", None)
         is_forced = request.protocol in force_reprocess_protocols or (
-            hasattr(pipeline_state, "is_force_reprocess")
-            and pipeline_state.is_force_reprocess(request.protocol)
+            callable(is_force_reprocess) and is_force_reprocess(request.protocol)
         )
         if (
             skip_already_completed
@@ -1697,27 +2156,33 @@ def download_completed_budgets_from_current_page(
         state_store=state_store,
         skip_already_completed=skip_already_completed,
     )
-    completed_index_resume = None
+    batch_fast_light_scan = None
 
     if collection is None and settings.ENABLE_PORTAL_PAGINATION:
-        completed_index_resume = _navigate_to_batch_fast_completed_index_anchor(
-            page,
-            settings,
-            state_store=state_store,
-            skip_already_completed=skip_already_completed,
+        anchor_navigation = (
+            _navigate_to_batch_fast_completed_index_anchor(
+                page,
+                settings,
+                state_store=state_store,
+                skip_already_completed=skip_already_completed,
+            )
+            if batch_fast_mode
+            else None
         )
-        if completed_index_resume is not None:
-            summary["completed_index_resume_page"] = completed_index_resume.get(
-                "target_page_number"
-            )
-            summary["completed_index_resume_status"] = completed_index_resume.get(
-                "status"
-            )
-            summary["completed_index_resume_navigation"] = completed_index_resume
-            summary["pagination_initial_active_page"] = completed_index_resume.get(
+        if anchor_navigation is not None:
+            summary["completed_index_anchor_navigation"] = anchor_navigation
+        if anchor_navigation is not None and anchor_navigation.get("success"):
+            summary["pagination_initial_active_page"] = anchor_navigation.get(
                 "active_page_before"
             )
-        if completed_index_resume is None or not completed_index_resume.get("success"):
+            summary["pagination_reset_to_first_page"] = {
+                "success": True,
+                "status": "skipped_reset_to_first_page_due_to_completed_index_anchor",
+                "initial_active_page": anchor_navigation.get("active_page_before"),
+                "active_page_after": anchor_navigation.get("active_page_after"),
+                "anchor_navigation": anchor_navigation,
+            }
+        else:
             reset_result = _ensure_listing_starts_on_page_one_with_optional_url(
                 page,
                 listing_url,
@@ -1726,22 +2191,58 @@ def download_completed_budgets_from_current_page(
                 "initial_active_page"
             )
             summary["pagination_reset_to_first_page"] = reset_result
-        else:
-            reset_result = {"success": True}
-        if not reset_result["success"]:
-            message = (
-                "cannot_confirm_active_page_in_production"
-                if not settings.DRY_RUN
-                else "pagination_could_not_reset_to_first_page"
+            if not reset_result["success"]:
+                message = (
+                    "cannot_confirm_active_page_in_production"
+                    if not settings.DRY_RUN
+                    else "pagination_could_not_reset_to_first_page"
+                )
+                detail = reset_result.get("error") or reset_result.get("status")
+                summary["run_error"] = f"{message}: {detail}"
+                summary["aborted"] = True
+                summary["abort_reason"] = summary["run_error"]
+                summary["finished_at"] = datetime.now().isoformat(timespec="seconds")
+                logger.error(summary["run_error"])
+                _refresh_download_totals(summary)
+                return summary
+        try:
+            batch_fast_light_scan = _batch_fast_light_scan_first_pending_page(
+                page,
+                settings,
+                state_store=state_store,
+                skip_already_completed=skip_already_completed,
             )
-            detail = reset_result.get("error") or reset_result.get("status")
-            summary["run_error"] = f"{message}: {detail}"
-            summary["aborted"] = True
-            summary["abort_reason"] = summary["run_error"]
-            summary["finished_at"] = datetime.now().isoformat(timespec="seconds")
-            logger.error(summary["run_error"])
-            _refresh_download_totals(summary)
-            return summary
+        except Exception as exc:
+            logger.warning(f"Varredura leve OP5 indisponivel; usando coleta padrao: {exc}")
+            batch_fast_light_scan = {
+                "success": False,
+                "status": "light_scan_unavailable_fallback_to_standard_collection",
+                "pages_visited": [],
+                "completed_pages_skipped_already_completed": [],
+                "page_states": [],
+                "warnings": ["light_scan_unavailable_fallback_to_standard_collection"],
+                "diagnostics": [{"error": str(exc)}],
+                "target_page_number": None,
+            }
+        if batch_fast_light_scan is not None:
+            summary["batch_fast_light_scan_status"] = batch_fast_light_scan.get(
+                "status"
+            )
+            summary["batch_fast_light_scan_pages_visited"] = list(
+                batch_fast_light_scan.get("pages_visited") or []
+            )
+            summary["batch_fast_light_scan_completed_pages_skipped"] = list(
+                batch_fast_light_scan.get(
+                    "completed_pages_skipped_already_completed"
+                )
+                or []
+            )
+            summary["batch_fast_light_scan_first_pending_page"] = (
+                batch_fast_light_scan.get("target_page_number")
+            )
+            summary["batch_fast_light_scan_stop_reason"] = batch_fast_light_scan.get(
+                "status"
+            )
 
     active_reconciliation_callback = None if batch_fast_mode else reconciliation_callback
     if collection is not None:
@@ -1751,13 +2252,23 @@ def download_completed_budgets_from_current_page(
             "eligibility_cache_structural_hash"
         )
     elif batch_fast_mode:
+        collection_kwargs = {
+            "state_store": state_store,
+            "max_completed": limit,
+            "skip_already_completed": skip_already_completed,
+        }
+        remaining_page_budget = _batch_fast_remaining_collection_page_budget(
+            batch_fast_light_scan,
+            settings,
+        )
+        if remaining_page_budget is not None:
+            collection_kwargs["max_portal_pages"] = remaining_page_budget
         collection = _collect_completed_listing_rows_across_pages(
             page,
             settings,
-            state_store=state_store,
-            max_completed=limit,
-            skip_already_completed=skip_already_completed,
+            **collection_kwargs,
         )
+        _merge_batch_fast_light_scan_collection(collection, batch_fast_light_scan)
     else:
         collection = _collect_completed_listing_rows_across_pages(page, settings)
     if (
@@ -1856,11 +2367,18 @@ def download_completed_budgets_from_current_page(
             "Registrando protocolos descobertos no estado de retomada: "
             f"{len(completed_records)} registros."
         )
-        if hasattr(state_store, "mark_discovered_many"):
-            state_store.mark_discovered_many(completed_records)
-        else:
+        mark_discovered_many = getattr(state_store, "mark_discovered_many", None)
+        mark_discovered = getattr(state_store, "mark_discovered", None)
+        if callable(mark_discovered_many):
+            mark_discovered_many(completed_records)
+        elif callable(mark_discovered):
             for record in completed_records:
-                state_store.mark_discovered(record)
+                mark_discovered(record)
+        else:
+            logger.info(
+                "State store sem API de registro de descoberta; "
+                "mantendo apenas consulta de conclusao local."
+            )
         logger.info("Registro de protocolos descobertos concluído.")
     selection = select_eligible_completed_requests(
         completed_requests=completed_records,
@@ -1929,6 +2447,29 @@ def download_completed_budgets_from_current_page(
         "pagination_numeric_links_found", []
     )
     summary["pagination_diagnostics"] = collection.get("pagination_diagnostics", [])
+    summary["batch_fast_light_scan_status"] = collection.get(
+        "batch_fast_light_scan_status",
+        summary.get("batch_fast_light_scan_status"),
+    )
+    summary["batch_fast_light_scan_pages_visited"] = collection.get(
+        "batch_fast_light_scan_pages_visited",
+        summary.get("batch_fast_light_scan_pages_visited", []),
+    )
+    summary["batch_fast_light_scan_completed_pages_skipped"] = collection.get(
+        "batch_fast_light_scan_completed_pages_skipped",
+        summary.get("batch_fast_light_scan_completed_pages_skipped", []),
+    )
+    summary["batch_fast_light_scan_first_pending_page"] = collection.get(
+        "batch_fast_light_scan_first_pending_page",
+        summary.get("batch_fast_light_scan_first_pending_page"),
+    )
+    summary["batch_fast_light_scan_stop_reason"] = collection.get(
+        "batch_fast_light_scan_stop_reason",
+        summary.get("batch_fast_light_scan_stop_reason"),
+    )
+    summary["batch_fast_light_scan_page_states"] = collection.get(
+        "batch_fast_light_scan_page_states", []
+    )
     summary["completed_pages_skipped_already_completed"] = collection.get(
         "completed_pages_skipped_already_completed", []
     )
@@ -1957,6 +2498,22 @@ def download_completed_budgets_from_current_page(
         "pagination_target_page": summary["pagination_target_page"],
         "pagination_numeric_links_found": summary["pagination_numeric_links_found"],
         "pagination_diagnostics": summary["pagination_diagnostics"],
+        "batch_fast_light_scan_status": summary.get("batch_fast_light_scan_status"),
+        "batch_fast_light_scan_pages_visited": summary.get(
+            "batch_fast_light_scan_pages_visited", []
+        ),
+        "batch_fast_light_scan_completed_pages_skipped": summary.get(
+            "batch_fast_light_scan_completed_pages_skipped", []
+        ),
+        "batch_fast_light_scan_first_pending_page": summary.get(
+            "batch_fast_light_scan_first_pending_page"
+        ),
+        "batch_fast_light_scan_stop_reason": summary.get(
+            "batch_fast_light_scan_stop_reason"
+        ),
+        "batch_fast_light_scan_page_states": summary.get(
+            "batch_fast_light_scan_page_states", []
+        ),
         "completed_pages_skipped_already_completed": summary[
             "completed_pages_skipped_already_completed"
         ],
@@ -2013,27 +2570,30 @@ def download_completed_budgets_from_current_page(
                 else "global_batch_fast"
             )
         try:
-            previous_entry = state_store.get_protocol(protocol) if state_store else None
+            previous_entry = _state_entry(state_store, protocol)
             if previous_entry:
                 result["previous_state"] = previous_entry.get("status")
                 result["previous_last_step"] = previous_entry.get("last_step")
             if state_store:
-                state_store.mark_selected(record)
+                _call_state_store(state_store, "mark_selected", record)
                 if (
                     skip_already_completed
-                    and state_store.should_skip_completed(protocol, settings)
+                    and _state_should_skip_completed(state_store, protocol, settings)
                 ):
                     result["download_status"] = "skipped_already_completed"
                     result["skip_reason"] = "skipped_already_completed"
                     result["previous_state"] = "completed"
-                    result["previous_last_step"] = (
-                        state_store.get_protocol(protocol) or {}
-                    ).get("last_step")
+                    result["previous_last_step"] = _state_last_step(
+                        state_store,
+                        protocol,
+                    )
                     logger.info(
                         f"Protocolo {protocol} pulado: ja concluido no state."
                     )
                     continue
-                state_store.update_protocol(
+                _call_state_store(
+                    state_store,
+                    "update_protocol",
                     protocol, status="in_progress", last_step="selected"
                 )
 
@@ -2186,7 +2746,9 @@ def download_completed_budgets_from_current_page(
             )
             result["metadata_path"] = str(metadata_path)
             if state_store:
-                state_store.update_section(
+                _call_state_store(
+                    state_store,
+                    "update_section",
                     protocol,
                     "metadata",
                     {"exists": True, "path": str(metadata_path)},
@@ -2199,7 +2761,9 @@ def download_completed_budgets_from_current_page(
                 result["has_connection_budget"] = True
                 result["download_status"] = "existing_pdf_after_skip"
                 if _is_valid_pdf(existing_pdf) and state_store:
-                    state_store.update_section(
+                    _call_state_store(
+                        state_store,
+                        "update_section",
                         protocol,
                         "download",
                         {
@@ -2219,7 +2783,9 @@ def download_completed_budgets_from_current_page(
                     result["download_status"] = "download_error"
                     result["download_error"] = f"PDF existente invalido: {existing_pdf}"
                     if state_store:
-                        state_store.add_error(
+                        _call_state_store(
+                            state_store,
+                            "add_error",
                             protocol, "download", result["download_error"]
                         )
                 logger.info(
@@ -2280,7 +2846,9 @@ def download_completed_budgets_from_current_page(
                             generation_data.equipment_parse_warning
                         )
                         if state_store:
-                            state_store.update_section(
+                            _call_state_store(
+                                state_store,
+                                "update_section",
                                 protocol,
                                 "download",
                                 {
@@ -2297,7 +2865,9 @@ def download_completed_budgets_from_current_page(
                         result["download_status"] = "download_error"
                         result["download_error"] = f"PDF baixado invalido: {pdf_path}"
                         if state_store:
-                            state_store.add_error(
+                            _call_state_store(
+                                state_store,
+                                "add_error",
                                 protocol, "download", result["download_error"]
                             )
         except DownloadNotProducedError as exc:
@@ -2309,7 +2879,13 @@ def download_completed_budgets_from_current_page(
             )
             result["cdp_error"] = str(exc)
             if state_store:
-                state_store.add_error(protocol, "cdp", result["cdp_error"])
+                _call_state_store(
+                    state_store,
+                    "add_error",
+                    protocol,
+                    "cdp",
+                    result["cdp_error"],
+                )
         except Exception as exc:
             logger.exception(f"Erro ao processar protocolo {protocol}: {exc}")
             result["download_status"] = (
@@ -2319,7 +2895,13 @@ def download_completed_budgets_from_current_page(
             )
             result["cdp_error"] = str(exc)
             if state_store:
-                state_store.add_error(protocol, "cdp", result["cdp_error"])
+                _call_state_store(
+                    state_store,
+                    "add_error",
+                    protocol,
+                    "cdp",
+                    result["cdp_error"],
+                )
         finally:
             if detail_page is not None:
                 try:
@@ -2361,7 +2943,13 @@ def download_completed_budgets_from_current_page(
                         if not result.get("download_status"):
                             result["download_status"] = "cdp_error"
                         if state_store:
-                            state_store.add_error(protocol, "navigation", message)
+                            _call_state_store(
+                                state_store,
+                                "add_error",
+                                protocol,
+                                "navigation",
+                                message,
+                            )
 
             if result.get("download_status") == "pending":
                 result["download_status"] = "cdp_error" if result.get("cdp_error") else "skipped"
@@ -2557,7 +3145,9 @@ def _reuse_existing_pdf_without_detail(
     _apply_listing_completion_to_result(record, result)
 
     if state_store:
-        state_store.update_section(
+        _call_state_store(
+            state_store,
+            "update_section",
             protocol,
             "metadata",
             {"exists": True, "path": str(metadata_path)},
@@ -2566,7 +3156,9 @@ def _reuse_existing_pdf_without_detail(
 
     if _is_valid_pdf(existing_pdf):
         if state_store:
-            state_store.update_section(
+            _call_state_store(
+                state_store,
+                "update_section",
                 protocol,
                 "download",
                 {
@@ -2586,7 +3178,13 @@ def _reuse_existing_pdf_without_detail(
         result["download_status"] = "download_error"
         result["download_error"] = f"PDF existente invalido: {existing_pdf}"
         if state_store:
-            state_store.add_error(protocol, "download", result["download_error"])
+            _call_state_store(
+                state_store,
+                "add_error",
+                protocol,
+                "download",
+                result["download_error"],
+            )
 
     return result
 
@@ -2865,6 +3463,28 @@ def _recover_first_page_after_reset_failure(
             }
         )
         return result
+    if active_after is not None and active_after > 1 and rows_after:
+        numeric_recovery = navigate_to_numeric_page(page, 1)
+        result["numeric_first_page_recovery"] = numeric_recovery
+        result["active_page_after"] = numeric_recovery.get("active_page_after")
+        if numeric_recovery.get("success") and numeric_recovery.get(
+            "active_page_after"
+        ) == 1:
+            try:
+                rows_first_page = read_current_page_table_with_row_handles(page)
+            except Exception as exc:
+                result["error"] = str(exc)
+                return result
+            if rows_first_page:
+                result.update(
+                    {
+                        "success": True,
+                        "status": "recovered_first_page_by_menu",
+                        "method": f"{result['method']}_then_numeric_page",
+                        "error": None,
+                    }
+                )
+                return result
     result["error"] = (
         f"Pagina ativa apos reabrir Minhas Solicitacoes: {active_after}; esperado: 1."
     )
@@ -3604,6 +4224,37 @@ def ensure_request_origin_page(
 
     logger.info(f"Protocolo {protocol} nao esta visivel na pagina atual.")
     if target_page <= 1:
+        active_page = get_active_numeric_page(page)
+        if active_page is not None and active_page != target_page:
+            navigation = navigate_to_numeric_page(page, target_page)
+            result["navigation"] = navigation
+            result["url_after"] = navigation.get("url_after")
+            if navigation["success"]:
+                rows = read_current_page_table_with_row_handles(page)
+                current_row = _find_listing_row_in_rows(rows, protocol)
+                if current_row is not None:
+                    result.update(
+                        {
+                            "success": True,
+                            "status": "protocol_found_on_origin_page",
+                            "method": navigation.get("method"),
+                            "protocol_found_on_origin_page": True,
+                            "row": current_row,
+                            "url_after": _safe_page_url(page),
+                        }
+                    )
+                    return result
+            elif not allow_active_navigation:
+                result.update(
+                    {
+                        "status": navigation.get("status")
+                        or "protocol_not_found_on_origin_page",
+                        "method": navigation.get("method"),
+                        "error": navigation.get("error")
+                        or "protocol_not_found_on_origin_page",
+                    }
+                )
+                return result
         if listing_url and allow_active_navigation:
             try:
                 logger.info(

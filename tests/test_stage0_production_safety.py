@@ -466,6 +466,7 @@ def test_option5_dry_run_records_frozen_pdf_scope_for_real_reuse(
         APPLY_ARCHIVE=False,
         MAX_COMPLETED_TO_PROCESS=1,
         OPTION5_AUTHORIZED_MAX_PROTOCOLS=60,
+        OP5_RECONCILIATION_MODE="batch_fast",
         LOGS_DIR=tmp_path / "logs",
         DOWNLOADS_DIR=tmp_path / "downloads",
     )
@@ -539,6 +540,7 @@ def test_option5_dry_run_persists_explicit_frozen_plan(
         APPLY_ARCHIVE=False,
         MAX_COMPLETED_TO_PROCESS=1,
         OPTION5_AUTHORIZED_MAX_PROTOCOLS=60,
+        OP5_RECONCILIATION_MODE="batch_fast",
         LOGS_DIR=tmp_path / "logs",
         DOWNLOADS_DIR=tmp_path / "downloads",
     )
@@ -615,6 +617,118 @@ def test_option5_dry_run_persists_explicit_frozen_plan(
     assert plan["planned_excel_actions"] == [
         {"protocol": protocol, "action": "insert_new_chronological"}
     ]
+
+
+def test_option5_dry_run_reports_accepted_plan_limited_to_requested_batch(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    settings = _settings(
+        tmp_path,
+        DRY_RUN=True,
+        APPLY_ARCHIVE=False,
+        MAX_COMPLETED_TO_PROCESS=1,
+        OPTION5_AUTHORIZED_MAX_PROTOCOLS=60,
+        OP5_RECONCILIATION_MODE="batch_fast",
+        LOGS_DIR=tmp_path / "logs",
+        DOWNLOADS_DIR=tmp_path / "downloads",
+    )
+    protocols = ["2600000001", "2600000002"]
+    pdfs: dict[str, Path] = {}
+    download_call: dict[str, object] = {}
+    processing_call: dict[str, object] = {}
+    for protocol in protocols:
+        pdf = settings.downloads_dir_path / protocol / f"Orcamento_de_Conexao_{protocol}.pdf"
+        pdf.parent.mkdir(parents=True, exist_ok=True)
+        pdf.write_bytes(f"%PDF-1.4 synthetic {protocol}".encode("utf-8"))
+        pdfs[protocol] = pdf
+    monkeypatch.setattr(
+        full_pipeline,
+        "global_execution_lock_path",
+        lambda _settings: tmp_path / "locks" / "real_run_execution.lock",
+    )
+    def fake_run_download_step(effective_settings, *_args) -> dict:
+        download_call["max_completed_to_process"] = (
+            effective_settings.MAX_COMPLETED_TO_PROCESS
+        )
+        return {
+            "run_error": None,
+            "total_selected": 2,
+            "total_for_processing": 2,
+            "total_sent_to_processing": 2,
+            "total_existing_reused": 2,
+            "total_downloaded": 0,
+            "total_cdp_errors": 0,
+            "total_errors": 0,
+            "selected_protocols": [
+                {"protocol": protocol, "client_name": f"CLIENTE {protocol}"}
+                for protocol in protocols
+            ],
+            "results": [
+                {
+                    "protocol": protocol,
+                    "client_name": f"CLIENTE {protocol}",
+                    "download_status": "existing_pdf_after_skip",
+                    "process_pdf_path": str(pdfs[protocol]),
+                    "selected_for_processing": True,
+                }
+                for protocol in protocols
+            ],
+        }
+
+    monkeypatch.setattr(
+        full_pipeline,
+        "_run_download_step",
+        fake_run_download_step,
+    )
+    def fake_process_downloaded_pdfs(**kwargs) -> dict:
+        processing_call.update(kwargs)
+        return {
+            "total_pdfs": 2,
+            "total_success": 2,
+            "total_errors": 0,
+            "total_updates_planned": 2,
+            "total_updates_applied": 0,
+            "results": [
+                {
+                    "protocol": protocol,
+                    "success": True,
+                    "excel_status": {
+                        "success": True,
+                        "action": "update_existing",
+                    },
+                }
+                for protocol in protocols
+            ],
+        }
+
+    monkeypatch.setattr(
+        full_pipeline,
+        "process_downloaded_pdfs",
+        fake_process_downloaded_pdfs,
+    )
+
+    result = full_pipeline.run_full_cdp_pipeline(
+        settings,
+        confirmation=full_pipeline.build_option5_strong_confirmation(1),
+    )
+    report = json.loads(
+        (settings.logs_dir_path / full_pipeline.PIPELINE_JSON_REPORT_NAME).read_text(
+            encoding="utf-8"
+        )
+    )
+
+    assert result["total_updates_planned"] == 1
+    assert result["total_selected"] == 1
+    assert result["download"]["total_selected"] == 1
+    assert download_call["max_completed_to_process"] == 1
+    assert processing_call["allowed_protocols"] == {"2600000001"}
+    assert processing_call["pdf_paths"] == [pdfs["2600000001"]]
+    assert result["planned_excel_actions"] == [
+        {"protocol": "2600000001", "action": "update_existing"}
+    ]
+    assert report["total_updates_planned"] == 1
+    assert report["download"]["frozen_batch"]["protocols"] == ["2600000001"]
 
 
 def test_failed_op5_plan_does_not_leave_previous_latest_plan_usable(

@@ -1,5 +1,6 @@
 import json
 import hashlib
+from types import SimpleNamespace
 from datetime import datetime
 from datetime import timedelta
 from datetime import timezone
@@ -302,7 +303,158 @@ def test_batch_fast_paginates_past_page_fully_completed_locally(
     assert summary["pagination_stop_reason"] == "incremental_batch_limit_reached"
 
 
-def test_batch_fast_plan_does_not_start_from_protocol_only_completed_index_anchor_page(
+def test_batch_fast_light_scan_starts_collection_on_first_locally_pending_page(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    first_page = _page(1048, 2)
+    second_page = _page(1050, 2)
+    active_page = {"value": 1}
+    read_pages: list[int] = []
+    next_clicks: list[int] = []
+
+    class Settings(DummySettings):
+        OP5_RECONCILIATION_MODE = "batch_fast"
+        ENABLE_PORTAL_PAGINATION = True
+        MAX_PORTAL_PAGES = 3
+        MAX_COMPLETED_TO_PROCESS = 2
+        APPLY_EXCEL = True
+        downloads_dir_path = tmp_path
+
+    class StateStore:
+        def should_skip_completed(self, protocol: str, settings=None) -> bool:
+            return protocol in {"2600001048", "2600001049"}
+
+    for protocol in ["2600001050", "2600001051"]:
+        protocol_dir = tmp_path / protocol
+        protocol_dir.mkdir()
+        (protocol_dir / f"Orcamento_de_Conexao_{protocol}.pdf").write_bytes(
+            b"%PDF-1.4\n% synthetic\n%%EOF\n"
+        )
+        (protocol_dir / "metadata.json").write_text(
+            json.dumps({"protocol": protocol, "completion_date": "01/02/2026"}),
+            encoding="utf-8",
+        )
+
+    def fake_read_rows(page) -> list[dict]:
+        read_pages.append(active_page["value"])
+        return first_page if active_page["value"] == 1 else second_page
+
+    def fake_next_page(page, current_page: int) -> dict:
+        next_clicks.append(current_page)
+        active_page["value"] = current_page + 1
+        return {
+            "found": True,
+            "enabled": True,
+            "clicked": True,
+            "target_page_number": current_page + 1,
+            "next_page_available": True,
+            "numeric_page_links_found": [str(current_page + 1)],
+        }
+
+    monkeypatch.setattr(cdp_portal_service, "get_active_numeric_page", lambda page: active_page["value"])
+    monkeypatch.setattr(
+        cdp_portal_service, "read_current_page_table_with_row_handles", fake_read_rows
+    )
+    monkeypatch.setattr(
+        cdp_portal_service, "find_and_click_next_listing_page", fake_next_page
+    )
+    monkeypatch.setattr(
+        cdp_portal_service,
+        "ensure_listing_starts_on_page_one",
+        lambda page: {
+            "success": True,
+            "status": "already_on_first_page",
+            "initial_active_page": 1,
+            "active_page_after": 1,
+        },
+    )
+    monkeypatch.setattr(cdp_portal_service, "_wait_after_pagination_click", lambda page: None)
+
+    summary = download_completed_budgets_from_current_page(
+        FakePage(),
+        downloads_root=tmp_path,
+        max_completed=2,
+        state_store=StateStore(),
+        settings=Settings(),
+    )
+
+    assert read_pages == [1, 2, 2]
+    assert next_clicks == [1]
+    assert summary["batch_fast_light_scan_status"] == (
+        "light_scan_first_pending_page_found"
+    )
+    assert summary["batch_fast_light_scan_pages_visited"] == [1, 2]
+    assert summary["batch_fast_light_scan_completed_pages_skipped"] == [1]
+    assert summary["batch_fast_light_scan_first_pending_page"] == 2
+    assert summary["completed_pages_skipped_already_completed"] == [1]
+    assert summary["pages_visited"] == [2]
+    assert [item["protocol"] for item in summary["selected_protocols"]] == [
+        "2600001050",
+        "2600001051",
+    ]
+
+
+def test_batch_fast_workbook_skip_uses_single_cached_index_for_multiple_protocols(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    workbook = tmp_path / "planilha.xlsx"
+    workbook.write_bytes(b"synthetic workbook content")
+    build_calls: list[Path] = []
+
+    class Settings(DummySettings):
+        OP5_RECONCILIATION_MODE = "batch_fast"
+        APPLY_EXCEL = True
+        planilha_path = workbook
+        logs_dir_path = tmp_path / "logs"
+
+    def record(protocol: str) -> SimpleNamespace:
+        return SimpleNamespace(
+            sheet_name="2026",
+            row_number=2 if protocol.endswith("1") else 3,
+            client_present=True,
+            protocol_normalized=protocol,
+            ingress_date_raw="01/01/2026",
+            completion_raw="02/01/2026",
+            parecer_raw="APROVADO",
+            placa_raw="MODULO",
+            inversor_raw="INVERSOR",
+        )
+
+    def fake_build_workbook_protocol_index(path: Path) -> SimpleNamespace:
+        build_calls.append(Path(path))
+        return SimpleNamespace(
+            records_by_protocol={
+                "2600000001": [record("2600000001")],
+                "2600000002": [record("2600000002")],
+            }
+        )
+
+    monkeypatch.setattr(
+        cdp_portal_service,
+        "build_workbook_protocol_index",
+        fake_build_workbook_protocol_index,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        cdp_portal_service,
+        "protocol_row_has_required_values",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("per-protocol workbook checks must not run")
+        ),
+    )
+
+    assert cdp_portal_service._workbook_should_skip_completed(
+        "2600000001", Settings()
+    )
+    assert cdp_portal_service._workbook_should_skip_completed(
+        "2600000002", Settings()
+    )
+    assert build_calls == [workbook]
+
+
+def test_batch_fast_plan_starts_from_valid_completed_index_anchor_page(
     tmp_path: Path,
     monkeypatch,
 ) -> None:
@@ -401,7 +553,7 @@ def test_batch_fast_plan_does_not_start_from_protocol_only_completed_index_ancho
 
     def fake_read_rows(page) -> list[dict]:
         read_pages.append(active_page["value"])
-        assert active_page["value"] == 1
+        assert active_page["value"] == 3
         return page_three
 
     monkeypatch.setattr(cdp_portal_service, "get_active_numeric_page", lambda page: active_page["value"])
@@ -409,12 +561,9 @@ def test_batch_fast_plan_does_not_start_from_protocol_only_completed_index_ancho
     monkeypatch.setattr(
         cdp_portal_service,
         "ensure_listing_starts_on_page_one",
-        lambda page: {
-            "success": True,
-            "status": "already_on_first_page",
-            "initial_active_page": 1,
-            "active_page_after": 1,
-        },
+        lambda page: (_ for _ in ()).throw(
+            AssertionError("valid completed index anchor should avoid reset to page 1")
+        ),
     )
     monkeypatch.setattr(
         cdp_portal_service, "read_current_page_table_with_row_handles", fake_read_rows
@@ -438,10 +587,16 @@ def test_batch_fast_plan_does_not_start_from_protocol_only_completed_index_ancho
         settings=Settings(),
     )
 
-    assert navigate_targets == []
-    assert read_pages == [1]
-    assert "completed_index_resume_page" not in summary
-    assert summary["pages_visited"] == [1]
+    assert navigate_targets == [3]
+    assert read_pages == [3, 3]
+    assert summary["completed_index_anchor_navigation"]["success"] is True
+    assert summary["completed_index_anchor_navigation"]["active_page_after"] == 3
+    assert summary["batch_fast_light_scan_status"] == (
+        "light_scan_first_pending_page_found"
+    )
+    assert summary["batch_fast_light_scan_pages_visited"] == [3]
+    assert summary["batch_fast_light_scan_first_pending_page"] == 3
+    assert summary["pages_visited"] == [3]
     assert [item["protocol"] for item in summary["selected_protocols"]] == [
         "2600001050",
         "2600001051",
@@ -450,7 +605,7 @@ def test_batch_fast_plan_does_not_start_from_protocol_only_completed_index_ancho
     assert summary["total_errors"] == 0
 
 
-def test_batch_fast_anchor_navigation_requires_explicit_page_proof(
+def test_batch_fast_anchor_navigation_rejects_unconfirmed_page(
     tmp_path: Path,
     monkeypatch,
 ) -> None:
@@ -521,7 +676,43 @@ def test_batch_fast_anchor_navigation_requires_explicit_page_proof(
         skip_already_completed=True,
     )
 
-    assert navigation is None
+    assert navigation is not None
+    assert navigation["success"] is False
+    assert navigation["status"] == "completed_index_anchor_unconfirmed_page"
+
+
+def test_batch_fast_anchor_estimates_page_from_workbook_completion_index(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    workbook_path = tmp_path / "planilha.xlsx"
+    workbook_path.write_bytes(b"workbook-with-completed-2026-rows")
+    complete_records = {
+        f"2600{protocol:06d}": {"success": True, "complete": True}
+        for protocol in range(120)
+    }
+
+    class Settings(DummySettings):
+        OP5_RECONCILIATION_MODE = "batch_fast"
+        APPLY_EXCEL = True
+        PORTAL_LISTING_PAGE_SIZE = 50
+        planilha_path = workbook_path
+        logs_dir_path = tmp_path / "logs"
+
+    monkeypatch.setattr(
+        cdp_portal_service,
+        "load_or_build_workbook_index",
+        lambda *_args, **_kwargs: {"protocols": complete_records},
+    )
+
+    anchor_page = (
+        cdp_portal_service._batch_fast_workbook_completion_estimated_anchor_page(
+            Settings(),
+            skip_already_completed=True,
+        )
+    )
+
+    assert anchor_page == 2
 
 
 def test_batch_fast_anchor_ignores_target_protocol_index_scope(
@@ -1258,6 +1449,72 @@ def test_reset_listing_recovers_by_menu_when_previous_button_is_missing(
     assert result["listing_reset_recovery"]["method"] == "recovered_first_page_by_menu"
     assert menu_clicks == ["menu"]
     assert waits == ["listing"]
+
+
+def test_reset_listing_menu_recovery_navigates_to_first_page_when_reopened_on_page_two(
+    monkeypatch,
+) -> None:
+    active_pages = iter([7, 7, 2])
+    navigation_results = iter(
+        [
+            {
+                "success": False,
+                "status": "pagination_previous_not_found",
+                "method": "numeric_page_navigation",
+                "target_page_number": 1,
+                "active_page_after": 7,
+                "error": (
+                    "Nao foi possivel navegar sequencialmente ate a pagina 1. "
+                    "Parou antes da pagina 6. Motivo: pagination_previous_not_found"
+                ),
+            },
+            {
+                "success": True,
+                "status": "recovered_listing_by_numeric_page",
+                "method": "recovered_listing_by_numeric_page",
+                "target_page_number": 1,
+                "active_page_after": 1,
+                "error": None,
+            },
+        ]
+    )
+    targets = []
+
+    monkeypatch.setattr(
+        cdp_portal_service,
+        "get_active_numeric_page",
+        lambda page: next(active_pages),
+    )
+    monkeypatch.setattr(
+        cdp_portal_service,
+        "navigate_to_numeric_page",
+        lambda page, target: targets.append(target) or next(navigation_results),
+    )
+    monkeypatch.setattr(
+        cdp_portal_service,
+        "_click_minhas_solicitacoes_navigation",
+        lambda page: True,
+    )
+    monkeypatch.setattr(
+        cdp_portal_service,
+        "_wait_minhas_solicitacoes",
+        lambda page: True,
+    )
+    monkeypatch.setattr(
+        cdp_portal_service,
+        "read_current_page_table_with_row_handles",
+        lambda page: [_row("SYNTH_RESET_MENU_PAGE_TWO")],
+    )
+
+    result = ensure_listing_starts_on_page_one(FakePage())
+
+    assert result["success"] is True
+    assert result["status"] == "reset_to_first_page_after_listing_recovery"
+    assert result["active_page_after"] == 1
+    assert result["listing_reset_recovery"]["method"] == (
+        "recovered_first_page_by_menu_then_numeric_page"
+    )
+    assert targets == [1, 1]
 
 
 def test_reset_listing_recovers_empty_unconfirmed_listing_by_menu(
@@ -3265,6 +3522,65 @@ def test_origin_page_navigates_to_numeric_page_when_protocol_is_not_visible(
     assert result["method"] == "recovered_listing_by_numeric_page"
     assert result["protocol_found_on_origin_page"] is True
     assert result["row"]["record"].protocol == "2603"
+
+
+def test_origin_page_uses_numeric_navigation_to_return_to_first_page_passively(
+    monkeypatch,
+) -> None:
+    request = PortalSolicitation(
+        protocol="2601",
+        client_name="CLIENTE SINTETICO LTDA",
+        status="CONCLUIDA",
+        page_number=1,
+        row_index=67,
+    )
+    pages = [[_row("2602")], [_row("2601")]]
+    numeric_targets = []
+
+    monkeypatch.setattr(
+        cdp_portal_service,
+        "_recover_minhas_solicitacoes",
+        lambda *args, **kwargs: {
+            "success": True,
+            "status": "already_on_listing",
+            "method": "current_page",
+            "url_after": "https://portal/listagem",
+        },
+    )
+    monkeypatch.setattr(cdp_portal_service, "get_active_numeric_page", lambda page: 2)
+    monkeypatch.setattr(
+        cdp_portal_service,
+        "read_current_page_table_with_row_handles",
+        lambda page: pages.pop(0),
+    )
+
+    def fake_navigate(page, target):
+        numeric_targets.append(target)
+        return {
+            "success": True,
+            "status": "recovered_listing_by_numeric_page",
+            "method": "recovered_listing_by_reverse_sequential_numeric_page",
+            "target_page_number": target,
+            "active_page_after": target,
+            "url_after": "https://portal/listagem",
+            "error": None,
+        }
+
+    monkeypatch.setattr(cdp_portal_service, "navigate_to_numeric_page", fake_navigate)
+
+    result = ensure_request_origin_page(
+        FakePage(),
+        request,
+        "https://gdneoenergiapernambuco.neoenergia.com/pages/acompanhamento/index.jsf",
+        allow_active_navigation=False,
+    )
+
+    assert numeric_targets == [1]
+    assert result["success"] is True
+    assert result["status"] == "protocol_found_on_origin_page"
+    assert result["method"] == "recovered_listing_by_reverse_sequential_numeric_page"
+    assert result["protocol_found_on_origin_page"] is True
+    assert result["row"]["record"].protocol == "2601"
 
 
 def test_origin_navigation_recovers_when_detail_return_leaves_listing_on_wrong_page(

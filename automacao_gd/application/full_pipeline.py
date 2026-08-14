@@ -402,7 +402,11 @@ def run_op5_archive_plan(
             )
         _persist_pipeline_reports(archive_settings.logs_dir_path, payload)
         if payload["status"] == OperationStatus.SUCESSO.value:
-            plan_path = _persist_op5_plan(archive_settings.logs_dir_path, payload)
+            plan_path, plan_payload = _persist_op5_plan(
+                archive_settings.logs_dir_path,
+                payload,
+            )
+            _project_accepted_op5_plan_payload(payload, plan_payload)
             payload["op5_plan_path"] = str(plan_path)
             payload["op5_plan_digest"] = _file_sha256(plan_path)
             _persist_pipeline_reports(archive_settings.logs_dir_path, payload)
@@ -600,24 +604,13 @@ def _run_full_cdp_pipeline_locked(
     )
     dry_run_plan: FrozenDryRunPlan | None = None
     if settings.DRY_RUN:
-        planning_candidate_limit = _op5_planning_candidate_limit(
-            settings,
-            authorization,
-        )
-        download_settings = (
-            settings.model_copy(
-                update={"MAX_COMPLETED_TO_PROCESS": planning_candidate_limit}
-            )
-            if planning_candidate_limit != authorization.requested_batch_limit
-            else settings
-        )
-        download_summary = _run_download_step(download_settings, state_store)
+        download_summary = _run_download_step(settings, state_store)
         limited_selection = apply_authorized_global_protocol_limit(
             download_summary,
             authorization,
-            processing_limit=planning_candidate_limit,
         )
         download_summary = limited_selection.summary
+        download_summary["planning_candidate_limit"] = authorization.requested_batch_limit
         download_summary.update(
             _persist_eligibility_cache_if_applicable(settings, download_summary)
         )
@@ -729,7 +722,8 @@ def _run_full_cdp_pipeline_locked(
         logger.info(f"Relatorio consolidado Markdown salvo em: {markdown_path}")
     if settings.DRY_RUN and _op5_payload_can_persist_plan(payload):
         source_status = payload.get("status")
-        plan_path = _persist_op5_plan(settings.logs_dir_path, payload)
+        plan_path, plan_payload = _persist_op5_plan(settings.logs_dir_path, payload)
+        _project_accepted_op5_plan_payload(payload, plan_payload)
         payload["op5_plan_path"] = str(plan_path)
         payload["op5_plan_source_kind"] = "explicit_op5_plan"
         payload["op5_plan_digest"] = _file_sha256(plan_path)
@@ -1199,11 +1193,60 @@ def attach_frozen_pdf_scope(download_summary: dict, scope: FrozenPdfScope) -> No
     }
 
 
-def _persist_op5_plan(logs_dir: Path, payload: dict) -> Path:
+def _persist_op5_plan(logs_dir: Path, payload: dict) -> tuple[Path, dict]:
     plan = _build_op5_plan_payload(payload)
     path = logs_dir / OP5_PLAN_JSON_REPORT_NAME
     atomic_write_json(path, plan)
-    return path
+    return path, plan
+
+
+def _project_accepted_op5_plan_payload(payload: dict, plan: dict) -> None:
+    planned_protocols = [
+        str(item.get("protocol") or "")
+        for item in plan.get("planned_excel_actions") or []
+        if str(item.get("protocol") or "")
+    ]
+    planned_set = set(planned_protocols)
+    payload["source_total_selected"] = payload.get("total_selected", 0)
+    payload["source_total_updates_planned"] = payload.get("total_updates_planned", 0)
+    payload["source_total_errors"] = payload.get("total_errors", 0)
+    for key in (
+        "status",
+        "total_selected",
+        "total_updates_planned",
+        "total_updates_applied",
+        "total_errors",
+        "total_pending_review",
+        "frozen_batch",
+        "frozen_pdf_scope",
+        "planned_excel_actions",
+        "download",
+    ):
+        if key in plan:
+            payload[key] = deepcopy(plan[key])
+    payload["total_protocols_selected_by_global_limit"] = len(planned_protocols)
+    payload["protocols_selected_by_global_limit"] = planned_protocols
+    if not planned_set:
+        return
+    processing = payload.get("processing")
+    if isinstance(processing, dict):
+        processing["source_total_updates_planned"] = processing.get(
+            "total_updates_planned",
+            0,
+        )
+        processing["results"] = [
+            item
+            for item in processing.get("results") or []
+            if isinstance(item, dict)
+            and str(item.get("protocol") or "") in planned_set
+        ]
+        processing["total_updates_planned"] = len(planned_protocols)
+    payload["protocol_results"] = [
+        item
+        for item in payload.get("protocol_results") or []
+        if isinstance(item, dict)
+        and str(item.get("protocol") or "") in planned_set
+    ]
 
 
 def _mark_op5_plan_accepted(payload: dict, *, source_status: object) -> None:

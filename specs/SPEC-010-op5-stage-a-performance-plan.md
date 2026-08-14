@@ -182,11 +182,17 @@ atingir fim/safety cap da listagem ou encontrar erro bloqueante. O relatório de
 separados: concluídos lidos no Portal, selecionados para análise, completos/sem
 alteração, ações Excel planejadas e ações Excel aplicadas.
 
-Em `batch_fast`, o dry-run pode selecionar/analisar candidatos adicionais até o limite
-autorizado quando isso for necessário para compensar protocolos sem ação Excel ou pendentes
-de revisão técnica. Esse overfetch não aumenta o lote real: o `op5_plan_latest.json` deve
-congelar no máximo N `planned_excel_actions`, com `frozen_batch`, `frozen_pdf_scope` e digest
-filtrados para esse subconjunto aplicável.
+Em `batch_fast`, o planejador deve respeitar o limite N informado pelo operador também na coleta
+operacional do Portal. O teto global autorizado valida permissão de lote, mas não pode ampliar
+`MAX_COMPLETED_TO_PROCESS` nem fazer a listagem navegar como se o lote solicitado fosse maior.
+O `op5_plan_latest.json` deve congelar no máximo N `planned_excel_actions`, com
+`frozen_batch`, `frozen_pdf_scope` e digest filtrados para esse subconjunto aplicável.
+Depois que o plano OP5 for aceito, os campos principais retornados ao terminal e ao relatório
+canônico (`total_selected`, `total_updates_planned`, `download`, lote congelado,
+`planned_excel_actions` e `protocol_results`) devem refletir esse subconjunto limitado ao lote
+solicitado. Métricas do conjunto bruto analisado podem permanecer em campos `source_*`, mas não
+podem induzir o operador a acreditar que o `op5-apply` aplicará mais protocolos do que o limite
+informado.
 
 Em `batch_fast`, protocolos com entrada valida e nao expirada em
 `DATA_DIR/state/op5_completed_index.json` devem ser tratados como concluidos localmente quando
@@ -215,6 +221,34 @@ registrar `completed_pages_skipped_already_completed` e
 `total_completed_pages_skipped_already_completed`. Essa regra não autoriza saltar páginas
 cegamente sem validar a página atual do Portal; ela apenas evita trabalho operacional sobre
 linhas já comprovadamente completas.
+
+Antes de montar o lote operacional em `batch_fast`, o planejador pode usar o índice mestre local
+para saltar diretamente para a última página de protocolos comprovadamente completos, desde que cada
+entrada usada como âncora tenha escopo `global_batch_fast`, SHA da planilha atual, PDF local e PDF
+arquivado válidos por SHA-256, aba/linha de planilha e não esteja expirada nem forçada para
+reprocessamento. Esse salto evita reler páginas já completas, como abas de 2026 preenchidas até a
+data atual, mas não autoriza aplicação automática sem revalidar a página ativa do Portal. Se a página
+âncora não puder ser confirmada, o planejador deve voltar ao reset seguro e à varredura normal sem
+aplicar alterações.
+
+Quando não houver âncora local válida, o planejador deve executar uma varredura leve da listagem a
+partir da página 1, limitada por `MAX_PORTAL_PAGES`, lendo apenas os dados mínimos da tabela visível
+necessários para identificar protocolos concluídos e suas origens de página/linha. Para cada página
+lida nessa varredura, a decisão de completude local deve ocorrer somente depois da captura dos
+protocolos visíveis e deve usar evidência vinculada ao SHA atual da planilha quando existir índice
+mestre ou cache local. O planejador pode avançar automaticamente até a primeira página que contenha
+protocolo concluído ainda não comprovadamente completo localmente; a partir dessa página começa a
+coleta normal do lote solicitado. O relatório deve expor `completed_index_anchor_navigation`,
+`batch_fast_light_scan_pages_visited`, `batch_fast_light_scan_completed_pages_skipped`,
+`batch_fast_light_scan_first_pending_page` e `batch_fast_light_scan_stop_reason`.
+
+Quando o índice mestre ainda não possuir páginas confirmadas, mas a planilha atual tiver índice de
+completude local válido para protocolos já preenchidos, o planejador pode usar uma âncora estimada
+conservadora calculada por `floor(total_completos_locais / tamanho_pagina_portal)`. Essa âncora
+estimada não substitui a validação da página do Portal: a navegação só é aceita se a página ativa
+após o clique for exatamente a página estimada, e a varredura leve deve confirmar a tabela visível
+antes de iniciar qualquer coleta operacional. Se a navegação estimada não for confirmada, o fluxo
+deve voltar ao reset seguro para página 1 e seguir a varredura normal.
 
 Em `batch_fast`, a parada incremental e a ordem de processamento devem favorecer candidatos
 processaveis localmente. A leitura do Portal nao deve parar somente porque encontrou N
@@ -459,6 +493,8 @@ Contratos:
 - o subconjunto de `--protocols` deve ser propagado pelo `Settings` efetivo da execução até a
   camada CDP/download; a seleção não pode depender de `get_settings()` global nem de variável de
   ambiente externa para respeitar o lote direcionado;
+- a camada CDP deve aceitar `state_store` somente-leitura que exponha apenas consulta de conclusão
+  local; registro de descoberta é opcional e não pode abortar a seleção do lote;
 - `op5-apply --plan <arquivo>` executa produção somente a partir do plano informado, sem nova
   navegação CDP, com confirmação forte vinculada à quantidade do plano;
 - `op5-audit-global` executa reconciliação global somente leitura, sem download, sem aplicação
@@ -637,6 +673,8 @@ temporariamente se passarem pelos validadores da SPEC-009.
 - RED para `op5-retention-apply` recusando plano ausente, plano alterado ou arquivo fora de `DOWNLOADS_DIR`.
 - RED para saneamento de workbook sem plano ou com SHA da planilha alterado.
 - RED para OP5 permanecer independente dos comandos de saneamento global.
+- RED para `batch_fast` iniciando lote por `portal_page_number` persistido sem varredura leve
+  visivel da listagem atual.
 
 ## Critérios de aceite
 
@@ -646,6 +684,8 @@ temporariamente se passarem pelos validadores da SPEC-009.
 - [ ] `inline_global` preserva comportamento atual da reconciliação.
 - [ ] `batch_fast` permite lote limitado sem reconciliação global obrigatória.
 - [ ] Seleção incremental para ao atingir N elegíveis seguros.
+- [ ] `batch_fast` faz varredura leve desde a página 1, respeita `MAX_PORTAL_PAGES` e só inicia
+      a coleta operacional na primeira página com pendência local comprovada.
 - [ ] Cache legado sem protocolo/SHA não é reutilizado.
 - [ ] Cache de elegibilidade é privado, sanitizado e invalidado por TTL/hash/modo.
 - [ ] Reconciliação global pode ser reutilizada por cache somente com SHA/hashes compatíveis.
