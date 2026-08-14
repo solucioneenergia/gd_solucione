@@ -728,10 +728,12 @@ def _run_full_cdp_pipeline_locked(
         logger.info(f"Relatorio consolidado JSON salvo em: {json_path}")
         logger.info(f"Relatorio consolidado Markdown salvo em: {markdown_path}")
     if settings.DRY_RUN and _op5_payload_can_persist_plan(payload):
+        source_status = payload.get("status")
         plan_path = _persist_op5_plan(settings.logs_dir_path, payload)
         payload["op5_plan_path"] = str(plan_path)
         payload["op5_plan_source_kind"] = "explicit_op5_plan"
         payload["op5_plan_digest"] = _file_sha256(plan_path)
+        _mark_op5_plan_accepted(payload, source_status=source_status)
         logger.info(f"Plano OP5 congelado salvo em: {plan_path}")
         _persist_pipeline_reports(settings.logs_dir_path, payload)
     elif settings.DRY_RUN:
@@ -1204,6 +1206,18 @@ def _persist_op5_plan(logs_dir: Path, payload: dict) -> Path:
     return path
 
 
+def _mark_op5_plan_accepted(payload: dict, *, source_status: object) -> None:
+    if source_status == OperationStatus.SUCESSO.value:
+        return
+    payload["op5_plan_accepted_from_partial"] = True
+    payload["source_status_before_op5_plan"] = source_status
+    payload["status"] = OperationStatus.SUCESSO.value
+    payload["operation_message"] = (
+        "Plano OP5 congelado gerado com acoes seguras; pendencias fora do "
+        "plano foram preservadas no relatorio."
+    )
+
+
 def _invalidate_latest_op5_plan(logs_dir: Path, payload: dict) -> Path:
     path = logs_dir / OP5_PLAN_JSON_REPORT_NAME
     run_error = payload.get("run_error") or (payload.get("download") or {}).get(
@@ -1234,10 +1248,15 @@ def _build_op5_plan_payload(payload: dict) -> dict:
     planned_actions = _planned_excel_actions(processing)
     requested_limit = int(payload.get("requested_batch_limit", 0) or 0)
     if requested_limit > 0:
+        download["requested_batch_limit"] = requested_limit
+    if requested_limit > 0:
         planned_actions = planned_actions[:requested_limit]
     download = _download_summary_for_planned_actions(download, planned_actions)
     planned_count = len(planned_actions)
-    persistable_plan = _op5_payload_can_persist_plan(payload)
+    persistable_plan = _op5_payload_can_persist_plan(
+        payload,
+        planned_actions=planned_actions,
+    )
     return {
         "schema_version": 1,
         "created_at": datetime.now().isoformat(timespec="seconds"),
@@ -1310,7 +1329,11 @@ def _op5_planning_candidate_limit(
     return max(requested, authorized)
 
 
-def _op5_payload_can_persist_plan(payload: dict) -> bool:
+def _op5_payload_can_persist_plan(
+    payload: dict,
+    *,
+    planned_actions: list[dict[str, str]] | None = None,
+) -> bool:
     if payload.get("run_error"):
         return False
     status = str(payload.get("status") or "")
@@ -1320,8 +1343,13 @@ def _op5_payload_can_persist_plan(payload: dict) -> bool:
     processing = processing if isinstance(processing, dict) else {}
     if processing.get("blocked_real_run"):
         return False
-    if not _planned_excel_actions(processing):
+    planned_actions = planned_actions or _planned_excel_actions(processing)
+    if not planned_actions:
         return False
+    requested_limit = int(payload.get("requested_batch_limit", 0) or 0)
+    has_requested_safe_actions = (
+        requested_limit > 0 and len(planned_actions) >= requested_limit
+    )
     if status == OperationStatus.SUCESSO.value:
         return True
     total_errors = int(payload.get("total_errors", 0) or 0)
@@ -1339,12 +1367,20 @@ def _op5_payload_can_persist_plan(payload: dict) -> bool:
             "total_failed_protocols",
         )
     )
-    if blocking_error_total:
+    if blocking_error_total and not has_requested_safe_actions:
         return False
-    if total_errors != total_pending_review:
+    if total_errors != total_pending_review and not has_requested_safe_actions:
         return False
+    planned_protocols = {
+        str(item.get("protocol") or "")
+        for item in planned_actions
+        if str(item.get("protocol") or "")
+    }
     for item in processing.get("results") or []:
         if not isinstance(item, dict):
+            continue
+        protocol = str(item.get("protocol") or "")
+        if has_requested_safe_actions and protocol and protocol not in planned_protocols:
             continue
         excel_status = item.get("excel_status")
         excel_status = excel_status if isinstance(excel_status, dict) else {}
@@ -1397,6 +1433,9 @@ def _download_summary_for_planned_actions(
     frozen_batch = download.get("frozen_batch")
     if isinstance(frozen_batch, dict):
         frozen_batch["protocols"] = planned_protocols
+        requested_batch_limit = int(download.get("requested_batch_limit") or 0)
+        if requested_batch_limit > 0:
+            frozen_batch["requested_limit"] = requested_batch_limit
 
     frozen_scope = download.get("frozen_pdf_scope")
     if isinstance(frozen_scope, dict):
@@ -1795,7 +1834,7 @@ def apply_authorized_global_protocol_limit(
     download_summary["protocols_added_after_limit"] = 0
     download_summary["duplicate_protocols_in_frozen_batch"] = 0
     frozen_batch = FrozenProtocolBatch(
-        requested_limit=authorization.requested_batch_limit,
+        requested_limit=limit,
         authorized_limit=authorization.authorized_batch_limit,
         authorization_scope=authorization.authorization_scope,
         protocols=tuple(selected_protocols),

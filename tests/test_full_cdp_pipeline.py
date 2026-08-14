@@ -1208,6 +1208,216 @@ def test_reset_listing_fails_closed_when_context_destroyed_and_listing_not_confi
     assert waits == ["wait"]
 
 
+def test_reset_listing_recovers_by_menu_when_previous_button_is_missing(
+    monkeypatch,
+) -> None:
+    active_pages = iter([6, 6, 1])
+    menu_clicks = []
+    waits = []
+
+    monkeypatch.setattr(
+        cdp_portal_service,
+        "get_active_numeric_page",
+        lambda page: next(active_pages),
+    )
+    monkeypatch.setattr(
+        cdp_portal_service,
+        "navigate_to_numeric_page",
+        lambda page, target: {
+            "success": False,
+            "status": "pagination_previous_not_found",
+            "method": "recovered_listing_by_reverse_sequential_numeric_page",
+            "target_page_number": target,
+            "error": (
+                "Nao foi possivel navegar sequencialmente ate a pagina 1. "
+                "Parou antes da pagina 6. Motivo: pagination_previous_not_found"
+            ),
+        },
+    )
+    monkeypatch.setattr(
+        cdp_portal_service,
+        "_click_minhas_solicitacoes_navigation",
+        lambda page: menu_clicks.append("menu") or True,
+    )
+    monkeypatch.setattr(
+        cdp_portal_service,
+        "_wait_minhas_solicitacoes",
+        lambda page: waits.append("listing") or True,
+    )
+    monkeypatch.setattr(
+        cdp_portal_service,
+        "read_current_page_table_with_row_handles",
+        lambda page: [_row("SYNTH_RESET_MENU")],
+    )
+
+    result = ensure_listing_starts_on_page_one(FakePage())
+
+    assert result["success"] is True
+    assert result["status"] == "reset_to_first_page_after_listing_recovery"
+    assert result["active_page_after"] == 1
+    assert result["listing_reset_recovery"]["method"] == "recovered_first_page_by_menu"
+    assert menu_clicks == ["menu"]
+    assert waits == ["listing"]
+
+
+def test_reset_listing_recovers_empty_unconfirmed_listing_by_menu(
+    monkeypatch,
+) -> None:
+    active_pages = iter([None, 1])
+    rows = iter([[], [], [_row("SYNTH_RESET_EMPTY_MENU")]])
+    menu_clicks = []
+    waits = []
+
+    monkeypatch.setattr(
+        cdp_portal_service,
+        "get_active_numeric_page",
+        lambda page: next(active_pages),
+    )
+    monkeypatch.setattr(
+        cdp_portal_service,
+        "read_current_page_table_with_row_handles",
+        lambda page: next(rows),
+    )
+    monkeypatch.setattr(cdp_portal_service, "_wait_after_pagination_click", lambda page: None)
+    monkeypatch.setattr(
+        cdp_portal_service,
+        "_click_minhas_solicitacoes_navigation",
+        lambda page: menu_clicks.append("menu") or True,
+    )
+    monkeypatch.setattr(
+        cdp_portal_service,
+        "_wait_minhas_solicitacoes",
+        lambda page: waits.append("listing") or True,
+    )
+
+    result = ensure_listing_starts_on_page_one(FakePage())
+
+    assert result["success"] is True
+    assert result["status"] == "reset_to_first_page_after_listing_recovery"
+    assert result["active_page_after"] == 1
+    assert result["listing_reset_recovery"]["method"] == "recovered_first_page_by_menu"
+    assert menu_clicks == ["menu"]
+    assert waits == ["listing"]
+
+
+def test_reset_listing_recovers_empty_unconfirmed_listing_by_url_fallback(
+    monkeypatch,
+) -> None:
+    active_pages = iter([None, 1])
+    rows = iter([[], [], [_row("SYNTH_RESET_EMPTY_URL")]])
+    recoveries = []
+
+    monkeypatch.setattr(
+        cdp_portal_service,
+        "get_active_numeric_page",
+        lambda page: next(active_pages),
+    )
+    monkeypatch.setattr(
+        cdp_portal_service,
+        "read_current_page_table_with_row_handles",
+        lambda page: next(rows),
+    )
+    monkeypatch.setattr(cdp_portal_service, "_wait_after_pagination_click", lambda page: None)
+    monkeypatch.setattr(
+        cdp_portal_service,
+        "_click_minhas_solicitacoes_navigation",
+        lambda page: False,
+    )
+    monkeypatch.setattr(
+        cdp_portal_service,
+        "_recover_minhas_solicitacoes",
+        lambda page, listing_url: recoveries.append(listing_url)
+        or {
+            "success": True,
+            "status": "recovered_listing_by_url",
+            "method": "recovered_listing_by_url",
+        },
+    )
+
+    result = ensure_listing_starts_on_page_one(
+        FakePage(),
+        listing_url="https://portal.example/minhas",
+    )
+
+    assert result["success"] is True
+    assert result["status"] == "reset_to_first_page_after_listing_recovery"
+    assert result["active_page_after"] == 1
+    assert result["listing_reset_recovery"]["method"] == "recovered_listing_by_url"
+    assert recoveries == ["https://portal.example/minhas"]
+
+
+def test_reset_listing_recovers_empty_unconfirmed_listing_by_authenticated_home(
+    monkeypatch,
+) -> None:
+    active_pages = iter([None, 1])
+    rows = iter([[], [], [_row("SYNTH_RESET_EMPTY_HOME")]])
+    home_recoveries = []
+
+    monkeypatch.setattr(
+        cdp_portal_service,
+        "get_active_numeric_page",
+        lambda page: next(active_pages),
+    )
+    monkeypatch.setattr(
+        cdp_portal_service,
+        "read_current_page_table_with_row_handles",
+        lambda page: next(rows),
+    )
+    monkeypatch.setattr(cdp_portal_service, "_wait_after_pagination_click", lambda page: None)
+    monkeypatch.setattr(
+        cdp_portal_service,
+        "_click_minhas_solicitacoes_navigation",
+        lambda page: False,
+    )
+    monkeypatch.setattr(
+        cdp_portal_service,
+        "_recover_minhas_solicitacoes",
+        lambda page, listing_url: {
+            "success": False,
+            "error": "manual recovery required",
+        },
+    )
+    monkeypatch.setattr(
+        cdp_portal_service,
+        "_recover_listing_by_authenticated_home_icon",
+        lambda page, listing_url, previous_error=None: home_recoveries.append(
+            previous_error
+        )
+        or {
+            "success": True,
+            "status": "recovered_listing_by_authenticated_home_icon",
+            "method": "recovered_listing_by_authenticated_home_icon",
+        },
+    )
+
+    result = ensure_listing_starts_on_page_one(
+        FakePage(),
+        listing_url="https://portal.example/minhas",
+    )
+
+    assert result["success"] is True
+    assert result["status"] == "reset_to_first_page_after_listing_recovery"
+    assert result["listing_reset_recovery"]["method"] == (
+        "recovered_listing_by_authenticated_home_icon"
+    )
+    assert home_recoveries == ["manual recovery required"]
+
+
+def test_portal_login_required_detects_captcha_login_page() -> None:
+    class BodyLocator:
+        def inner_text(self, timeout: int = 0) -> str:
+            return "Change the CAPTCHA code Entrar Esqueceu sua senha?"
+
+    class LoginPage:
+        url = "https://gdneoenergiapernambuco.neoenergia.com/index.jsf"
+
+        def locator(self, selector: str) -> BodyLocator:
+            assert selector == "body"
+            return BodyLocator()
+
+    assert cdp_portal_service._page_looks_login_required(LoginPage()) is True
+
+
 def test_reset_listing_accepts_disabled_page_one_when_active_indicator_missing(
     monkeypatch,
 ) -> None:
@@ -2027,6 +2237,9 @@ def test_op5_plan_caps_overfetched_actions_to_requested_limit() -> None:
         "total_errors": 0,
         "download": {
             "frozen_batch": {
+                "requested_limit": 4,
+                "authorized_limit": 4,
+                "authorization_scope": "CONTROLLED_PRODUCTION_OPTION5_UP_TO_60",
                 "protocols": ["2600001049", "2600001050", "2600001051"]
             },
             "frozen_pdf_scope": {
@@ -2091,7 +2304,104 @@ def test_op5_plan_caps_overfetched_actions_to_requested_limit() -> None:
         "2600001049",
         "2600001050",
     ]
+    assert plan["download"]["frozen_batch"]["requested_limit"] == 2
     assert plan["download"]["frozen_pdf_scope"]["digest"] == expected_digest
+
+
+def test_op5_plan_persists_safe_requested_actions_from_partial_overfetch(
+    tmp_path: Path,
+) -> None:
+    workbook = tmp_path / "planilha.xlsx"
+    workbook.write_bytes(b"synthetic workbook")
+    safe_results = [
+        {
+            "protocol": f"SYNTH_SAFE_{i:04d}",
+            "success": True,
+            "excel_status": {"action": "update_existing"},
+        }
+        for i in range(1, 56)
+    ]
+    pending_results = [
+        {
+            "protocol": "SYNTH_PENDING_A",
+            "success": False,
+            "action": "pending_technical_review",
+            "technical_review_required": True,
+            "technical_validation_status": "pending_review",
+        },
+        {
+            "protocol": "SYNTH_PENDING_B",
+            "success": False,
+            "action": "pending_technical_review",
+            "technical_review_required": True,
+            "technical_validation_status": "pending_review",
+        },
+    ]
+    payload = {
+        "status": "PARCIAL",
+        "run_error": None,
+        "requested_batch_limit": 30,
+        "authorized_batch_limit": 60,
+        "authorization_scope": "CONTROLLED_PRODUCTION_OPTION5_UP_TO_60",
+        "workbook_path": str(workbook),
+        "total_errors": 5,
+        "total_pending_review": 2,
+        "total_cdp_errors": 3,
+        "total_download_errors": 0,
+        "total_real_extraction_errors": 3,
+        "total_real_application_errors": 0,
+        "total_failed_protocols": 0,
+        "processing": {
+            "total_errors": 2,
+            "total_pending_review": 2,
+            "results": safe_results + pending_results,
+        },
+        "download": {
+            "requested_batch_limit": 30,
+            "frozen_batch": {
+                "requested_limit": 60,
+                "authorized_limit": 60,
+                "authorization_scope": "CONTROLLED_PRODUCTION_OPTION5_UP_TO_60",
+                "protocols": [item["protocol"] for item in safe_results],
+            },
+            "frozen_pdf_scope": {
+                "digest": "synthetic-digest",
+                "artifacts": [
+                    {
+                        "protocol": item["protocol"],
+                        "path": str(tmp_path / f"{item['protocol']}.pdf"),
+                        "sha256": "0" * 64,
+                    }
+                    for item in safe_results
+                ],
+            },
+            "results": [
+                {"protocol": item["protocol"], "download_status": "existing_reused"}
+                for item in safe_results
+            ],
+        },
+    }
+
+    plan = full_pipeline._build_op5_plan_payload(payload)
+
+    assert plan["status"] == "SUCESSO"
+    assert plan["source_status"] == "PARCIAL"
+    assert plan["total_updates_planned"] == 30
+    assert plan["total_errors"] == 0
+    assert plan["source_total_errors"] == 5
+    assert plan["download"]["frozen_batch"]["requested_limit"] == 30
+    assert len(plan["planned_excel_actions"]) == 30
+
+
+def test_op5_plan_acceptance_marks_partial_payload_as_success() -> None:
+    payload = {"status": "PARCIAL", "operation_message": "parcial original"}
+
+    full_pipeline._mark_op5_plan_accepted(payload, source_status="PARCIAL")
+
+    assert payload["status"] == "SUCESSO"
+    assert payload["op5_plan_accepted_from_partial"] is True
+    assert payload["source_status_before_op5_plan"] == "PARCIAL"
+    assert "pendencias fora do plano" in payload["operation_message"]
 
 
 def test_batch_fast_dry_run_uses_authorized_limit_as_candidate_limit() -> None:
@@ -2472,6 +2782,62 @@ def test_numeric_navigation_to_previous_hidden_page_uses_previous_button(
     assert result["active_page_after"] == 1
     assert result["method"] == "recovered_listing_by_reverse_sequential_numeric_page"
     assert previous_clicks == [3, 2]
+
+
+def test_numeric_navigation_to_first_page_uses_lowest_visible_page_when_previous_missing(
+    monkeypatch,
+) -> None:
+    state = {"page": 7}
+    numeric_clicks = []
+
+    monkeypatch.setattr(cdp_portal_service, "get_active_numeric_page", lambda page: state["page"])
+    monkeypatch.setattr(
+        cdp_portal_service,
+        "read_current_page_table_with_row_handles",
+        lambda page: _page(state["page"] * 10, 2),
+    )
+
+    def fake_numeric(page, current_page_number: int) -> dict:
+        numeric_clicks.append(current_page_number)
+        target = current_page_number + 1
+        if target == 1 and state["page"] == 7:
+            return {
+                "found": False,
+                "enabled": False,
+                "clicked": False,
+                "target_page_number": 1,
+                "numeric_page_links_found": ["2", "3", "4", "5", "6", "7", "8", "9", "10", "11"],
+                "stop_reason": "pagination_numeric_target_not_found",
+            }
+        state["page"] = target
+        return {
+            "found": True,
+            "enabled": True,
+            "clicked": True,
+            "target_page_number": target,
+            "numeric_page_links_found": ["1", "2", "3"] if target == 1 else ["2", "3", "4"],
+            "stop_reason": "pagination_numeric_page_clicked",
+        }
+
+    monkeypatch.setattr(cdp_portal_service, "find_and_click_next_numeric_page", fake_numeric)
+    monkeypatch.setattr(
+        cdp_portal_service,
+        "find_and_click_previous_listing_page",
+        lambda page, current_page_number: {
+            "found": False,
+            "enabled": False,
+            "clicked": False,
+            "stop_reason": "pagination_previous_not_found",
+        },
+    )
+    monkeypatch.setattr(cdp_portal_service, "_wait_after_pagination_click", lambda page: None)
+
+    result = navigate_to_numeric_page(FakePage(), 1)
+
+    assert result["success"] is True
+    assert result["active_page_after"] == 1
+    assert result["method"] == "recovered_listing_by_visible_numeric_window"
+    assert numeric_clicks == [0, 1, 0]
 
 
 def test_numeric_navigation_accepts_changed_table_when_active_indicator_is_stale(

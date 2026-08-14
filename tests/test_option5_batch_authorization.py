@@ -272,6 +272,33 @@ def test_frozen_batch_selects_exactly_50_when_explicitly_authorized(tmp_path) ->
     ]
 
 
+def test_frozen_batch_allows_authorized_planning_candidates_above_requested_limit(
+    tmp_path,
+) -> None:
+    summary = _items(tmp_path, *(f"SYNTH{i:04d}" for i in range(1, 62)))
+    authorization = full_pipeline.validate_requested_batch_limit(
+        30,
+        full_pipeline.batch_authorization_policy_from_settings(
+            SimpleNamespace(OPTION5_AUTHORIZED_MAX_PROTOCOLS=60)
+        ),
+    )
+
+    limited = full_pipeline.apply_authorized_global_protocol_limit(
+        summary,
+        authorization,
+        processing_limit=60,
+    )
+
+    assert limited.summary["requested_batch_limit"] == 30
+    assert limited.summary["global_protocol_limit"] == 30
+    assert limited.summary["planning_candidate_limit"] == 60
+    assert limited.frozen_batch.requested_limit == 60
+    assert limited.frozen_batch.authorized_limit == 60
+    assert len(limited.frozen_batch.protocols) == 60
+    assert limited.frozen_batch.dropped_by_limit == 1
+    assert limited.summary["protocols_dropped_by_global_limit"] == ["SYNTH0061"]
+
+
 def test_frozen_batch_scope_violation_blocks_unknown_protocol_after_freeze() -> None:
     batch = full_pipeline.FrozenProtocolBatch(
         requested_limit=10,

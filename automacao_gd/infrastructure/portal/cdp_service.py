@@ -152,6 +152,26 @@ def _page_looks_access_denied(page) -> bool:
         return False
 
 
+def _page_looks_login_required(page) -> bool:
+    try:
+        url = (page.url or "").lower()
+        body_text = page.locator("body").inner_text(timeout=500).lower()
+    except Exception:
+        return False
+    if "captcha" in body_text and "entrar" in body_text:
+        return True
+    if "esqueceu sua senha" in body_text or "cadastrar novo" in body_text:
+        return True
+    return _is_portal_root_or_index_url(url) and "entrar" in body_text
+
+
+def portal_login_required_message() -> str:
+    return (
+        "Sessao do Portal GD expirada ou tela de login/CAPTCHA detectada. "
+        "Faca login manual no Edge e deixe a listagem 'Minhas Solicitacoes' aberta."
+    )
+
+
 def is_insecure_portal_http_url(url: str) -> bool:
     parsed = urlparse(url or "")
     return parsed.scheme == "http" and parsed.netloc.lower() == PORTAL_GD_HOST
@@ -1657,6 +1677,16 @@ def download_completed_budgets_from_current_page(
         summary["total_cdp_errors"] = 1
         summary["total_errors"] = 1
         return summary
+    if _page_looks_login_required(page):
+        summary["run_error"] = portal_login_required_message()
+        summary["aborted"] = True
+        summary["abort_reason"] = summary["run_error"]
+        summary["finished_at"] = datetime.now().isoformat(timespec="seconds")
+        logger.error(summary["run_error"])
+        _refresh_download_totals(summary)
+        summary["total_cdp_errors"] = 1
+        summary["total_errors"] = 1
+        return summary
 
     batch_fast_mode = _is_batch_fast_mode(settings)
     collection = _batch_fast_cached_local_collection(
@@ -1688,7 +1718,10 @@ def download_completed_budgets_from_current_page(
                 "active_page_before"
             )
         if completed_index_resume is None or not completed_index_resume.get("success"):
-            reset_result = ensure_listing_starts_on_page_one(page)
+            reset_result = _ensure_listing_starts_on_page_one_with_optional_url(
+                page,
+                listing_url,
+            )
             summary["pagination_initial_active_page"] = reset_result.get(
                 "initial_active_page"
             )
@@ -2645,7 +2678,7 @@ def get_active_numeric_page(page) -> int | None:
         return None
 
 
-def ensure_listing_starts_on_page_one(page) -> dict:
+def ensure_listing_starts_on_page_one(page, listing_url: str | None = None) -> dict:
     result: dict[str, Any] = {
         "success": False,
         "status": None,
@@ -2665,6 +2698,22 @@ def ensure_listing_starts_on_page_one(page) -> dict:
                     "success": True,
                     "status": first_page_probe["status"],
                     "active_page_after": 1,
+                    "error": None,
+                }
+            )
+            return result
+        listing_recovery = _recover_first_page_after_reset_failure(
+            page,
+            first_page_probe,
+            listing_url=listing_url,
+        )
+        result["listing_reset_recovery"] = listing_recovery
+        result["active_page_after"] = listing_recovery.get("active_page_after")
+        if listing_recovery.get("success"):
+            result.update(
+                {
+                    "success": True,
+                    "status": "reset_to_first_page_after_listing_recovery",
                     "error": None,
                 }
             )
@@ -2718,6 +2767,23 @@ def ensure_listing_starts_on_page_one(page) -> dict:
         result.update({"success": True, "status": "reset_to_first_page"})
         return result
 
+    listing_recovery = _recover_first_page_after_reset_failure(
+        page,
+        navigation,
+        listing_url=listing_url,
+    )
+    result["listing_reset_recovery"] = listing_recovery
+    result["active_page_after"] = listing_recovery.get("active_page_after", active_after)
+    if listing_recovery.get("success"):
+        result.update(
+            {
+                "success": True,
+                "status": "reset_to_first_page_after_listing_recovery",
+                "error": None,
+            }
+        )
+        return result
+
     result.update(
         {
             "status": "pagination_could_not_reset_to_first_page",
@@ -2730,6 +2796,81 @@ def ensure_listing_starts_on_page_one(page) -> dict:
     return result
 
 
+def _ensure_listing_starts_on_page_one_with_optional_url(
+    page,
+    listing_url: str | None,
+) -> dict:
+    try:
+        return ensure_listing_starts_on_page_one(page, listing_url=listing_url)
+    except TypeError as exc:
+        if "unexpected keyword argument 'listing_url'" not in str(exc):
+            raise
+        return ensure_listing_starts_on_page_one(page)
+
+
+def _recover_first_page_after_reset_failure(
+    page,
+    navigation: dict,
+    *,
+    listing_url: str | None = None,
+) -> dict:
+    result = {
+        "success": False,
+        "status": "failed_first_page_listing_recovery",
+        "method": None,
+        "active_page_after": None,
+        "error": navigation.get("error") or navigation.get("status"),
+    }
+    if _click_minhas_solicitacoes_navigation(page):
+        result["method"] = "recovered_first_page_by_menu"
+        if not _wait_minhas_solicitacoes(page):
+            result["error"] = manual_cdp_listing_recovery_message()
+            return result
+    elif listing_url:
+        recovery = _recover_minhas_solicitacoes(page, listing_url)
+        result["full_listing_recovery"] = recovery
+        if recovery.get("success"):
+            result["method"] = recovery.get("method") or "recovered_first_page_by_listing"
+        else:
+            previous_error = recovery.get("error") or result["error"]
+            if not isinstance(previous_error, str):
+                previous_error = None
+            home_recovery = _recover_listing_by_authenticated_home_icon(
+                page,
+                listing_url,
+                previous_error=previous_error,
+            )
+            result["authenticated_home_recovery"] = home_recovery
+            if not home_recovery.get("success"):
+                result["error"] = home_recovery.get("error") or recovery.get("error")
+                return result
+            result["method"] = (
+                home_recovery.get("method") or "recovered_listing_by_authenticated_home_icon"
+            )
+    else:
+        return result
+    try:
+        active_after = get_active_numeric_page(page)
+        rows_after = read_current_page_table_with_row_handles(page)
+    except Exception as exc:
+        result["error"] = str(exc)
+        return result
+    result["active_page_after"] = active_after
+    if active_after == 1 and rows_after:
+        result.update(
+            {
+                "success": True,
+                "status": "recovered_first_page_by_menu",
+                "error": None,
+            }
+        )
+        return result
+    result["error"] = (
+        f"Pagina ativa apos reabrir Minhas Solicitacoes: {active_after}; esperado: 1."
+    )
+    return result
+
+
 def _is_execution_context_destroyed_error(error: Any) -> bool:
     if not error:
         return False
@@ -2738,6 +2879,128 @@ def _is_execution_context_destroyed_error(error: Any) -> bool:
         "execution context was destroyed" in error_text
         or "cannot find context with specified id" in error_text
     )
+
+
+def _navigate_to_numeric_page_via_visible_window(
+    page,
+    *,
+    target_page_number: int,
+    active_page_before: int,
+    signature_before: tuple,
+    click_result: dict,
+) -> dict:
+    target = int(target_page_number)
+    active_before = int(active_page_before)
+    visible_pages = sorted(
+        {
+            int(str(link))
+            for link in click_result.get("numeric_page_links_found", [])
+            if str(link).isdigit()
+        }
+    )
+    intermediate_candidates = [
+        page_number
+        for page_number in visible_pages
+        if target < page_number < active_before
+    ]
+    diagnostics: list[dict] = []
+    result = {
+        "success": False,
+        "status": "pagination_visible_window_not_available",
+        "method": "visible_numeric_window_navigation",
+        "target_page_number": target,
+        "active_page_before": active_before,
+        "active_page_after": active_before,
+        "signature_before": signature_before,
+        "signature_after": signature_before,
+        "visible_pages": visible_pages,
+        "intermediate_page_number": None,
+        "diagnostics": diagnostics,
+        "url_after": _safe_page_url(page),
+        "error": None,
+    }
+    if not intermediate_candidates:
+        result["error"] = (
+            "Nao ha pagina numerica intermediaria visivel para recalcular o paginador."
+        )
+        return result
+
+    intermediate = intermediate_candidates[0]
+    result["intermediate_page_number"] = intermediate
+    first_click = find_and_click_next_numeric_page(page, intermediate - 1)
+    diagnostics.append(first_click)
+    if (
+        not first_click.get("found")
+        or not first_click.get("enabled")
+        or not first_click.get("clicked")
+    ):
+        result["status"] = (
+            first_click.get("stop_reason") or "pagination_intermediate_click_failed"
+        )
+        result["error"] = f"Nao foi possivel clicar na pagina intermediaria {intermediate}."
+        result["url_after"] = _safe_page_url(page)
+        return result
+
+    _wait_after_pagination_click(page)
+    rows_intermediate = read_current_page_table_with_row_handles(page)
+    signature_intermediate = _listing_rows_signature(rows_intermediate)
+    active_intermediate = get_active_numeric_page(page)
+    result["active_page_after"] = active_intermediate
+    result["signature_after"] = signature_intermediate
+    result["url_after"] = _safe_page_url(page)
+    if active_intermediate != intermediate:
+        result["status"] = "pagination_intermediate_active_page_mismatch"
+        result["error"] = (
+            f"Pagina ativa apos clique intermediario: {active_intermediate}; "
+            f"esperado: {intermediate}."
+        )
+        return result
+    if signature_intermediate == signature_before:
+        result["status"] = "pagination_intermediate_click_no_change"
+        result["error"] = (
+            f"Clique intermediario na pagina {intermediate} nao alterou a tabela."
+        )
+        return result
+
+    target_click = find_and_click_next_numeric_page(page, target - 1)
+    diagnostics.append(target_click)
+    if (
+        not target_click.get("found")
+        or not target_click.get("enabled")
+        or not target_click.get("clicked")
+    ):
+        result["status"] = target_click.get("stop_reason") or "pagination_target_click_failed"
+        result["error"] = (
+            f"Nao foi possivel clicar na pagina alvo {target} apos janela visivel."
+        )
+        result["url_after"] = _safe_page_url(page)
+        return result
+
+    _wait_after_pagination_click(page)
+    rows_after = read_current_page_table_with_row_handles(page)
+    signature_after = _listing_rows_signature(rows_after)
+    active_after = get_active_numeric_page(page)
+    result["active_page_after"] = active_after
+    result["signature_after"] = signature_after
+    result["url_after"] = _safe_page_url(page)
+    if active_after != target:
+        result["status"] = "pagination_target_active_page_mismatch"
+        result["error"] = (
+            f"Pagina ativa apos janela visivel: {active_after}; esperado: {target}."
+        )
+        return result
+    if signature_after == signature_intermediate:
+        result["status"] = "pagination_target_click_no_change"
+        result["error"] = f"Clique na pagina alvo {target} nao alterou a tabela."
+        return result
+    result.update(
+        {
+            "success": True,
+            "status": "recovered_listing_by_visible_numeric_window",
+            "error": None,
+        }
+    )
+    return result
 
 
 def _recover_first_page_after_context_destruction(page, navigation: dict) -> dict:
@@ -2917,6 +3180,27 @@ def navigate_to_numeric_page(page, target_page_number: int) -> dict:
                 )
                 return result
             if target < active_before:
+                visible_window = _navigate_to_numeric_page_via_visible_window(
+                    page,
+                    target_page_number=target,
+                    active_page_before=active_before,
+                    signature_before=signature_before,
+                    click_result=click_result,
+                )
+                result["visible_window_navigation"] = visible_window
+                result["url_after"] = visible_window.get("url_after")
+                if visible_window.get("success"):
+                    result.update(
+                        {
+                            "success": True,
+                            "status": "recovered_listing_by_numeric_page",
+                            "method": "recovered_listing_by_visible_numeric_window",
+                            "active_page_after": visible_window.get("active_page_after"),
+                            "signature_after": visible_window.get("signature_after"),
+                            "error": None,
+                        }
+                    )
+                    return result
                 sequential = _navigate_to_numeric_page_backwards_sequentially(
                     page,
                     target_page_number=target,
