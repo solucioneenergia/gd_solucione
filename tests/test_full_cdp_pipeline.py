@@ -302,7 +302,7 @@ def test_batch_fast_paginates_past_page_fully_completed_locally(
     assert summary["pagination_stop_reason"] == "incremental_batch_limit_reached"
 
 
-def test_batch_fast_plan_starts_from_completed_index_anchor_page(
+def test_batch_fast_plan_does_not_start_from_protocol_only_completed_index_anchor_page(
     tmp_path: Path,
     monkeypatch,
 ) -> None:
@@ -401,7 +401,7 @@ def test_batch_fast_plan_starts_from_completed_index_anchor_page(
 
     def fake_read_rows(page) -> list[dict]:
         read_pages.append(active_page["value"])
-        assert active_page["value"] == 3
+        assert active_page["value"] == 1
         return page_three
 
     monkeypatch.setattr(cdp_portal_service, "get_active_numeric_page", lambda page: active_page["value"])
@@ -409,9 +409,12 @@ def test_batch_fast_plan_starts_from_completed_index_anchor_page(
     monkeypatch.setattr(
         cdp_portal_service,
         "ensure_listing_starts_on_page_one",
-        lambda page: (_ for _ in ()).throw(
-            AssertionError("plano batch_fast deve iniciar pela pagina ancora")
-        ),
+        lambda page: {
+            "success": True,
+            "status": "already_on_first_page",
+            "initial_active_page": 1,
+            "active_page_after": 1,
+        },
     )
     monkeypatch.setattr(
         cdp_portal_service, "read_current_page_table_with_row_handles", fake_read_rows
@@ -435,11 +438,10 @@ def test_batch_fast_plan_starts_from_completed_index_anchor_page(
         settings=Settings(),
     )
 
-    assert navigate_targets == [3]
-    assert read_pages == [3]
-    assert summary["completed_index_resume_page"] == 3
-    assert summary["completed_index_resume_status"] == "recovered_listing_by_numeric_page"
-    assert summary["pages_visited"] == [3]
+    assert navigate_targets == []
+    assert read_pages == [1]
+    assert "completed_index_resume_page" not in summary
+    assert summary["pages_visited"] == [1]
     assert [item["protocol"] for item in summary["selected_protocols"]] == [
         "2600001050",
         "2600001051",
@@ -448,7 +450,7 @@ def test_batch_fast_plan_starts_from_completed_index_anchor_page(
     assert summary["total_errors"] == 0
 
 
-def test_batch_fast_anchor_navigation_requires_confirmed_target_page(
+def test_batch_fast_anchor_navigation_requires_explicit_page_proof(
     tmp_path: Path,
     monkeypatch,
 ) -> None:
@@ -519,9 +521,7 @@ def test_batch_fast_anchor_navigation_requires_confirmed_target_page(
         skip_already_completed=True,
     )
 
-    assert navigation is not None
-    assert navigation["success"] is False
-    assert navigation["status"] == "completed_index_anchor_unconfirmed_page"
+    assert navigation is None
 
 
 def test_batch_fast_anchor_ignores_target_protocol_index_scope(
@@ -1092,6 +1092,53 @@ def test_reset_listing_recovers_after_context_destroyed_during_initial_reset(
             "error": (
                 "Page.evaluate: Execution context was destroyed, "
                 "most likely because of a navigation"
+            ),
+        },
+    )
+    monkeypatch.setattr(
+        cdp_portal_service,
+        "_wait_after_pagination_click",
+        lambda page: waits.append("wait"),
+    )
+    monkeypatch.setattr(
+        cdp_portal_service,
+        "read_current_page_table_with_row_handles",
+        lambda page: row_reads.append("rows") or [_row("2600001107")],
+    )
+
+    result = ensure_listing_starts_on_page_one(FakePage())
+
+    assert result["success"] is True
+    assert result["status"] == "reset_to_first_page_after_context_recovery"
+    assert result["initial_active_page"] == 2
+    assert result["active_page_after"] == 1
+    assert waits == ["wait"]
+    assert row_reads == ["rows"]
+
+
+def test_reset_listing_recovers_after_cdp_context_id_disappears_during_initial_reset(
+    monkeypatch,
+) -> None:
+    active_pages = iter([2, 1])
+    waits = []
+    row_reads = []
+
+    monkeypatch.setattr(
+        cdp_portal_service,
+        "get_active_numeric_page",
+        lambda page: next(active_pages),
+    )
+    monkeypatch.setattr(
+        cdp_portal_service,
+        "navigate_to_numeric_page",
+        lambda page, target: {
+            "success": False,
+            "status": "pagination_numeric_click_error",
+            "method": "numeric_page_navigation",
+            "target_page_number": target,
+            "error": (
+                "Protocol error (Runtime.callFunctionOn): "
+                "Cannot find context with specified id"
             ),
         },
     )
@@ -1743,6 +1790,23 @@ def test_op5_plan_limit_50_continues_across_pages_without_active_root_navigation
 
 
 def test_op5_plan_counts_only_excel_write_actions_as_planned() -> None:
+    original_digest = hashlib.sha256(
+        "\n".join(
+            [
+                "2600001048:sha-already-updated",
+                "2600001050:sha-insert",
+                "2600001049:sha-update",
+            ]
+        ).encode("utf-8")
+    ).hexdigest()
+    expected_filtered_digest = hashlib.sha256(
+        "\n".join(
+            [
+                "2600001049:sha-update",
+                "2600001050:sha-insert",
+            ]
+        ).encode("utf-8")
+    ).hexdigest()
     payload = {
         "json_report_path": "data/logs/pipeline_cdp_completo.json",
         "status": "SUCESSO",
@@ -1758,7 +1822,43 @@ def test_op5_plan_counts_only_excel_write_actions_as_planned() -> None:
         "total_errors": 0,
         "download": {
             "frozen_batch": {"protocols": ["2600001048", "2600001049", "2600001050"]},
-            "frozen_pdf_scope": {"artifacts": []},
+            "results": [
+                {"protocol": "2600001048", "entry_date": "2026-07-01"},
+                {
+                    "protocol": "2600001049",
+                    "entry_date": "2026-07-01",
+                    "completion_date": "2026-08-01",
+                    "completion_date_raw": "01/08/2026",
+                    "completion_extraction_status": "found",
+                },
+                {
+                    "protocol": "2600001050",
+                    "entry_date": "2026-07-02",
+                    "completion_date": "2026-08-02",
+                    "completion_date_raw": "02/08/2026",
+                    "completion_extraction_status": "found",
+                },
+            ],
+            "frozen_pdf_scope": {
+                "digest": original_digest,
+                "artifacts": [
+                    {
+                        "protocol": "2600001048",
+                        "path": "data/downloads/2600001048.pdf",
+                        "sha256": "sha-already-updated",
+                    },
+                    {
+                        "protocol": "2600001050",
+                        "path": "data/downloads/2600001050.pdf",
+                        "sha256": "sha-insert",
+                    },
+                    {
+                        "protocol": "2600001049",
+                        "path": "data/downloads/2600001049.pdf",
+                        "sha256": "sha-update",
+                    },
+                ],
+            },
         },
         "processing": {
             "results": [
@@ -1790,6 +1890,315 @@ def test_op5_plan_counts_only_excel_write_actions_as_planned() -> None:
         "2600001049",
         "2600001050",
     ]
+    assert plan["download"]["frozen_pdf_scope"]["artifacts"] == [
+        {
+            "protocol": "2600001049",
+            "path": "data/downloads/2600001049.pdf",
+            "sha256": "sha-update",
+        },
+        {
+            "protocol": "2600001050",
+            "path": "data/downloads/2600001050.pdf",
+            "sha256": "sha-insert",
+        },
+    ]
+    assert plan["download"]["frozen_pdf_scope"]["digest"] == expected_filtered_digest
+    assert plan["download"]["frozen_portal_metadata"] == {
+        "2600001049": {
+            "protocol": "2600001049",
+            "entry_date": "2026-07-01",
+            "completion_date": "2026-08-01",
+            "completion_date_raw": "01/08/2026",
+            "completion_extraction_status": "found",
+        },
+        "2600001050": {
+            "protocol": "2600001050",
+            "entry_date": "2026-07-02",
+            "completion_date": "2026-08-02",
+            "completion_date_raw": "02/08/2026",
+            "completion_extraction_status": "found",
+        },
+    }
+
+
+def test_op5_plan_keeps_safe_actions_when_dry_run_has_technical_pending_review() -> None:
+    expected_digest = hashlib.sha256("2600001049:sha-update".encode("utf-8")).hexdigest()
+    payload = {
+        "json_report_path": "data/logs/pipeline_cdp_completo.json",
+        "status": "PARCIAL",
+        "requested_batch_limit": 30,
+        "authorized_batch_limit": 60,
+        "authorization_scope": "CONTROLLED_PRODUCTION_OPTION5_UP_TO_60",
+        "workbook_path": "pyproject.toml",
+        "apply_excel": True,
+        "apply_archive": True,
+        "total_selected": 30,
+        "total_updates_planned": 29,
+        "total_updates_applied": 0,
+        "total_errors": 1,
+        "download": {
+            "frozen_batch": {"protocols": ["2600001049", "2600001050"]},
+            "frozen_pdf_scope": {
+                "digest": hashlib.sha256(
+                    "\n".join(
+                        [
+                            "2600001049:sha-update",
+                            "2600001050:sha-pending",
+                        ]
+                    ).encode("utf-8")
+                ).hexdigest(),
+                "artifacts": [
+                    {
+                        "protocol": "2600001049",
+                        "path": "data/downloads/2600001049.pdf",
+                        "sha256": "sha-update",
+                    },
+                    {
+                        "protocol": "2600001050",
+                        "path": "data/downloads/2600001050.pdf",
+                        "sha256": "sha-pending",
+                    },
+                ],
+            },
+        },
+        "processing": {
+            "total_errors": 1,
+            "total_pending_review": 1,
+            "results": [
+                {
+                    "protocol": "2600001049",
+                    "success": True,
+                    "excel_status": {"action": "update_existing"},
+                },
+                {
+                    "protocol": "2600001050",
+                    "success": False,
+                    "action": "pending_technical_review",
+                    "technical_review_required": True,
+                    "technical_validation_status": "pending_review",
+                    "excel_status": {"success": False, "skipped": True},
+                },
+            ],
+        },
+    }
+
+    plan = full_pipeline._build_op5_plan_payload(payload)
+
+    assert full_pipeline._op5_payload_can_persist_plan(payload) is True
+    assert plan["status"] == "SUCESSO"
+    assert plan["source_status"] == "PARCIAL"
+    assert plan["total_errors"] == 0
+    assert plan["source_total_errors"] == 1
+    assert plan["total_pending_review"] == 1
+    assert plan["total_selected"] == 1
+    assert plan["total_updates_planned"] == 1
+    assert plan["planned_excel_actions"] == [
+        {"protocol": "2600001049", "action": "update_existing"}
+    ]
+    assert plan["download"]["frozen_batch"]["protocols"] == ["2600001049"]
+    assert plan["download"]["frozen_pdf_scope"]["artifacts"] == [
+        {
+            "protocol": "2600001049",
+            "path": "data/downloads/2600001049.pdf",
+            "sha256": "sha-update",
+        }
+    ]
+    assert plan["download"]["frozen_pdf_scope"]["digest"] == expected_digest
+
+
+def test_op5_plan_caps_overfetched_actions_to_requested_limit() -> None:
+    expected_digest = hashlib.sha256(
+        "\n".join(
+            [
+                "2600001049:sha-update",
+                "2600001050:sha-insert",
+            ]
+        ).encode("utf-8")
+    ).hexdigest()
+    payload = {
+        "json_report_path": "data/logs/pipeline_cdp_completo.json",
+        "status": "SUCESSO",
+        "requested_batch_limit": 2,
+        "authorized_batch_limit": 4,
+        "authorization_scope": "CONTROLLED_PRODUCTION_OPTION5_UP_TO_60",
+        "workbook_path": "pyproject.toml",
+        "apply_excel": True,
+        "apply_archive": True,
+        "total_errors": 0,
+        "download": {
+            "frozen_batch": {
+                "protocols": ["2600001049", "2600001050", "2600001051"]
+            },
+            "frozen_pdf_scope": {
+                "digest": hashlib.sha256(
+                    "\n".join(
+                        [
+                            "2600001049:sha-update",
+                            "2600001050:sha-insert",
+                            "2600001051:sha-extra",
+                        ]
+                    ).encode("utf-8")
+                ).hexdigest(),
+                "artifacts": [
+                    {
+                        "protocol": "2600001049",
+                        "path": "data/downloads/2600001049.pdf",
+                        "sha256": "sha-update",
+                    },
+                    {
+                        "protocol": "2600001050",
+                        "path": "data/downloads/2600001050.pdf",
+                        "sha256": "sha-insert",
+                    },
+                    {
+                        "protocol": "2600001051",
+                        "path": "data/downloads/2600001051.pdf",
+                        "sha256": "sha-extra",
+                    },
+                ],
+            },
+        },
+        "processing": {
+            "results": [
+                {
+                    "protocol": "2600001049",
+                    "success": True,
+                    "excel_status": {"action": "update_existing"},
+                },
+                {
+                    "protocol": "2600001050",
+                    "success": True,
+                    "excel_status": {"action": "insert_new_chronological"},
+                },
+                {
+                    "protocol": "2600001051",
+                    "success": True,
+                    "excel_status": {"action": "update_existing"},
+                },
+            ],
+        },
+    }
+
+    plan = full_pipeline._build_op5_plan_payload(payload)
+
+    assert plan["total_selected"] == 2
+    assert plan["total_updates_planned"] == 2
+    assert plan["planned_excel_actions"] == [
+        {"protocol": "2600001049", "action": "update_existing"},
+        {"protocol": "2600001050", "action": "insert_new_chronological"},
+    ]
+    assert plan["download"]["frozen_batch"]["protocols"] == [
+        "2600001049",
+        "2600001050",
+    ]
+    assert plan["download"]["frozen_pdf_scope"]["digest"] == expected_digest
+
+
+def test_batch_fast_dry_run_uses_authorized_limit_as_candidate_limit() -> None:
+    class Settings(DummySettings):
+        DRY_RUN = True
+        OP5_RECONCILIATION_MODE = "batch_fast"
+        OP5_TARGET_PROTOCOLS = ""
+
+    authorization = full_pipeline.BatchAuthorization(
+        requested_batch_limit=30,
+        authorized_batch_limit=60,
+        authorization_scope="CONTROLLED_PRODUCTION_OPTION5_UP_TO_60",
+    )
+
+    assert full_pipeline._op5_planning_candidate_limit(Settings(), authorization) == 60
+
+
+def test_op5_plan_does_not_persist_when_partial_has_systemic_failure() -> None:
+    payload = {
+        "status": "PARCIAL",
+        "run_error": None,
+        "processing": {
+            "results": [
+                {
+                    "protocol": "2600001049",
+                    "success": True,
+                    "excel_status": {"action": "update_existing"},
+                },
+                {
+                    "protocol": "2600001050",
+                    "success": False,
+                    "error": "FROZEN_BATCH_SCOPE_VIOLATION",
+                    "technical_validation_status": "approved",
+                },
+            ],
+        },
+    }
+
+    assert full_pipeline._op5_payload_can_persist_plan(payload) is False
+
+
+def test_op5_plan_does_not_persist_when_partial_write_action_failed() -> None:
+    payload = {
+        "status": "PARCIAL",
+        "run_error": None,
+        "total_errors": 1,
+        "total_pending_review": 1,
+        "total_cdp_errors": 0,
+        "total_download_errors": 0,
+        "total_real_extraction_errors": 0,
+        "total_real_application_errors": 0,
+        "total_failed_protocols": 0,
+        "processing": {
+            "total_pending_review": 1,
+            "results": [
+                {
+                    "protocol": "2600001049",
+                    "success": False,
+                    "error": "excel_validation_failed",
+                    "excel_status": {"action": "update_existing"},
+                },
+                {
+                    "protocol": "2600001050",
+                    "success": False,
+                    "action": "pending_technical_review",
+                    "technical_review_required": True,
+                    "technical_validation_status": "pending_review",
+                },
+            ],
+        },
+    }
+
+    assert full_pipeline._op5_payload_can_persist_plan(payload) is False
+
+
+def test_op5_plan_does_not_persist_when_partial_has_cdp_error_outside_processing() -> None:
+    payload = {
+        "status": "PARCIAL",
+        "run_error": None,
+        "total_errors": 2,
+        "total_pending_review": 1,
+        "total_cdp_errors": 1,
+        "total_download_errors": 0,
+        "total_real_extraction_errors": 0,
+        "total_real_application_errors": 0,
+        "processing": {
+            "total_errors": 1,
+            "total_pending_review": 1,
+            "results": [
+                {
+                    "protocol": "2600001049",
+                    "success": True,
+                    "excel_status": {"action": "update_existing"},
+                },
+                {
+                    "protocol": "2600001050",
+                    "success": False,
+                    "action": "pending_technical_review",
+                    "technical_review_required": True,
+                    "technical_validation_status": "pending_review",
+                },
+            ],
+        },
+    }
+
+    assert full_pipeline._op5_payload_can_persist_plan(payload) is False
+
 
 def test_batch_fast_does_not_require_global_reconciliation_before_lot(monkeypatch) -> None:
     class Settings(DummySettings):

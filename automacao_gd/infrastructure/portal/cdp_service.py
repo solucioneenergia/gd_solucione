@@ -885,6 +885,8 @@ def _batch_fast_completed_index_anchor_page(
     for protocol, entry in load_valid_completed_entries(Path(index_path)).items():
         if entry.get("portal_anchor_scope") != "global_batch_fast":
             continue
+        if not entry.get("portal_page_proof_sha256"):
+            continue
         if not _op5_completed_index_entry_is_locally_valid(
             entry, settings, current_workbook_sha=current_workbook_sha
         ):
@@ -2731,7 +2733,11 @@ def ensure_listing_starts_on_page_one(page) -> dict:
 def _is_execution_context_destroyed_error(error: Any) -> bool:
     if not error:
         return False
-    return "execution context was destroyed" in str(error).casefold()
+    error_text = str(error).casefold()
+    return (
+        "execution context was destroyed" in error_text
+        or "cannot find context with specified id" in error_text
+    )
 
 
 def _recover_first_page_after_context_destruction(page, navigation: dict) -> dict:

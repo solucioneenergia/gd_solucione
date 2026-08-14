@@ -600,10 +600,22 @@ def _run_full_cdp_pipeline_locked(
     )
     dry_run_plan: FrozenDryRunPlan | None = None
     if settings.DRY_RUN:
-        download_summary = _run_download_step(settings, state_store)
+        planning_candidate_limit = _op5_planning_candidate_limit(
+            settings,
+            authorization,
+        )
+        download_settings = (
+            settings.model_copy(
+                update={"MAX_COMPLETED_TO_PROCESS": planning_candidate_limit}
+            )
+            if planning_candidate_limit != authorization.requested_batch_limit
+            else settings
+        )
+        download_summary = _run_download_step(download_settings, state_store)
         limited_selection = apply_authorized_global_protocol_limit(
             download_summary,
             authorization,
+            processing_limit=planning_candidate_limit,
         )
         download_summary = limited_selection.summary
         download_summary.update(
@@ -672,6 +684,11 @@ def _run_full_cdp_pipeline_locked(
             apply_archive=settings.APPLY_ARCHIVE,
             state_store=state_store,
             allowed_protocols=set(limited_selection.frozen_batch.protocols),
+            portal_metadata_by_protocol=(
+                _frozen_portal_metadata_by_protocol(download_summary)
+                if dry_run_plan is not None
+                else None
+            ),
             lock_proof=lock_proof,
         )
         progress.advance(
@@ -710,7 +727,7 @@ def _run_full_cdp_pipeline_locked(
         payload["markdown_report_path"] = str(markdown_path)
         logger.info(f"Relatorio consolidado JSON salvo em: {json_path}")
         logger.info(f"Relatorio consolidado Markdown salvo em: {markdown_path}")
-    if settings.DRY_RUN and payload["status"] == OperationStatus.SUCESSO.value:
+    if settings.DRY_RUN and _op5_payload_can_persist_plan(payload):
         plan_path = _persist_op5_plan(settings.logs_dir_path, payload)
         payload["op5_plan_path"] = str(plan_path)
         payload["op5_plan_source_kind"] = "explicit_op5_plan"
@@ -902,11 +919,16 @@ def _persist_eligibility_cache_if_applicable(settings, download_summary: dict) -
             if str(item.get("protocol") or "").strip()
         ]
     cache_path = settings.logs_dir_path / "op5_portal_eligibility_cache.json"
+    cache_limit = max(
+        int(getattr(settings, "MAX_COMPLETED_TO_PROCESS", 0) or 0),
+        int(download_summary.get("planning_candidate_limit", 0) or 0),
+        len(records),
+    )
     try:
         payload = write_eligibility_cache(
             cache_path,
             records=records,
-            requested_limit=int(getattr(settings, "MAX_COMPLETED_TO_PROCESS", 0) or 0),
+            requested_limit=cache_limit,
             reconciliation_mode=mode,
         )
     except (OSError, TypeError, ValueError):
@@ -1210,15 +1232,22 @@ def _build_op5_plan_payload(payload: dict) -> dict:
     download = deepcopy(payload.get("download") or {})
     processing = payload.get("processing") or {}
     planned_actions = _planned_excel_actions(processing)
+    requested_limit = int(payload.get("requested_batch_limit", 0) or 0)
+    if requested_limit > 0:
+        planned_actions = planned_actions[:requested_limit]
     download = _download_summary_for_planned_actions(download, planned_actions)
     planned_count = len(planned_actions)
+    persistable_plan = _op5_payload_can_persist_plan(payload)
     return {
         "schema_version": 1,
         "created_at": datetime.now().isoformat(timespec="seconds"),
         "source_report_path": payload.get("json_report_path")
         or str(Path(str(payload.get("download_report_path") or ""))),
         "dry_run": True,
-        "status": payload.get("status"),
+        "status": OperationStatus.SUCESSO.value
+        if persistable_plan
+        else payload.get("status"),
+        "source_status": payload.get("status"),
         "requested_batch_limit": payload.get("requested_batch_limit"),
         "authorized_batch_limit": payload.get("authorized_batch_limit"),
         "authorization_scope": payload.get("authorization_scope"),
@@ -1232,7 +1261,11 @@ def _build_op5_plan_payload(payload: dict) -> dict:
         "total_selected": planned_count,
         "total_updates_planned": planned_count,
         "total_updates_applied": payload.get("total_updates_applied", 0),
-        "total_errors": payload.get("total_errors", 0),
+        "total_errors": 0 if persistable_plan else payload.get("total_errors", 0),
+        "source_total_errors": payload.get("total_errors", 0),
+        "total_pending_review": processing.get("total_pending_review", 0)
+        if isinstance(processing, dict)
+        else 0,
         "frozen_batch": download.get("frozen_batch"),
         "frozen_pdf_scope": download.get("frozen_pdf_scope"),
         "planned_excel_actions": planned_actions,
@@ -1262,6 +1295,69 @@ def _planned_excel_actions(processing_summary: dict) -> list[dict[str, str]]:
     return actions
 
 
+def _op5_planning_candidate_limit(
+    settings,
+    authorization: BatchAuthorization,
+) -> int:
+    requested = int(authorization.requested_batch_limit)
+    authorized = int(authorization.authorized_batch_limit)
+    if not bool(getattr(settings, "DRY_RUN", True)):
+        return requested
+    if str(getattr(settings, "OP5_RECONCILIATION_MODE", "") or "").lower() != "batch_fast":
+        return requested
+    if getattr(settings, "op5_target_protocols", set()) or set():
+        return requested
+    return max(requested, authorized)
+
+
+def _op5_payload_can_persist_plan(payload: dict) -> bool:
+    if payload.get("run_error"):
+        return False
+    status = str(payload.get("status") or "")
+    if status not in {OperationStatus.SUCESSO.value, OperationStatus.PARCIAL.value}:
+        return False
+    processing = payload.get("processing")
+    processing = processing if isinstance(processing, dict) else {}
+    if processing.get("blocked_real_run"):
+        return False
+    if not _planned_excel_actions(processing):
+        return False
+    if status == OperationStatus.SUCESSO.value:
+        return True
+    total_errors = int(payload.get("total_errors", 0) or 0)
+    total_pending_review = int(
+        payload.get("total_pending_review", processing.get("total_pending_review", 0))
+        or 0
+    )
+    blocking_error_total = sum(
+        int(payload.get(key, 0) or 0)
+        for key in (
+            "total_cdp_errors",
+            "total_download_errors",
+            "total_real_extraction_errors",
+            "total_real_application_errors",
+            "total_failed_protocols",
+        )
+    )
+    if blocking_error_total:
+        return False
+    if total_errors != total_pending_review:
+        return False
+    for item in processing.get("results") or []:
+        if not isinstance(item, dict):
+            continue
+        excel_status = item.get("excel_status")
+        excel_status = excel_status if isinstance(excel_status, dict) else {}
+        action = str(item.get("action") or excel_status.get("action") or "")
+        if _processing_item_is_pending_review(item):
+            continue
+        if item.get("success") is False:
+            return False
+        if action in EXCEL_WRITE_ACTIONS:
+            continue
+    return True
+
+
 def _download_summary_for_planned_actions(
     download: dict,
     planned_actions: list[dict[str, str]],
@@ -1272,19 +1368,26 @@ def _download_summary_for_planned_actions(
         if str(item.get("protocol") or "")
     ]
     planned_set = set(planned_protocols)
+    planned_order = {protocol: index for index, protocol in enumerate(planned_protocols)}
     if not planned_set:
         return download
 
-    download["results"] = [
-        item
-        for item in download.get("results") or []
-        if str(item.get("protocol") or "") in planned_set
-    ]
-    download["selected_protocols"] = [
-        item
-        for item in download.get("selected_protocols") or []
-        if str(item.get("protocol") or "") in planned_set
-    ]
+    download["results"] = sorted(
+        [
+            item
+            for item in download.get("results") or []
+            if str(item.get("protocol") or "") in planned_set
+        ],
+        key=lambda item: planned_order.get(str(item.get("protocol") or ""), len(planned_order)),
+    )
+    download["selected_protocols"] = sorted(
+        [
+            item
+            for item in download.get("selected_protocols") or []
+            if str(item.get("protocol") or "") in planned_set
+        ],
+        key=lambda item: planned_order.get(str(item.get("protocol") or ""), len(planned_order)),
+    )
     download["protocols_selected_by_global_limit"] = planned_protocols
     download["total_protocols_selected_by_global_limit"] = len(planned_protocols)
     download["total_selected"] = len(planned_protocols)
@@ -1297,14 +1400,77 @@ def _download_summary_for_planned_actions(
 
     frozen_scope = download.get("frozen_pdf_scope")
     if isinstance(frozen_scope, dict):
-        artifacts = [
-            artifact
-            for artifact in frozen_scope.get("artifacts") or []
-            if str(artifact.get("protocol") or "") in planned_set
-        ]
+        artifacts = sorted(
+            [
+                artifact
+                for artifact in frozen_scope.get("artifacts") or []
+                if str(artifact.get("protocol") or "") in planned_set
+            ],
+            key=lambda artifact: planned_order.get(
+                str(artifact.get("protocol") or ""), len(planned_order)
+            ),
+        )
+        digest_source = "\n".join(
+            f"{str(artifact.get('protocol') or '')}:{str(artifact.get('sha256') or '')}"
+            for artifact in artifacts
+        )
+        digest = hashlib.sha256(digest_source.encode("utf-8")).hexdigest()
         frozen_scope["artifacts"] = artifacts
+        frozen_scope["digest"] = digest
         download["frozen_pdf_scope_count"] = len(artifacts)
+        download["frozen_pdf_scope_digest"] = digest
+    frozen_metadata = _frozen_portal_metadata_by_protocol(download)
+    if frozen_metadata:
+        download["frozen_portal_metadata"] = {
+            protocol: frozen_metadata[protocol]
+            for protocol in planned_protocols
+            if protocol in frozen_metadata
+        }
     return download
+
+
+def _frozen_portal_metadata_by_protocol(download_summary: dict) -> dict[str, dict]:
+    explicit = download_summary.get("frozen_portal_metadata")
+    if isinstance(explicit, dict):
+        return {
+            str(protocol): dict(metadata)
+            for protocol, metadata in explicit.items()
+            if protocol and isinstance(metadata, dict)
+        }
+    metadata_by_protocol: dict[str, dict] = {}
+    metadata_keys = {
+        "protocol",
+        "client_name",
+        "detail_protocol",
+        "detail_client_name",
+        "status",
+        "entry_date",
+        "entry_date_raw",
+        "completion_date",
+        "completion_date_raw",
+        "completion_date_normalized",
+        "completion_source_stage",
+        "completion_source_selector",
+        "completion_extraction_status",
+        "page_number",
+        "row_index",
+        "op5_selection_scope",
+    }
+    for item in download_summary.get("results") or []:
+        if not isinstance(item, dict):
+            continue
+        protocol = str(item.get("protocol") or "").strip()
+        if not protocol:
+            continue
+        snapshot = {
+            key: item.get(key)
+            for key in metadata_keys
+            if item.get(key) not in (None, "")
+        }
+        snapshot["protocol"] = protocol
+        if snapshot:
+            metadata_by_protocol[protocol] = snapshot
+    return metadata_by_protocol
 
 
 def load_frozen_dry_run_plan(
@@ -1419,6 +1585,21 @@ def _validate_explicit_op5_plan_payload(payload: dict, settings: Settings) -> No
             "Plano OP5 nao contem acoes Excel planejadas.",
             code="OP5_PLAN_INVALID",
             technical_cause="planned_actions_missing",
+        )
+    planned_protocols = {
+        str(item.get("protocol") or "").strip()
+        for item in planned_actions
+        if isinstance(item, dict) and str(item.get("protocol") or "").strip()
+    }
+    download_payload = payload.get("download")
+    frozen_metadata = _frozen_portal_metadata_by_protocol(
+        download_payload if isinstance(download_payload, dict) else {}
+    )
+    if planned_protocols and not planned_protocols <= set(frozen_metadata):
+        raise _op5_plan_block(
+            "Plano OP5 nao contem metadata congelada para todas as acoes planejadas.",
+            code="OP5_PLAN_INVALID",
+            technical_cause="frozen_metadata_missing",
         )
     expected_workbook_sha = str(payload.get("workbook_sha256") or "")
     if len(expected_workbook_sha) != 64:
@@ -1562,9 +1743,11 @@ def _file_sha256(path: Path) -> str:
 def apply_authorized_global_protocol_limit(
     download_summary: dict,
     authorization: BatchAuthorization,
+    *,
+    processing_limit: int | None = None,
 ) -> LimitedProtocolSelection:
     """Limit the final processing set and freeze the selected protocol batch."""
-    limit = authorization.requested_batch_limit
+    limit = int(processing_limit or authorization.requested_batch_limit)
     results = download_summary.get("results") or []
     selected_protocols: list[str] = []
     dropped_protocols: list[str] = []
@@ -1594,7 +1777,8 @@ def apply_authorized_global_protocol_limit(
         item["global_limit_status"] = "selected"
         selected_protocols.append(protocol)
 
-    download_summary["global_protocol_limit"] = limit
+    download_summary["global_protocol_limit"] = authorization.requested_batch_limit
+    download_summary["planning_candidate_limit"] = limit
     download_summary["global_protocol_limit_enforced"] = True
     download_summary["requested_batch_limit"] = authorization.requested_batch_limit
     download_summary["authorized_batch_limit"] = authorization.authorized_batch_limit

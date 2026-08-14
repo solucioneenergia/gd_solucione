@@ -100,8 +100,24 @@ relatórios existentes. O plano deve conter, no mínimo:
 - `apply_archive`;
 - `frozen_batch`;
 - `frozen_pdf_scope`;
+- metadados do Portal congelados por protocolo planejado;
 - `planned_excel_actions` por protocolo;
 - totais agregados de selecionados, planejados, aplicados e erros.
+
+Quando o dry-run terminar `PARCIAL` apenas porque um ou mais protocolos ficaram em
+`pending_technical_review`, o plano OP5 aplicavel pode ser persistido com status `SUCESSO`
+somente para o subconjunto seguro com `planned_excel_actions`. Nesse caso, o plano deve:
+
+- remover do `frozen_batch` e do `frozen_pdf_scope` os protocolos pendentes de revisao;
+- recalcular o digest do `frozen_pdf_scope` apos o filtro;
+- manter `total_errors=0` no plano aplicavel;
+- preservar `source_status`, `source_total_errors` e totais de pendencia para auditoria;
+- nunca incluir protocolo pendente de revisao na aplicacao real.
+
+O `op5-apply` deve usar os metadados do Portal congelados no plano para as escritas reais de
+data de entrada, data de conclusao e regras derivadas. Quando o plano explicito contiver acoes
+Excel planejadas sem metadados congelados correspondentes, ele deve ser recusado antes de
+qualquer efeito real; nao deve reler `metadata.json`/logs mutaveis para substituir esse snapshot.
 
 O plano é `PRIVATE_OPERATIONAL` e não é artefato compartilhável.
 
@@ -166,6 +182,12 @@ atingir fim/safety cap da listagem ou encontrar erro bloqueante. O relatório de
 separados: concluídos lidos no Portal, selecionados para análise, completos/sem
 alteração, ações Excel planejadas e ações Excel aplicadas.
 
+Em `batch_fast`, o dry-run pode selecionar/analisar candidatos adicionais até o limite
+autorizado quando isso for necessário para compensar protocolos sem ação Excel ou pendentes
+de revisão técnica. Esse overfetch não aumenta o lote real: o `op5_plan_latest.json` deve
+congelar no máximo N `planned_excel_actions`, com `frozen_batch`, `frozen_pdf_scope` e digest
+filtrados para esse subconjunto aplicável.
+
 Em `batch_fast`, protocolos com entrada valida e nao expirada em
 `DATA_DIR/state/op5_completed_index.json` devem ser tratados como concluidos localmente quando
 o PDF local existir com SHA-256 igual ao registrado, a entrada tiver aba/linha da planilha e o
@@ -177,15 +199,12 @@ congelado e nao dispensa a validacao da planilha/PDF no `op5-apply`.
 Em `batch_fast`, apos uma aplicacao real bem-sucedida, o indice mestre deve registrar tambem a
 pagina e a linha de origem do protocolo no Portal quando essa informacao existir no plano
 congelado/metadados do download. Essa entrada deve indicar se a selecao veio de um plano global
-`batch_fast` ou de um plano direcionado por protocolos explicitos. Em uma nova geracao de plano
-global, se houver entradas validas do indice mestre vinculadas ao SHA-256 atual da planilha,
-marcadas como selecao global e com pagina de Portal conhecida, o planejador pode navegar
-diretamente para a maior pagina registrada como ancora inicial, validar que a pagina ativa apos a
-navegacao e exatamente a pagina alvo e continuar a selecao dali. Entradas vindas de
-`op5-plan --protocols` nao podem servir como ancora global futura. Se a navegacao para a pagina
-ancora falhar, estiver sem indicador confiavel, confirmar pagina diferente da alvo, ou a evidencia
-local nao bater com o SHA atual da planilha, o fluxo deve voltar ao reset/paginacao segura a partir
-da pagina 1.
+`batch_fast` ou de um plano direcionado por protocolos explicitos. O `portal_page_number` salvo
+por protocolo nao e prova suficiente para iniciar um novo plano diretamente em pagina posterior:
+o salto inicial por indice so pode ocorrer quando houver prova explicita de
+snapshot/completude da pagina. Sem essa prova, o fluxo deve voltar ao reset/paginacao segura a
+partir da pagina 1 e pular protocolos/paginas somente depois de validar a listagem visivel no
+Portal. Entradas vindas de `op5-plan --protocols` nao podem servir como ancora global futura.
 
 Em `batch_fast`, quando todos os protocolos concluídos visíveis em uma página validada do
 Portal já estiverem comprovadamente completos por estado mestre, state operacional ou índice
@@ -390,6 +409,11 @@ Cada protocolo concluído com sucesso no OP5 deve registrar:
 O índice mestre é uma evidência privada operacional. Ele não autoriza escrita por si só,
 não substitui plano congelado, lock global ou confirmação forte, e não pode ser publicado em
 relatórios compartilháveis, fixtures permanentes ou release.
+
+Quando a aplicacao real conclui Excel/arquivamento mas falha ao persistir o indice mestre OP5
+privado, o protocolo nao pode ser relatado como sucesso pleno. O resultado deve ser marcado como
+nao concluido para automacao, com acao manual requerida, porque a proxima rodada perderia a prova
+necessaria para pular com seguranca.
 
 Após `expires_at`, a entrada deve ser considerada expirada e não pode ser usada para pular
 validação futura. A criação do índice não deve apagar PDFs locais; limpeza de `data/downloads`

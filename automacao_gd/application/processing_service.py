@@ -92,6 +92,7 @@ def process_downloaded_pdfs(
     apply_archive: bool = True,
     state_store=None,
     allowed_protocols: set[str] | None = None,
+    portal_metadata_by_protocol: dict[str, dict[str, Any]] | None = None,
     authorization: OfflineOperationAuthorization | None = None,
     lock_proof: OperationalLockProof | None = None,
 ) -> dict:
@@ -106,6 +107,7 @@ def process_downloaded_pdfs(
             apply_archive=apply_archive,
             state_store=state_store,
             allowed_protocols=allowed_protocols,
+            portal_metadata_by_protocol=portal_metadata_by_protocol,
             settings=get_settings(),
         )
 
@@ -144,6 +146,7 @@ def process_downloaded_pdfs(
             apply_archive=apply_archive,
             state_store=state_store,
             allowed_protocols=allowed_protocols,
+            portal_metadata_by_protocol=portal_metadata_by_protocol,
             settings=settings,
         )
 
@@ -164,6 +167,7 @@ def process_downloaded_pdfs(
             apply_archive=apply_archive,
             state_store=state_store,
             allowed_protocols=allowed_protocols,
+            portal_metadata_by_protocol=portal_metadata_by_protocol,
             settings=settings,
         )
 
@@ -199,6 +203,7 @@ def _process_downloaded_pdfs_locked(
     apply_archive: bool = True,
     state_store=None,
     allowed_protocols: set[str] | None = None,
+    portal_metadata_by_protocol: dict[str, dict[str, Any]] | None = None,
     *,
     settings,
 ) -> dict:
@@ -271,7 +276,7 @@ def _process_downloaded_pdfs_locked(
         simulation_results = run_limited_pdf_tasks(
             pdfs,
             worker_count=pdf_workers,
-            task=lambda pdf_path: _process_single_pdf(
+            task=lambda pdf_path: _process_single_pdf_for_metadata_scope(
                 pdf_path,
                 workbook_path,
                 clientes_root,
@@ -280,6 +285,7 @@ def _process_downloaded_pdfs_locked(
                 apply_excel,
                 apply_archive,
                 None,
+                portal_metadata_by_protocol=portal_metadata_by_protocol,
             ),
         )
         extracted_scope_violations = _extracted_scope_violations(
@@ -360,6 +366,7 @@ def _process_downloaded_pdfs_locked(
                     apply_excel=apply_excel,
                     apply_archive=apply_archive,
                     state_store=state_store,
+                    portal_metadata_by_protocol=portal_metadata_by_protocol,
                 )
                 systemic_issues = _systemic_real_apply_issues(results, apply_excel)
                 if systemic_issues:
@@ -389,7 +396,7 @@ def _process_downloaded_pdfs_locked(
         results = run_limited_pdf_tasks(
             pdfs,
             worker_count=pdf_workers,
-            task=lambda pdf_path: _process_single_pdf(
+            task=lambda pdf_path: _process_single_pdf_for_metadata_scope(
                 pdf_path,
                 workbook_path,
                 clientes_root,
@@ -398,6 +405,7 @@ def _process_downloaded_pdfs_locked(
                 apply_excel,
                 apply_archive,
                 worker_state_store,
+                portal_metadata_by_protocol=portal_metadata_by_protocol,
             ),
         )
         if apply_excel:
@@ -718,6 +726,8 @@ def _process_single_pdf(
     apply_excel: bool = True,
     apply_archive: bool = True,
     state_store=None,
+    *,
+    portal_metadata_by_protocol: dict[str, dict[str, Any]] | None = None,
 ) -> dict:
     logger.info(f"Processando PDF baixado: {pdf_path}")
     result = _empty_result(pdf_path)
@@ -761,11 +771,22 @@ def _process_single_pdf(
                 dry_run=dry_run,
             )
 
-        portal_metadata, metadata_source = load_portal_metadata(
-            get_settings().downloads_dir_path,
-            get_settings().logs_dir_path,
-            protocol,
+        portal_metadata: dict[str, Any] | None
+        metadata_source: str | None
+        frozen_metadata = (
+            portal_metadata_by_protocol.get(protocol)
+            if portal_metadata_by_protocol is not None
+            else None
         )
+        if frozen_metadata is not None:
+            portal_metadata = dict(frozen_metadata)
+            metadata_source = "frozen_op5_plan"
+        else:
+            portal_metadata, metadata_source = load_portal_metadata(
+                get_settings().downloads_dir_path,
+                get_settings().logs_dir_path,
+                protocol,
+            )
         entry_date = portal_metadata.get("entry_date") if portal_metadata else None
         completion_decision = _completion_value_from_metadata(portal_metadata)
         completion_date = completion_decision["value"]
@@ -1009,9 +1030,24 @@ def _process_single_pdf(
             )
             result["state_effect"] = "persisted"
 
+        completed_index_effect = _record_completed_index_best_effort(
+            protocol=protocol,
+            pdf_path=pdf_path,
+            archived_pdf_path=Path(archived_pdf_path)
+            if archived_pdf_path
+            else None,
+            workbook_path=workbook_path,
+            excel_status=excel_status,
+            archive_status=archive_status,
+            portal_metadata=portal_metadata,
+            dry_run=dry_run,
+        )
+        success = archive_status["success"] and excel_status["success"]
+        if completed_index_effect == "failed":
+            success = False
         result.update(
             {
-                "success": archive_status["success"] and excel_status["success"],
+                "success": success,
                 "protocol": protocol,
                 "client_name": client_name,
                 "entry_date": entry_date,
@@ -1072,23 +1108,18 @@ def _process_single_pdf(
                 "arquivo_final": Path(archived_pdf_path).name if archived_pdf_path else None,
                 "archive_status": archive_status,
                 "excel_status": _compact_excel_status(excel_status),
-                "op5_completed_index_effect": _record_completed_index_best_effort(
-                    protocol=protocol,
-                    pdf_path=pdf_path,
-                    archived_pdf_path=Path(archived_pdf_path)
-                    if archived_pdf_path
-                    else None,
-                    workbook_path=workbook_path,
-                    excel_status=excel_status,
-                    archive_status=archive_status,
-                    portal_metadata=portal_metadata,
-                    dry_run=dry_run,
-                ),
+                "op5_completed_index_effect": completed_index_effect,
                 "error": None,
             }
         )
+        if completed_index_effect == "failed":
+            result["error"] = "Falha ao persistir indice mestre OP5 privado."
+            result["manual_action_required"] = True
         if not result["success"]:
-            result["error"] = _join_errors(archive_status, excel_status)
+            result["error"] = result["error"] or _join_errors(
+                archive_status,
+                excel_status,
+            )
             operational_excel_pending = (
                 apply_excel and not dry_run and not excel_status.get("success")
             )
@@ -1149,6 +1180,42 @@ def _process_single_pdf(
         return result
 
 
+def _process_single_pdf_for_metadata_scope(
+    pdf_path: Path,
+    workbook_path: Path,
+    clientes_root: Path,
+    dry_run: bool,
+    backup_path: Path | None = None,
+    apply_excel: bool = True,
+    apply_archive: bool = True,
+    state_store=None,
+    *,
+    portal_metadata_by_protocol: dict[str, dict[str, Any]] | None = None,
+) -> dict:
+    if portal_metadata_by_protocol is None:
+        return _process_single_pdf(
+            pdf_path,
+            workbook_path,
+            clientes_root,
+            dry_run,
+            backup_path,
+            apply_excel,
+            apply_archive,
+            state_store,
+        )
+    return _process_single_pdf(
+        pdf_path,
+        workbook_path,
+        clientes_root,
+        dry_run,
+        backup_path,
+        apply_excel,
+        apply_archive,
+        state_store,
+        portal_metadata_by_protocol=portal_metadata_by_protocol,
+    )
+
+
 def _record_completed_index_best_effort(
     *,
     protocol: str,
@@ -1166,10 +1233,15 @@ def _record_completed_index_best_effort(
         return "not_applicable"
     if not archived_pdf_path:
         return "not_applicable"
+    if not portal_metadata or not str(portal_metadata.get("op5_selection_scope") or "").strip():
+        return "not_applicable"
     try:
         settings = get_settings()
+        index_path = getattr(settings, "op5_completed_index_path", None)
+        if index_path is None:
+            return "not_applicable"
         record_completed_protocol(
-            index_path=settings.op5_completed_index_path,
+            index_path=index_path,
             protocol=protocol,
             download_pdf_path=pdf_path,
             archived_pdf_path=archived_pdf_path,
@@ -1707,6 +1779,7 @@ def _apply_processable_subset_from_simulation(
     apply_excel: bool,
     apply_archive: bool,
     state_store,
+    portal_metadata_by_protocol: dict[str, dict[str, Any]] | None = None,
 ) -> list[dict]:
     simulation_by_path: dict[str, dict] = {}
     for item in simulation_results:
@@ -1724,7 +1797,7 @@ def _apply_processable_subset_from_simulation(
                 continue
             if not _is_protocol_safe_or_no_change(simulation_item, apply_excel):
                 continue
-        real_result = _process_single_pdf(
+        real_result = _process_single_pdf_for_metadata_scope(
             pdf_path,
             workbook_path,
             clientes_root,
@@ -1733,6 +1806,7 @@ def _apply_processable_subset_from_simulation(
             apply_excel,
             apply_archive,
             state_store,
+            portal_metadata_by_protocol=portal_metadata_by_protocol,
         )
         real_result["processing_phase"] = "application"
         real_results_by_path[key] = real_result

@@ -1442,6 +1442,194 @@ def test_point_of_connection_no_date_metadata_marks_completion_open(
     assert result["completion_action"] == "MARKED_AS_OPEN"
 
 
+def test_op5_apply_uses_frozen_plan_metadata_instead_of_mutable_file(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    validation = SimpleNamespace(
+        approved=True,
+        status="approved",
+        errors=[],
+        warnings=[],
+        technical_review_required=False,
+        module_source="parallel_table",
+        inverter_source="parallel_table",
+    )
+    monkeypatch.setattr(
+        processing_service,
+        "_load_or_extract_technical_data",
+        lambda *args: (
+            "2600001050",
+            "CLIENTE SINTETICO",
+            "modulo",
+            "inversor",
+            "5x LEAPTON MODELO",
+            "1x GROWATT MODELO",
+            validation,
+        ),
+    )
+    metadata_mock = Mock(side_effect=AssertionError("metadata mutavel nao deve ser relida"))
+    monkeypatch.setattr(processing_service, "load_portal_metadata", metadata_mock)
+    excel_mock = Mock(
+        return_value={
+            "success": True,
+            "can_write": True,
+            "action": "update_existing",
+            "completion_action": "COMPLETION_DATE_UPDATED",
+            "row_found": True,
+            "row_number": 2,
+        }
+    )
+    monkeypatch.setattr(processing_service, "update_excel_from_pdf_data", excel_mock)
+
+    result = processing_service._process_single_pdf(
+        tmp_path / "Orcamento_de_Conexao_2600001050.pdf",
+        tmp_path / "planilha.xlsx",
+        tmp_path / "clientes",
+        dry_run=True,
+        apply_archive=False,
+        portal_metadata_by_protocol={
+            "2600001050": {
+                "protocol": "2600001050",
+                "status": "Solicitacao Concluida",
+                "entry_date": "2026-07-01",
+                "completion_date": "2026-08-01",
+                "completion_date_raw": "01/08/2026",
+                "completion_extraction_status": "found",
+                "completion_source_stage": "frozen_op5_plan",
+            }
+        },
+    )
+
+    metadata_mock.assert_not_called()
+    assert excel_mock.call_args.kwargs["entry_date"] == "2026-07-01"
+    assert excel_mock.call_args.kwargs["completion_date"] == "2026-08-01"
+    assert result["metadata_source"] == "frozen_op5_plan"
+    assert result["completion_source_stage"] == "frozen_op5_plan"
+
+
+def test_op5_completed_index_failure_marks_protocol_unsuccessful(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    validation = SimpleNamespace(
+        approved=True,
+        status="approved",
+        errors=[],
+        warnings=[],
+        technical_review_required=False,
+        module_source="parallel_table",
+        inverter_source="parallel_table",
+    )
+    pdf = tmp_path / "Orcamento_de_Conexao_2600001051.pdf"
+    pdf.write_bytes(b"%PDF-1.4\n%%EOF")
+    archived_pdf = tmp_path / "cliente" / "Orcamento_de_Conexao_2600001051.pdf"
+    archived_pdf.parent.mkdir()
+    archived_pdf.write_bytes(pdf.read_bytes())
+    monkeypatch.setattr(
+        processing_service,
+        "_load_or_extract_technical_data",
+        lambda *args: (
+            "2600001051",
+            "CLIENTE SINTETICO",
+            "modulo",
+            "inversor",
+            "5x LEAPTON MODELO",
+            "1x GROWATT MODELO",
+            validation,
+        ),
+    )
+    monkeypatch.setattr(
+        processing_service,
+        "load_portal_metadata",
+        lambda *args: (
+            {
+                "protocol": "2600001051",
+                "entry_date": "2026-07-01",
+                "completion_date": "2026-08-01",
+                "completion_extraction_status": "found",
+                "op5_selection_scope": "global_batch_fast",
+            },
+            "metadata.json",
+        ),
+    )
+    monkeypatch.setattr(
+        processing_service,
+        "find_client_folder",
+        lambda *args: SimpleNamespace(
+            match_type="protocol",
+            matched_path=str(archived_pdf.parent),
+            confidence=1.0,
+            cache_hit=False,
+            cache_key=None,
+            reason=None,
+            found_by="protocol",
+            protocol_search_hit=True,
+            search_elapsed_seconds=0.0,
+        ),
+    )
+    monkeypatch.setattr(
+        processing_service,
+        "resolve_archive_destination_folder",
+        lambda **kwargs: SimpleNamespace(
+            destination_folder=archived_pdf.parent,
+            match_type="protocol",
+            reason=None,
+            should_create_folder=False,
+            fallback_mode=None,
+            legacy_gd_ignored=False,
+        ),
+    )
+    monkeypatch.setattr(
+        processing_service,
+        "update_excel_from_pdf_data",
+        Mock(
+            return_value={
+                "success": True,
+                "can_write": True,
+                "action": "update_existing",
+                "row_found": True,
+                "row_number": 2,
+            }
+        ),
+    )
+    monkeypatch.setattr(
+        processing_service,
+        "archive_pdf_to_client_folder",
+        lambda *args, **kwargs: SimpleNamespace(
+            success=True,
+            error=None,
+            match_type="protocol",
+            reason=None,
+            created_folder=False,
+            fallback_mode=None,
+            legacy_gd_ignored=False,
+            archived_pdf_path=archived_pdf,
+            destination_folder=archived_pdf.parent,
+            source_pdf_sha256="source-sha",
+            archived_pdf_sha256="archived-sha",
+        ),
+    )
+    monkeypatch.setattr(
+        processing_service,
+        "record_completed_protocol",
+        Mock(side_effect=OSError("index unavailable")),
+    )
+
+    result = processing_service._process_single_pdf(
+        pdf,
+        tmp_path / "planilha.xlsx",
+        tmp_path / "clientes",
+        dry_run=False,
+        apply_archive=True,
+    )
+
+    assert result["success"] is False
+    assert result["op5_completed_index_effect"] == "failed"
+    assert result["manual_action_required"] is True
+    assert result["error"] == "Falha ao persistir indice mestre OP5 privado."
+
+
 def test_valid_v6_cache_is_reused_without_pdf_extraction(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
