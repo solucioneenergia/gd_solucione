@@ -487,7 +487,9 @@ def _validate_interactive_option5_plan(
     if int(payload.get("total_errors", 0) or 0) != 0:
         blockers.append("dry_run_errors")
     planned = int(payload.get("total_updates_planned", 0) or 0)
-    if planned != requested_limit:
+    if planned <= 0:
+        blockers.append("planned_updates_empty")
+    if planned > requested_limit:
         blockers.append("planned_updates_mismatch")
     if payload.get("stale_after_failed_plan") is True:
         blockers.append("stale_plan")

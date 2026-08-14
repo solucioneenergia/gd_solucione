@@ -1585,6 +1585,47 @@ def test_interactive_option5_rejects_partial_listing_recovery_plan_even_if_count
     assert "partial_listing_recovery" in block.payload["blockers"]
 
 
+def test_interactive_option5_accepts_safe_partial_plan_with_technical_pending_review() -> None:
+    block = cli._validate_interactive_option5_plan(
+        {
+            "status": OperationStatus.SUCESSO.value,
+            "dry_run": True,
+            "apply_archive": True,
+            "requested_batch_limit": 40,
+            "total_updates_planned": 39,
+            "total_updates_applied": 0,
+            "total_errors": 0,
+            "total_pending_review": 1,
+            "planned_excel_actions": [
+                {"protocol": f"250000{i:04d}", "action": "update_existing"}
+                for i in range(39)
+            ],
+            "frozen_batch": {
+                "requested_limit": 40,
+                "protocols": [f"250000{i:04d}" for i in range(39)],
+            },
+            "processing": {
+                "total_updates_planned": 39,
+                "total_pending_review": 1,
+                "results": [
+                    {
+                        "protocol": "2500999999",
+                        "action": "pending_technical_review",
+                        "technical_validation_status": "pending_review",
+                    }
+                ],
+            },
+            "download": {
+                "partial_batch_due_to_listing_recovery": False,
+                "abort_reason": None,
+            },
+        },
+        requested_limit=40,
+    )
+
+    assert block is None
+
+
 @pytest.mark.parametrize(
     ("status", "expected"),
     [

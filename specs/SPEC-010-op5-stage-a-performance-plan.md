@@ -148,6 +148,15 @@ planilha, `APPLY_ARCHIVE`, PDFs e acoes planejadas. Esse reaproveitamento deve:
 - rejeitar plano `stale_after_failed_plan=true`, com erro, com limite divergente, com
   `APPLY_ARCHIVE` divergente, com SHA de planilha/PDF divergente ou sem acoes planejadas.
 
+Na opcao 5 interativa, o limite informado pelo operador e teto autorizado de coleta/aplicacao, nao
+garantia de que todos os protocolos coletados serao aplicaveis. Se o dry-run solicitado para N
+protocolos coletar N PDFs, mas filtrar protocolos com `pending_technical_review`, a aplicacao real
+pode continuar com o subconjunto seguro quando o plano persistido estiver `SUCESSO`, `dry_run=true`,
+`total_errors=0`, `total_updates_planned>0`, `total_updates_planned<=N`, sem recuperacao parcial de
+listagem, e sem protocolos pendentes dentro de `planned_excel_actions`/`frozen_batch`. O menu
+interativo deve bloquear apenas quando nao houver nenhuma acao planejada segura, quando o plano
+exceder N, ou quando houver erro/condicao operacional bloqueante.
+
 ### RF-003 — Separação da reconciliação global
 
 A reconciliação global da SPEC-004 permanece válida, mas deve ser controlada por modo explícito:
@@ -249,6 +258,14 @@ estimada não substitui a validação da página do Portal: a navegação só é
 após o clique for exatamente a página estimada, e a varredura leve deve confirmar a tabela visível
 antes de iniciar qualquer coleta operacional. Se a navegação estimada não for confirmada, o fluxo
 deve voltar ao reset seguro para página 1 e seguir a varredura normal.
+
+Se o alvo estimado nao estiver na janela numerica visivel do paginador, a navegacao pode avancar
+pela janela do paginador ate expor o alvo. Quando o clique de proxima janela altera os links
+numericos disponiveis, mas mantem a pagina ativa/tabela atual (por exemplo, pagina ativa 3 e alvo
+15), isso nao deve ser tratado imediatamente como falha parcial. O adaptador deve tentar novamente
+o alvo numerico apos a mudanca da janela e clicar diretamente na pagina estimada quando ela ficar visivel.
+A navegacao continua sendo bloqueada se, apos o clique no alvo, a pagina ativa confirmada nao for
+exatamente a pagina estimada ou se a tabela nao mudar.
 
 Em `batch_fast`, a parada incremental e a ordem de processamento devem favorecer candidatos
 processaveis localmente. A leitura do Portal nao deve parar somente porque encontrou N

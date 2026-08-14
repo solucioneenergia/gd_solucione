@@ -3969,6 +3969,81 @@ def navigate_to_numeric_page(page, target_page_number: int) -> dict:
         return result
 
 
+def _try_click_target_after_forward_window_shift(
+    page,
+    *,
+    target_page_number: int,
+    current_page_number: int,
+    previous_signature: tuple,
+    click_result: dict,
+) -> dict:
+    target = int(target_page_number)
+    current = int(current_page_number)
+    result = {
+        "success": False,
+        "status": "pagination_forward_window_shift_unavailable",
+        "method": "forward_window_shift_target_navigation",
+        "target_page_number": target,
+        "active_page_before": current,
+        "active_page_after": current,
+        "signature_after": previous_signature,
+        "click_result": None,
+        "url_after": _safe_page_url(page),
+        "error": None,
+    }
+    if (
+        click_result.get("mode") != "next_button"
+        or click_result.get("stop_reason") != "pagination_next_clicked"
+        or target <= current
+    ):
+        result["error"] = "Clique anterior nao abriu uma janela numerica futura."
+        return result
+
+    target_click = find_and_click_next_numeric_page(page, target - 1)
+    result["click_result"] = target_click
+    if (
+        not target_click.get("found")
+        or not target_click.get("enabled")
+        or not target_click.get("clicked")
+    ):
+        result["status"] = (
+            target_click.get("stop_reason")
+            or "pagination_forward_window_target_not_found"
+        )
+        result["error"] = (
+            "Janela futura do paginador nao expos a pagina alvo "
+            f"{target}."
+        )
+        result["url_after"] = _safe_page_url(page)
+        return result
+
+    _wait_after_pagination_click(page)
+    rows_after = read_current_page_table_with_row_handles(page)
+    signature_after = _listing_rows_signature(rows_after)
+    active_after = get_active_numeric_page(page)
+    result["active_page_after"] = active_after
+    result["signature_after"] = signature_after
+    result["url_after"] = _safe_page_url(page)
+    if active_after != target:
+        result["status"] = "pagination_forward_window_target_active_mismatch"
+        result["error"] = (
+            f"Pagina ativa apos janela futura: {active_after}; esperado: {target}."
+        )
+        return result
+    if signature_after == previous_signature:
+        result["status"] = "pagination_forward_window_target_click_no_change"
+        result["error"] = f"Clique na pagina alvo {target} nao alterou a tabela."
+        return result
+    result.update(
+        {
+            "success": True,
+            "status": "recovered_listing_by_forward_window_target",
+            "error": None,
+        }
+    )
+    return result
+
+
 def _navigate_to_numeric_page_sequentially(
     page,
     *,
@@ -4042,6 +4117,26 @@ def _navigate_to_numeric_page_sequentially(
             )
             return result
         if active_after <= current_page_number:
+            window_target = _try_click_target_after_forward_window_shift(
+                page,
+                target_page_number=target_page_number,
+                current_page_number=current_page_number,
+                previous_signature=previous_signature,
+                click_result=click_result,
+            )
+            result["forward_window_shift_navigation"] = window_target
+            if window_target.get("success"):
+                result.update(
+                    {
+                        "success": True,
+                        "status": "recovered_listing_by_sequential_numeric_page",
+                        "active_page_after": window_target.get("active_page_after"),
+                        "signature_after": window_target.get("signature_after"),
+                        "url_after": window_target.get("url_after"),
+                        "error": None,
+                    }
+                )
+                return result
             result["status"] = "pagination_active_page_mismatch"
             result["error"] = (
                 f"Pagina ativa apos clique: {active_after}; esperado maior que "
