@@ -3905,18 +3905,16 @@ def navigate_to_numeric_page(page, target_page_number: int) -> dict:
             url_after=_safe_page_url(page),
         )
     if active_before is None:
-        if _has_minhas_solicitacoes_table(page):
-            active_before = 1
-            result["active_page_before"] = active_before
-            result["active_page_assumed"] = True
-        else:
-            result.update(
-                {
-                    "status": "cannot_confirm_active_page",
-                    "error": "Nao foi possivel detectar a pagina ativa antes da navegacao.",
-                    "url_after": _safe_page_url(page),
-                }
+        has_listing_table = _has_minhas_solicitacoes_table(page)
+        active_before, should_return, result = (
+            cdp_navigation_helpers.resolve_numeric_page_navigation_active_before(
+                result,
+                active_before,
+                has_listing_table=has_listing_table,
+                url_after=None if has_listing_table else _safe_page_url(page),
             )
+        )
+        if should_return:
             return result
 
     try:

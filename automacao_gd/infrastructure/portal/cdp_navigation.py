@@ -228,6 +228,29 @@ def mark_numeric_page_navigation_already_on_target(
     return result
 
 
+def resolve_numeric_page_navigation_active_before(
+    result: dict,
+    active_before: int | None,
+    *,
+    has_listing_table: bool,
+    url_after: str | None,
+) -> tuple[int | None, bool, dict]:
+    if active_before is not None:
+        return active_before, False, result
+    if has_listing_table:
+        result["active_page_before"] = 1
+        result["active_page_assumed"] = True
+        return 1, False, result
+    result.update(
+        {
+            "status": "cannot_confirm_active_page",
+            "error": "Nao foi possivel detectar a pagina ativa antes da navegacao.",
+            "url_after": url_after,
+        }
+    )
+    return None, True, result
+
+
 def find_and_click_previous_listing_page(
     page,
     current_page_number: int,

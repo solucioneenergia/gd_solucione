@@ -570,6 +570,91 @@ def test_navigate_to_numeric_page_reports_already_on_target(monkeypatch) -> None
     }
 
 
+def test_navigate_to_numeric_page_assumes_first_page_when_table_exists(
+    monkeypatch,
+) -> None:
+    active_page = {"value": None}
+
+    monkeypatch.setattr(
+        cdp_service,
+        "get_active_numeric_page",
+        lambda page: active_page["value"],
+    )
+    monkeypatch.setattr(cdp_service, "_has_minhas_solicitacoes_table", lambda page: True)
+    monkeypatch.setattr(cdp_service, "_safe_page_url", lambda page: "listing")
+    monkeypatch.setattr(cdp_service, "_wait_after_pagination_click", lambda page: None)
+    monkeypatch.setattr(
+        cdp_service,
+        "read_current_page_table_with_row_handles",
+        lambda page: [
+            {"record": _record("2602" if active_page["value"] == 2 else "2601")}
+        ],
+    )
+
+    def fake_numeric_click(page, current_page_number: int) -> dict:
+        assert current_page_number == 1
+        active_page["value"] = 2
+        return {
+            "found": True,
+            "enabled": True,
+            "clicked": True,
+            "current_page_number": current_page_number,
+            "target_page_number": 2,
+            "numeric_page_links_found": ["2"],
+            "stop_reason": "pagination_numeric_page_clicked",
+        }
+
+    monkeypatch.setattr(
+        cdp_service,
+        "find_and_click_next_numeric_page",
+        fake_numeric_click,
+    )
+
+    result = cdp_service.navigate_to_numeric_page(
+        page=object(),
+        target_page_number=2,
+    )
+
+    assert result["success"] is True
+    assert result["active_page_before"] == 1
+    assert result["active_page_assumed"] is True
+    assert result["active_page_after"] == 2
+
+
+def test_navigate_to_numeric_page_cannot_confirm_active_without_table(
+    monkeypatch,
+) -> None:
+    def unexpected_read(page):
+        raise AssertionError("table rows should not be read")
+
+    monkeypatch.setattr(cdp_service, "get_active_numeric_page", lambda page: None)
+    monkeypatch.setattr(cdp_service, "_has_minhas_solicitacoes_table", lambda page: False)
+    monkeypatch.setattr(
+        cdp_service,
+        "_safe_page_url",
+        lambda page: "https://gdneoenergiapernambuco.neoenergia.com/detalhe",
+    )
+    monkeypatch.setattr(
+        cdp_service,
+        "read_current_page_table_with_row_handles",
+        unexpected_read,
+    )
+
+    result = cdp_service.navigate_to_numeric_page(
+        page=object(),
+        target_page_number=2,
+    )
+
+    assert result["success"] is False
+    assert result["status"] == "cannot_confirm_active_page"
+    assert result["active_page_before"] is None
+    assert (
+        result["url_after"]
+        == "https://gdneoenergiapernambuco.neoenergia.com/detalhe"
+    )
+    assert result["error"] == "Nao foi possivel detectar a pagina ativa antes da navegacao."
+
+
 def test_portal_listing_reader_accepts_identification_code_header() -> None:
     source = cdp_service.read_current_page_table_with_row_handles.__code__.co_consts
     script = next(item for item in source if isinstance(item, str) and "mapHeader" in item)
