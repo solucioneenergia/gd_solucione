@@ -114,8 +114,8 @@ def test_audit_proposes_both_equipment_cells_as_one_update(tmp_path: Path) -> No
     item = result.items[0]
 
     assert item.action is models.BackfillAction.PENDING_TECHNICAL_REVIEW
-    assert item.proposed_module_text == "5x LEAPTON LP182"
-    assert item.proposed_inverter_text == "1x HUAWEI SUN2000"
+    assert item.proposed_module_text == "LEAPTON | LP182\nQtd. total: 5 módulos"
+    assert item.proposed_inverter_text == "HUAWEI | SUN2000\nQtd. total: 1 inversor"
     assert {"MODULE_EMPTY", "GOKIN_IN_INVERTER", "EQUIPMENT_ITEM_LOST"}.issubset(
         item.reasons
     )

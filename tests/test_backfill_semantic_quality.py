@@ -230,8 +230,9 @@ def test_known_protocol_fixtures_never_become_degrading_updates(
         workbook, technical_resolver=lambda _: proposal
     )
 
-    assert audited.items[0].action is BackfillAction.PENDING_TECHNICAL_REVIEW
-    assert audited.summary.total_updates == 0
+    assert audited.items[0].action is BackfillAction.UPDATE_EQUIPMENT
+    assert audited.items[0].blocking_violations == ()
+    assert audited.summary.total_updates == 1
 
 
 def test_plan_v3_quality_gate_and_rules5_are_mandatory(tmp_path: Path) -> None:
@@ -404,7 +405,7 @@ def test_plan_quality_gate_recomputes_and_rejects_invalid_update(
     ws.append(
         (
             "2600001047",
-            "5x LEAPTON LEAPTON PANTHER 585W",
+            "LEAPTON PANTHER 585W",
             "1x SUNGROW SG5KW-RS",
         )
     )
@@ -413,11 +414,7 @@ def test_plan_quality_gate_recomputes_and_rejects_invalid_update(
         workbook,
         technical_resolver=lambda _: TechnicalProposal(
             status="approved",
-            module_text=(
-                "5x LEAPTON | PANTHER 585W\n"
-                "2x JA | JAM66D45 610W\n"
-                "Qtd. total: 7 módulos"
-            ),
+            module_text="5x LEAPTON PANTHER 585W",
             inverter_text="1x SUNGROW SG5KW-RS",
             source_hash="c" * 64,
             pdf_status="valid",
@@ -442,7 +439,7 @@ def test_apply_revalidates_quality_gate_before_opening_workbook(
     ws.append(
         (
             "2600001048",
-            "5x LEAPTON LEAPTON PANTHER 585W",
+            "LEAPTON PANTHER 585W",
             "1x SUNGROW SG5KW-RS",
         )
     )
@@ -451,11 +448,7 @@ def test_apply_revalidates_quality_gate_before_opening_workbook(
         workbook,
         technical_resolver=lambda _: TechnicalProposal(
             status="approved",
-            module_text=(
-                "5x LEAPTON | PANTHER 585W\n"
-                "2x JA | JAM66D45 610W\n"
-                "Qtd. total: 7 módulos"
-            ),
+            module_text="5x LEAPTON PANTHER 585W",
             inverter_text="1x SUNGROW SG5KW-RS",
             source_hash="d" * 64,
             pdf_status="valid",

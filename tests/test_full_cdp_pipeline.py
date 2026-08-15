@@ -1092,6 +1092,11 @@ def test_numeric_pagination_click_uses_exact_visible_locator() -> None:
     class FakeLocator:
         def __init__(self, links: list[FakeLink]):
             self.links = links
+            self.first = self
+
+        def wait_for(self, *, state: str, timeout: int) -> None:
+            assert state == "hidden"
+            assert timeout == 5_000
 
         def count(self) -> int:
             return len(self.links)
@@ -1104,6 +1109,8 @@ def test_numeric_pagination_click_uses_exact_visible_locator() -> None:
             self.links = links
 
         def locator(self, selector: str) -> FakeLocator:
+            if selector == "#page-loader, .ui-blockui, .ui-widget-overlay":
+                return FakeLocator([])
             assert selector == ".ui-paginator a.ui-paginator-page"
             return FakeLocator(self.links)
 

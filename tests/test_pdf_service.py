@@ -246,7 +246,7 @@ def test_module_quantities_are_distributed_for_same_manufacturer_multiple_models
     assert data.format_module_for_planilha() == (
         "GOKIN | GKM-550M\n"
         "GOKIN | GKM-555M\n"
-        "Total: 22 m\u00f3dulos"
+        "Qtd. total: 22 m\u00f3dulos"
     )
 
 

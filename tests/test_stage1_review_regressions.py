@@ -261,7 +261,10 @@ def test_gokin_as_module_and_huawei_as_inverter_is_valid() -> None:
     )
 
     assert _validation(data).approved is True
-    assert format_modules_for_excel_v2(data).text.startswith("5x GOKIN")
+    assert format_modules_for_excel_v2(data).text == (
+        "GOKIN | LP182-585W\n"
+        "Qtd. total: 5 módulos"
+    )
 
 
 def test_gokin_outside_equipment_sections_is_not_a_false_positive() -> None:

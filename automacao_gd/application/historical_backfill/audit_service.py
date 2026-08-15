@@ -56,6 +56,7 @@ _MANDATORY_TEXTUAL_CLEANUP_REASONS = frozenset(
         "PROVEN_STRUCTURAL_CONTAMINATION_REMOVED",
         "CROSS_FIELD_CONTAMINATION_RESOLVED",
         "GENERIC_LABEL_REMOVED",
+        "CANONICAL_FORMAT_REQUIRED",
     }
 )
 
@@ -383,6 +384,8 @@ def _mandatory_textual_cleanup_reasons(
     if exact_text_no_change:
         return ()
     evidence = (*comparison_reasons, *semantic_warnings, *cleanup_warnings)
+    if comparison_reasons:
+        evidence = (*evidence, "CANONICAL_FORMAT_REQUIRED")
     if (
         "DUPLICATED_MANUFACTURER_IN_MODEL_REMOVED" in evidence
         and not _manufacturer_occurrence_removed(

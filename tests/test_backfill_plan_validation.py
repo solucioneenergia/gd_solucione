@@ -27,6 +27,7 @@ from automacao_gd.domain.equipment_semantics import (
     canonical_collection_from_formatted_cells,
     canonical_collection_to_dict,
     canonicalize_equipment,
+    format_canonical_collection,
     semantic_fingerprint,
 )
 
@@ -96,14 +97,17 @@ def _audit_item(
     current_collection = canonical_collection_from_formatted_cells(
         current_module, current_inverter
     )
+    canonical_module, canonical_inverter = format_canonical_collection(
+        source_collection
+    )
     return HistoricalEquipmentAuditItem(
         workbook_sheet="2025",
         workbook_row=2,
         protocol="2600001011",
         current_module_text=current_module,
         current_inverter_text=current_inverter,
-        proposed_module_text=proposed_module,
-        proposed_inverter_text=proposed_inverter,
+        proposed_module_text=canonical_module,
+        proposed_inverter_text=canonical_inverter,
         technical_validation_status="approved",
         action=BackfillAction.UPDATE_EQUIPMENT,
         reasons=("MODULE_DIFFERENT", "INVERTER_DIFFERENT"),
