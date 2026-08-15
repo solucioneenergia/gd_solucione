@@ -43,7 +43,7 @@ def test_desktop_main_contains_reference_dashboard_sections() -> None:
     assert '<div id="root"></div>' in entrypoint
 
     for expected_text in [
-        "Automação GD Neoenergia — Desktop Visual",
+        "Solucione Nordeste",
         "Portal e Execução",
         "Visualização do Processo",
         "Protocolos recentes",

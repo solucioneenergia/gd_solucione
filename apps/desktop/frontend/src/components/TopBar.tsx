@@ -4,7 +4,7 @@ import { cleanupDryRun } from "../bridge/qtBridge";
 export function TopBar() {
   return (
     <header className="topbar">
-      <h1>Automação GD Neoenergia — Desktop Visual</h1>
+      <h1>Solucione Nordeste</h1>
       <div className="topbar-actions">
         <div className="system-badge">
           <span />

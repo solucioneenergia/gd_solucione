@@ -1,2 +1,1 @@
-"""Aplicação desktop visual da Automação GD Neoenergia."""
-
+"""Aplicacao desktop visual Solucione Nordeste."""

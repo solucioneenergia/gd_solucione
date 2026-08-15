@@ -1,6 +1,6 @@
 # SPEC-012 - Refatoracao estrutural segura e desktop instalavel local
 
-Status: em implementacao incremental - Ciclo 7 Processamento PDF e Excel concluido
+Status: em implementacao incremental - Ciclo 8 Desktop instalavel local concluido
 Data: 2026-08-15
 Responsavel: Codex
 Revisores: Operacao GD Neoenergia e revisao tecnica independente
@@ -45,8 +45,10 @@ entre instalacao de usuario e rotinas de desenvolvimento/teste.
   auditoria de dependencias.
 - `scripts/build_windows.ps1` gera build PyInstaller incluindo `apps/desktop/frontend/dist` e
   `apps/desktop/frontend/static`.
-- `scripts/build_windows.ps1` ainda nao define `--icon`.
-- Nao ha script versionado especifico para criar atalho no Desktop/Menu Iniciar.
+- `scripts/build_windows.ps1` define `--icon` com `.ico` padrao versionado e aceita override
+  local validado.
+- `scripts/create_desktop_shortcut.ps1` e `scripts/install_local_desktop.ps1` oferecem criacao
+  de atalho e instalacao local a partir de bundle ja gerado, sem etapa de desenvolvimento.
 - `scripts/setup_windows.ps1` instala dependencias e executa `python -m pytest -q`, comportamento
   adequado para desenvolvimento, mas inadequado como instalador local de usuario final.
 - `src/`, `frontend/` e `automacao_gd/presentation/desktop` ainda sao preservados por ADRs e
@@ -100,17 +102,19 @@ qual e a proxima etapa de desenvolvimento.
   `processing_results.py`; helpers puros de payload e comparacao Excel movidos para
   `excel_update_helpers.py`; `process_downloaded_pdfs` e `update_excel_from_pdf_data`
   preservados como fachadas sem mudanca de escrita.
-- [ ] Ciclo 8 - Desktop instalavel local com icone e atalho.
-  Proxima etapa: preparar build/instalacao local a partir de `apps/desktop`, icone `.ico`
-  validado e criacao opcional de atalho, sem abrir Portal/CDP nem tocar dados reais.
+- [x] Ciclo 8 - Desktop instalavel local com icone e atalho.
+  Evidencia: app nomeado como `Solucione Nordeste`, icone `.svg` e `.ico` versionados em
+  `apps/desktop/resources`, janela PySide6 usa o icone, build PyInstaller valida `--icon`,
+  scripts de atalho/instalacao local foram versionados sem abrir Portal/CDP nem tocar dados reais.
 - [ ] Ciclo 9 - Validacao final, CI e preparo de release local.
+  Proxima etapa: executar build/smoke offline, suite completa, release zip e CI.
 
 ### Trilhas
 
 - [ ] Trilha A - Limpeza local ignorada.
   Status: pendente; nao foi misturada com as refatoracoes de codigo ja commitadas.
 - [x] Trilha B - Refatoracao de codigo rastreado.
-  Status: iniciada e com Ciclos 1 a 7 concluidos; deve continuar em commits pequenos e separados.
+  Status: iniciada e com Ciclos 1 a 8 concluidos; deve continuar em commits pequenos e separados.
 
 ## Escopo
 
@@ -519,7 +523,7 @@ Testes futuros minimos:
       com mensagem clara de instalacao incompleta.
 - [ ] Dado um icone `.ico` valido, quando o build local for executado, entao o executavel/atalho
       usa esse icone.
-- [ ] Dado um icone inexistente ou nao `.ico`, quando o build local for executado, entao a
+- [x] Dado um icone inexistente ou nao `.ico`, quando o build local for executado, entao a
       instalacao falha antes de gerar artefato enganoso.
 - [ ] Dado o instalador local, quando executado, entao nao roda `pytest`, nao abre Portal, nao
       altera planilha e nao acessa dados reais automaticamente.
@@ -564,8 +568,8 @@ anteriores; nao apontar silenciosamente para o frontend legado.
 
 ## Decisoes pendentes
 
-- Nome final do executavel e do atalho.
-- Caminho padrao do icone versionado.
+- Nome final do executavel e do atalho: decidido como `Solucione Nordeste`.
+- Caminho padrao do icone versionado: decidido como `apps/desktop/resources/app_icon.ico`.
 - Se o instalador local sera apenas PowerShell ou tambem um instalador Windows formal.
 - Quando propor ADR para remocao de `frontend/` e `automacao_gd/presentation/desktop`.
 - Politica de retencao de `lixeira/` e artefatos ignorados antigos.
@@ -640,6 +644,29 @@ anteriores; nao apontar silenciosamente para o frontend legado.
   `python -m pytest tests/test_processing_excel_facade_contract.py tests/test_processing_service.py tests/test_processing_resilience.py tests/test_stage1_review_regressions.py tests/test_stage1_terminal_persistence.py tests/test_terminal_operation_safety.py tests/test_equipment_format_v2.py tests/test_full_cdp_pipeline.py tests/test_op5_stage_b_optimization.py tests/test_stage0_production_safety.py -q`
   com 371 testes passando.
 - [x] `ruff check` nos arquivos tocados do Ciclo 7 sem erros.
+- [x] Ciclo 8 - Desktop instalavel local com icone e atalho concluido com:
+  `apps.desktop.branding`, `apps/desktop/resources/app_icon.svg`,
+  `apps/desktop/resources/app_icon.ico`, janela PySide6 com `setWindowIcon`,
+  `scripts/build_windows.ps1` com `--icon`, `scripts/create_desktop_shortcut.ps1` e
+  `scripts/install_local_desktop.ps1`.
+- [x] Validacao de caracterizacao do Ciclo 8 executada pelo Codex:
+  `python -m pytest tests/test_desktop_local_installation.py -q` com 6 testes passando.
+- [x] Validacao proporcional desktop/release executada pelo Codex no fechamento do Ciclo 8:
+  `python -m pytest tests/test_desktop_local_installation.py tests/test_desktop_app_structure.py tests/test_desktop_frontend_loading.py tests/test_desktop_visual_assets.py tests/test_desktop_visual_architecture.py tests/test_desktop_architecture.py tests/test_release_candidate_202.py tests/test_migration_and_release.py tests/test_release_validator_hardening.py -q`
+  com 84 testes passando.
+- [x] Teste frontend executado pelo Codex com Node empacotado:
+  `pnpm test` em `apps/desktop/frontend` com 3 testes passando.
+- [x] `ruff check`, `py_compile` e parse dos scripts PowerShell tocados do Ciclo 8 sem erros.
+- [x] Validacao de falha fechada executada pelo Codex:
+  `scripts/build_windows.ps1 -IconPath apps/desktop/resources/app_icon.svg` falhou com
+  `DESKTOP_ICON_INVALID` antes de build frontend/PyInstaller.
+- [x] Validacao de falha fechada executada pelo Codex:
+  `scripts/build_windows.ps1 -IconPath` com arquivo `.ico` falso falhou com
+  `DESKTOP_ICON_INVALID` antes de build frontend/PyInstaller.
+- [x] Validacao de falha fechada executada pelo Codex:
+  `scripts/install_local_desktop.ps1 -BundlePath dist/bundle_inexistente_para_teste` falhou com
+  `LOCAL_INSTALL_VALIDATION_FAILED` antes de copiar arquivos/criar atalho.
+- [ ] Build PyInstaller completo com icone valido e instalacao local completa; pendente do Ciclo 9.
 - [ ] Suite completa do projeto apos concluir todos os ciclos.
 - [ ] CI verde apos push final das etapas aplicaveis.
 - [ ] Smoke offline do desktop instalavel.

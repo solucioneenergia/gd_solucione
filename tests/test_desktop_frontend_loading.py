@@ -65,7 +65,7 @@ def test_static_frontend_contains_visual_sections() -> None:
     source = Path("apps/desktop/frontend/static/index.html").read_text(encoding="utf-8")
 
     for label in [
-        "Automação GD Neoenergia",
+        "Solucione Nordeste",
         "Dashboard",
         "Portal e Execução",
         "Visualização do Processo",

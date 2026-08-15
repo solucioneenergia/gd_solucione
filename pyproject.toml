@@ -26,6 +26,8 @@ include = ["automacao_gd*", "apps*", "src*", "scripts*"]
 
 [tool.setuptools.package-data]
 "apps.desktop" = [
+  "resources/*.ico",
+  "resources/*.svg",
   "frontend/dist/*.html",
   "frontend/dist/assets/*",
   "frontend/static/*.html",

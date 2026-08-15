@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" role="img" aria-labelledby="title desc">
+  <title id="title">Solucione Nordeste</title>
+  <desc id="desc">Icone do aplicativo Solucione Nordeste com raio e painel de gestao.</desc>
+  <defs>
+    <linearGradient id="bolt" x1="66" y1="38" x2="176" y2="222" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#ffd229" />
+      <stop offset="0.48" stop-color="#f58a1f" />
+      <stop offset="1" stop-color="#f04c18" />
+    </linearGradient>
+    <linearGradient id="panel" x1="65" y1="54" x2="200" y2="206" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#ffffff" />
+      <stop offset="1" stop-color="#eef1f4" />
+    </linearGradient>
+  </defs>
+  <rect x="46" y="38" width="156" height="176" rx="24" fill="url(#panel)" stroke="#3f4348" stroke-width="8" />
+  <path d="M156 38h22l24 24v22h-46z" fill="#d7dce1" />
+  <path d="M82 98h96" stroke="#3f4348" stroke-width="10" stroke-linecap="round" />
+  <path d="M95 126h37M150 126h35M95 154h37M150 154h35M95 182h37M150 182h35" stroke="#b8bec5" stroke-width="8" stroke-linecap="round" />
+  <path d="M115 18 36 144h64l-28 94 98-133h-63z" fill="url(#bolt)" stroke="#ffb21f" stroke-width="5" stroke-linejoin="round" />
+  <path d="M82 78 115 18 104 107h42L72 238l28-94H36z" fill="#fff4b0" opacity="0.22" />
+</svg>

@@ -8,6 +8,7 @@ from urllib.request import url2pathname
 
 from automacao_gd.infrastructure.config import get_settings
 
+from apps.desktop.branding import APP_ICON_PATH, APP_WINDOW_TITLE
 from apps.desktop.bridge.automation_bridge import AutomationBridge
 
 
@@ -19,6 +20,7 @@ _QWebEnginePage: Any
 _QWebEngineSettings: Any
 _QWebEngineUrlRequestInterceptor: Any
 _QWebEngineView: Any
+_QIcon: Any
 
 _FORCE_QT_FALLBACK = os.environ.get("AUTOMACAO_GD_QT_FALLBACK") == "1"
 
@@ -33,9 +35,11 @@ if _FORCE_QT_FALLBACK:
     _QWebEngineSettings = None
     _QWebEngineUrlRequestInterceptor = object
     _QWebEngineView = None
+    _QIcon = None
 else:
     try:
         from PySide6.QtCore import QUrl as _ImportedQUrl
+        from PySide6.QtGui import QIcon as _ImportedQIcon
         from PySide6.QtWebChannel import QWebChannel as _ImportedQWebChannel
         from PySide6.QtWebEngineCore import (
             QWebEnginePage as _ImportedQWebEnginePage,
@@ -58,6 +62,7 @@ else:
         _QWebEngineSettings = None
         _QWebEngineUrlRequestInterceptor = object
         _QWebEngineView = None
+        _QIcon = None
     else:
         QT_AVAILABLE = True
         WEBENGINE_AVAILABLE = True
@@ -69,6 +74,7 @@ else:
         _QWebEngineSettings = _ImportedQWebEngineSettings
         _QWebEngineUrlRequestInterceptor = _ImportedQWebEngineUrlRequestInterceptor
         _QWebEngineView = _ImportedQWebEngineView
+        _QIcon = _ImportedQIcon
 
 
 FRONTEND_ROOT = Path(__file__).resolve().parent / "frontend"
@@ -172,7 +178,9 @@ class DesktopVisualWindow(_QMainWindow):
         )
         self.page.profile().setUrlRequestInterceptor(self.interceptor)
         self.web_view.setPage(self.page)
-        self.setWindowTitle("Automação GD Neoenergia — Desktop Visual")
+        self.setWindowTitle(APP_WINDOW_TITLE)
+        if APP_ICON_PATH.exists():
+            self.setWindowIcon(_QIcon(str(APP_ICON_PATH)))
         self.setMinimumSize(1180, 700)
         self._resize_to_available_screen()
         self._configure_security()
