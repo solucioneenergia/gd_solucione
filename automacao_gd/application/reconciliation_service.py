@@ -453,7 +453,7 @@ def build_workbook_protocol_index(workbook_path: Path | str) -> WorkbookProtocol
             ]
             last_material_row = max(
                 max(material_rows, default=header["row"]),
-                sheet.max_row,
+                _worksheet_max_row(sheet, default=header["row"]),
             )
             for row_number, values, has_material in row_items:
                 if not has_material:
@@ -595,8 +595,8 @@ def _find_header(sheet) -> dict[str, int] | None:
     for row_number, row in enumerate(
         sheet.iter_rows(
             min_row=1,
-            max_row=min(sheet.max_row, 20),
-            max_col=min(sheet.max_column, 40),
+            max_row=min(_worksheet_max_row(sheet, default=20), 20),
+            max_col=min(_worksheet_max_column(sheet, default=40), 40),
             values_only=True,
         ),
         start=1,
@@ -618,6 +618,16 @@ def _find_header(sheet) -> dict[str, int] | None:
                 "inversor": headers.get("inversor", 7),
             }
     return None
+
+
+def _worksheet_max_row(sheet, *, default: int) -> int:
+    value = getattr(sheet, "max_row", None)
+    return value if isinstance(value, int) and value > 0 else default
+
+
+def _worksheet_max_column(sheet, *, default: int) -> int:
+    value = getattr(sheet, "max_column", None)
+    return value if isinstance(value, int) and value > 0 else default
 
 
 def _row_values_from_tuple(row: tuple[Any, ...], header: dict[str, int]) -> dict[str, Any]:

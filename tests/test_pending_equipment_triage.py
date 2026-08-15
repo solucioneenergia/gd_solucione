@@ -115,7 +115,10 @@ def test_group_b_module_unit_w_is_recovered_only_when_total_power_proves_it() ->
     assert collection.modules[0].canonical_model == "RM182/144TB 585W"
     assert collection.modules[0].power_value == "585"
     assert collection.modules[0].power_unit == "W"
-    assert format_canonical_collection(collection)[0] == "18x RONMA RM182/144TB 585W"
+    assert format_canonical_collection(collection)[0] == (
+        "RONMA | RM182/144TB 585W\n"
+        "Qtd. total: 18 módulos"
+    )
 
 
 def test_group_b_preserves_w_wp_kw_and_kwp_without_cross_assignment() -> None:
@@ -142,8 +145,14 @@ def test_group_c_proven_label_origin_removes_label_and_duplicate_manufacturer() 
     module_text, inverter_text = format_canonical_collection(collection)
     validation = validate_canonical_equipment(collection, module_text, inverter_text)
 
-    assert module_text == "25x TSUN 615W N-TYPE BIFACIAL 30MM"
-    assert inverter_text == "1x SAJ AFCI MONO 10K-R6 220V 3MPPT"
+    assert module_text == (
+        "TSUN | 615W N-TYPE BIFACIAL 30MM\n"
+        "Qtd. total: 25 módulos"
+    )
+    assert inverter_text == (
+        "SAJ | AFCI MONO 10K-R6 220V 3MPPT\n"
+        "Qtd. total: 1 inversor"
+    )
     assert validation.approved
 
 

@@ -231,48 +231,14 @@ class GenerationData(BaseModel):
         return " | ".join(parts)
 
     def format_module_for_planilha(self) -> str:
-        modules = self.modules or _legacy_modules(self)
-        total_quantity = self.module_total_quantity or self.module_quantity
-        if len([item for item in modules if item.manufacturer or item.model]) > 1:
-            return format_modules_for_excel(modules, total_quantity, None)
+        from automacao_gd.domain.equipment import format_modules_for_excel_v2
 
-        if self.module_quantity is None:
-            return ""
-
-        manufacturer = _clean_technical_text(self.module_manufacturer, uppercase=True)
-        model = _clean_technical_text(self.module_model, uppercase=True)
-        model = _ensure_module_power_suffix(model)
-
-        if manufacturer and model.startswith(f"{manufacturer} "):
-            name = model
-        else:
-            name = " ".join(part for part in [manufacturer, model] if part).strip()
-
-        return _clean_technical_text(f"{self.module_quantity}x {name}", uppercase=False)
+        return format_modules_for_excel_v2(self).text
 
     def format_inverter_for_planilha(self) -> str:
-        if self.microinverters:
-            return _format_combined_inverters_for_planilha(self, include_power=False)
-        inverters = self.inverters or _legacy_inverters(self)
-        total_quantity = self.inverter_total_quantity or self.inverter_quantity
-        if len([item for item in inverters if item.manufacturer or item.model]) > 1:
-            return format_inverters_for_excel(inverters, total_quantity, None)
+        from automacao_gd.domain.equipment import format_inverters_for_excel_v2
 
-        if self.inverter_quantity is None:
-            return ""
-
-        manufacturer = _clean_technical_text(
-            self.inverter_manufacturer, uppercase=True
-        )
-        model = _clean_technical_text(self.inverter_model, uppercase=True)
-        if manufacturer and model.startswith(f"{manufacturer} "):
-            name = model
-        else:
-            name = " ".join(part for part in [manufacturer, model] if part).strip()
-
-        return _clean_technical_text(
-            f"{self.inverter_quantity}x {name}", uppercase=False
-        )
+        return format_inverters_for_excel_v2(self).text
 
     def multiple_module_models(self) -> bool:
         return len([item for item in self.modules if item.manufacturer or item.model]) > 1

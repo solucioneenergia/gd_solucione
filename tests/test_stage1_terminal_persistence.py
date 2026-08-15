@@ -431,3 +431,60 @@ def test_synthetic_restore_and_resume_do_not_duplicate_effects(
     state.mark_completed(protocol)
     resumed_state = pipeline_state.PipelineStateStore(path=state_path, resume=True)
     assert list(resumed_state.state["protocols"]) == [protocol]
+
+
+def test_excel_update_can_mark_boolean_parecer_false_for_unavailable_budget(
+    tmp_path: Path,
+) -> None:
+    protocol = "2600000001"
+    workbook_path = tmp_path / "synthetic_workbook.xlsx"
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.title = "2026"
+    sheet.append(
+        [
+            "Cliente",
+            "Protocolo",
+            "Data de ingresso",
+            "ConclusÃ£o",
+            "Parecer",
+            "Placa",
+            "Inversor",
+        ]
+    )
+    sheet.append(
+        [
+            "CLIENTE SINTETICO LTDA",
+            protocol,
+            "01/06/2026",
+            None,
+            True,
+            "1x MODULO EXISTENTE",
+            "1x INVERSOR EXISTENTE",
+        ]
+    )
+    workbook.save(workbook_path)
+
+    result = excel_service.update_excel_from_pdf_data(
+        workbook_path=workbook_path,
+        protocol=protocol,
+        client_name="CLIENTE SINTETICO LTDA",
+        entry_date="01/06/2026",
+        completion_date="10/06/2026",
+        module_text=None,
+        inverter_text=None,
+        parecer="False",
+        dry_run=False,
+    )
+
+    assert result["success"] is True
+    assert result["action"] == "update_existing"
+
+    reloaded = load_workbook(workbook_path, data_only=False)
+    try:
+        row = next(reloaded["2026"].iter_rows(min_row=2, max_row=2, values_only=True))
+    finally:
+        reloaded.close()
+    assert row[4] is False
+    assert row[5] == "1x MODULO EXISTENTE"
+    assert row[6] == "1x INVERSOR EXISTENTE"

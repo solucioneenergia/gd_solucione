@@ -15,6 +15,7 @@ from scripts.run_full_cdp_pipeline import (
     build_pipeline_payload,
 )
 from automacao_gd.application import full_pipeline
+from automacao_gd.application import processing_service
 import src.cdp_portal_service as cdp_portal_service
 from src.cdp_portal_service import (
     _click_next_listing_page_diagnostic,
@@ -1217,6 +1218,7 @@ def test_download_connection_budget_click_does_not_wait_for_navigation(tmp_path:
 
     assert path is not None
     assert path.exists()
+    assert page.download_timeout == 5_000
     assert target.click_kwargs["timeout"] == 10_000
     assert target.click_kwargs["no_wait_after"] is True
 
@@ -1555,6 +1557,53 @@ def test_reset_listing_recovers_empty_unconfirmed_listing_by_menu(
     assert result["listing_reset_recovery"]["method"] == "recovered_first_page_by_menu"
     assert menu_clicks == ["menu"]
     assert waits == ["listing"]
+
+
+def test_reset_listing_reloads_empty_listing_before_menu_recovery(
+    monkeypatch,
+) -> None:
+    rows = iter([[], [], [_row("SYNTH_RESET_RELOAD")]])
+    reloads = []
+
+    class ListingPage(FakePage):
+        url = "https://gdneoenergiapernambuco.neoenergia.com/pages/acompanhamento/index.jsf"
+
+        def reload(self, **kwargs):
+            reloads.append(kwargs)
+
+    monkeypatch.setattr(cdp_portal_service, "get_active_numeric_page", lambda page: None)
+    monkeypatch.setattr(
+        cdp_portal_service,
+        "read_current_page_table_with_row_handles",
+        lambda page: next(rows),
+    )
+    monkeypatch.setattr(cdp_portal_service, "_wait_after_pagination_click", lambda page: None)
+    monkeypatch.setattr(
+        cdp_portal_service,
+        "find_and_click_next_numeric_page",
+        lambda page, current_page_number: {
+            "found": True,
+            "enabled": False,
+            "clicked": False,
+            "target_page_number": 1,
+            "numeric_page_links_found": ["1"],
+            "stop_reason": "pagination_numeric_target_disabled",
+        },
+    )
+    monkeypatch.setattr(
+        cdp_portal_service,
+        "_click_minhas_solicitacoes_navigation",
+        lambda page: (_ for _ in ()).throw(
+            AssertionError("recuperacao por menu nao deveria ser acionada")
+        ),
+    )
+
+    result = ensure_listing_starts_on_page_one(ListingPage())
+
+    assert result["success"] is True
+    assert result["status"] == "assumed_first_page_active_unconfirmed"
+    assert result["click_result"]["empty_listing_reload"]["success"] is True
+    assert reloads == [{"wait_until": "domcontentloaded", "timeout": 20000}]
 
 
 def test_reset_listing_recovers_empty_unconfirmed_listing_by_url_fallback(
@@ -3396,6 +3445,98 @@ def test_navigate_to_numeric_page_steps_until_target_when_direct_link_is_hidden(
     assert clicks == [2, 3, 4]
 
 
+def test_navigate_to_numeric_page_uses_forward_visible_window_before_sequential(
+    monkeypatch,
+) -> None:
+    active_page = {"value": 1}
+    numeric_targets = []
+
+    def fake_active_page(page):
+        return active_page["value"]
+
+    def fake_rows(page):
+        return [_row(f"26000011{active_page['value']:02d}")]
+
+    def fake_direct_numeric_click(page, current_page_number: int):
+        target = current_page_number + 1
+        numeric_targets.append(target)
+        if target == 10:
+            active_page["value"] = 10
+            return {
+                "found": True,
+                "enabled": True,
+                "clicked": True,
+                "selector": "div.paginator > a",
+                "text": "10",
+                "mode": "numeric",
+                "current_page_number": current_page_number,
+                "target_page_number": target,
+                "numeric_page_links_found": [str(page) for page in range(1, 11)],
+                "numeric_page_links_count": 10,
+                "stop_reason": "pagination_numeric_page_clicked",
+            }
+        if target == 11 and active_page["value"] == 10:
+            active_page["value"] = 11
+            return {
+                "found": True,
+                "enabled": True,
+                "clicked": True,
+                "selector": "div.paginator > a",
+                "text": "11",
+                "mode": "numeric",
+                "current_page_number": current_page_number,
+                "target_page_number": target,
+                "numeric_page_links_found": ["10", "11", "12", "13", "14", "15"],
+                "numeric_page_links_count": 6,
+                "stop_reason": "pagination_numeric_page_clicked",
+            }
+        return {
+            "found": False,
+            "enabled": False,
+            "clicked": False,
+            "selector": None,
+            "text": str(target),
+            "mode": "numeric",
+            "current_page_number": current_page_number,
+            "target_page_number": target,
+            "numeric_page_links_found": [
+                *[str(page) for page in range(1, 11)],
+                "12345678910",
+            ],
+            "numeric_page_links_count": 11,
+            "stop_reason": "pagination_numeric_target_not_found",
+        }
+
+    def fail_sequential(page, current_page_number: int):
+        raise AssertionError("fallback sequencial nao deveria ser acionado")
+
+    monkeypatch.setattr(cdp_portal_service, "get_active_numeric_page", fake_active_page)
+    monkeypatch.setattr(
+        cdp_portal_service,
+        "read_current_page_table_with_row_handles",
+        fake_rows,
+    )
+    monkeypatch.setattr(
+        cdp_portal_service,
+        "find_and_click_next_numeric_page",
+        fake_direct_numeric_click,
+    )
+    monkeypatch.setattr(
+        cdp_portal_service,
+        "find_and_click_next_listing_page",
+        fail_sequential,
+    )
+    monkeypatch.setattr(cdp_portal_service, "_wait_after_pagination_click", lambda page: None)
+
+    result = navigate_to_numeric_page(FakePage(), 11)
+
+    assert result["success"] is True
+    assert result["status"] == "recovered_listing_by_numeric_page"
+    assert result["method"] == "recovered_listing_by_forward_visible_numeric_window"
+    assert result["active_page_after"] == 11
+    assert numeric_targets == [11, 10, 11]
+
+
 def test_navigate_to_numeric_page_uses_target_after_forward_window_shift(
     monkeypatch,
 ) -> None:
@@ -3498,6 +3639,74 @@ def test_navigate_to_numeric_page_uses_target_after_forward_window_shift(
     assert result["active_page_after"] == 15
     assert next_window_clicks == [3]
     assert numeric_targets == [15, 2, 3, 4, 15]
+
+
+def test_navigate_to_numeric_page_marks_high_target_unavailable_when_last_page_reached(
+    monkeypatch,
+) -> None:
+    active_page = {"value": 1}
+
+    monkeypatch.setattr(
+        cdp_portal_service,
+        "get_active_numeric_page",
+        lambda page: active_page["value"],
+    )
+    monkeypatch.setattr(
+        cdp_portal_service,
+        "read_current_page_table_with_row_handles",
+        lambda page: [_row(f"26000010{active_page['value']:02d}")],
+    )
+    monkeypatch.setattr(
+        cdp_portal_service,
+        "find_and_click_next_numeric_page",
+        lambda page, current_page_number: {
+            "found": False,
+            "enabled": False,
+            "clicked": False,
+            "selector": None,
+            "text": str(current_page_number + 1),
+            "mode": "numeric",
+            "current_page_number": current_page_number,
+            "target_page_number": current_page_number + 1,
+            "numeric_page_links_found": ["1"],
+            "numeric_page_links_count": 1,
+            "stop_reason": "pagination_numeric_target_not_found",
+        },
+    )
+    monkeypatch.setattr(
+        cdp_portal_service,
+        "find_and_click_next_listing_page",
+        lambda page, current_page_number: {
+            "found": False,
+            "enabled": False,
+            "clicked": False,
+            "mode": "next_button",
+            "current_page_number": current_page_number,
+            "target_page_number": current_page_number + 1,
+            "numeric_page_links_found": ["1"],
+            "numeric_page_links_count": 1,
+            "stop_reason": "last_page_reached",
+        },
+    )
+
+    result = navigate_to_numeric_page(FakePage(), 15)
+
+    assert result["success"] is False
+    assert result["status"] == "pagination_target_beyond_last_page"
+    assert result["target_page_number"] == 15
+    assert result["active_page_after"] == 1
+    assert "pagina 15" in result["error"]
+
+
+def test_origin_navigation_failure_beyond_last_page_is_skippable() -> None:
+    navigation = {
+        "success": False,
+        "status": "pagination_target_beyond_last_page",
+        "target_page_number": 15,
+        "active_page_after": 1,
+    }
+
+    assert cdp_portal_service._origin_navigation_failure_is_skippable(navigation) is True
 
 
 def test_navigate_to_numeric_page_uses_sequential_fallback_when_direct_click_stays_on_same_page(
@@ -4133,7 +4342,7 @@ def test_download_preserves_partial_batch_after_failed_return_with_reusable_pdf(
     monkeypatch.setattr(
         cdp_portal_service,
         "_return_to_listing_after_detail",
-        lambda detail_page, listing_page, listing_url: (
+        lambda detail_page, listing_page, listing_url, **_kwargs: (
             listing_page,
             {
                 "success": False,
@@ -4400,7 +4609,7 @@ def test_download_aborts_after_failed_return_without_reusable_pdf(
     monkeypatch.setattr(
         cdp_portal_service,
         "_return_to_listing_after_detail",
-        lambda detail_page, listing_page, listing_url: (
+        lambda detail_page, listing_page, listing_url, **_kwargs: (
             listing_page,
             {
                 "success": False,
@@ -4521,6 +4730,261 @@ def test_download_reuses_existing_pdf_without_opening_detail(
     assert result["process_pdf_path"] == str(pdf_path)
     assert result["completion_date_raw"] == "01/02/2026"
     assert result["completion_date_normalized"] == "2026-02-01"
+
+
+def test_download_timeout_marks_budget_unavailable_without_blocking_batch(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    class Settings(DummySettings):
+        ENABLE_PORTAL_PAGINATION = True
+        MAX_PORTAL_PAGES = 1
+        OP5_RECONCILIATION_MODE = "batch_fast"
+        APPLY_EXCEL = True
+
+    record = PortalSolicitation(
+        protocol="2600001048",
+        client_name="CLIENTE SINTETICO LTDA",
+        status="CONCLUIDA",
+        page_number=1,
+        row_index=3,
+        entry_date="10/01/2026",
+    )
+
+    class ListingPage(FakePage):
+        url = "https://portal/listagem"
+
+        class Context:
+            pages = []
+
+        context = Context()
+
+        def wait_for_timeout(self, *_args, **_kwargs) -> None:
+            return None
+
+    ListingPage.context.pages = [ListingPage()]
+
+    monkeypatch.setattr(cdp_portal_service, "get_settings", lambda: Settings())
+    monkeypatch.setattr(
+        cdp_portal_service,
+        "ensure_listing_starts_on_page_one",
+        lambda page: {
+            "success": True,
+            "status": "already_on_first_page",
+            "initial_active_page": 1,
+            "active_page_after": 1,
+        },
+    )
+    monkeypatch.setattr(
+        cdp_portal_service,
+        "_collect_completed_listing_rows_across_pages",
+        lambda page, settings, **kwargs: {
+            "pages_read": 1,
+            "total_rows": 1,
+            "total_completed": 1,
+            "completed_records": [record],
+            "duplicates_skipped": [],
+            "pagination_warnings": [],
+            "pagination_enabled": True,
+            "pagination_stop_reason": "last_page_reached",
+            "pagination_next_found": False,
+            "pagination_click_attempts": 0,
+            "pagination_mode": "numeric",
+            "pagination_current_page": 1,
+            "pagination_target_page": None,
+            "pagination_numeric_links_found": [],
+            "pagination_diagnostics": [],
+        },
+    )
+    monkeypatch.setattr(
+        cdp_portal_service,
+        "ensure_request_origin_page",
+        lambda *args, **kwargs: {
+            "success": True,
+            "status": "protocol_found_on_origin_page",
+            "method": "already_on_origin_page",
+            "row": {
+                "record": record,
+                "row_locator": object(),
+                "action_cell_index": 6,
+            },
+        },
+    )
+    monkeypatch.setattr(cdp_portal_service, "click_follow_eye_button", lambda *args: None)
+    monkeypatch.setattr(cdp_portal_service, "wait_detail_loaded", lambda *args: None)
+    monkeypatch.setattr(cdp_portal_service, "extract_detail_header", lambda page: {})
+    monkeypatch.setattr(cdp_portal_service, "detail_has_completed_status", lambda page: True)
+    monkeypatch.setattr(
+        cdp_portal_service,
+        "extract_point_of_connection_completion",
+        lambda page, protocol: {
+            "completion_date": "09/01/2026",
+            "completion_date_raw": "09/01/2026",
+            "completion_date_normalized": "2026-01-09",
+            "completion_source_stage": "PONTO_DE_CONEXAO_APROVADO",
+            "completion_extraction_status": "FOUND",
+        },
+    )
+    monkeypatch.setattr(
+        cdp_portal_service,
+        "save_download_metadata",
+        lambda protocol_dir, payload: protocol_dir / "metadata.json",
+    )
+    monkeypatch.setattr(
+        cdp_portal_service,
+        "find_connection_budget_target",
+        lambda page: object(),
+    )
+
+    def unavailable_budget(*_args, **_kwargs):
+        raise cdp_portal_service.DownloadNotProducedError(
+            "Clique em 'Orçamento de Conexão' não gerou download dentro do timeout de 30s."
+        )
+
+    monkeypatch.setattr(cdp_portal_service, "download_connection_budget", unavailable_budget)
+    return_flags = []
+
+    def successful_budget_unavailable_return(
+        detail_page,
+        listing_page,
+        listing_url,
+        **kwargs,
+    ):
+        return_flags.append(kwargs.get("allow_active_navigation"))
+        return (
+            listing_page,
+            {
+                "success": True,
+                "status": "already_on_listing",
+                "method": "current_page",
+                "url_after": "https://portal/listagem",
+                "error": None,
+            },
+        )
+
+    monkeypatch.setattr(
+        cdp_portal_service,
+        "_return_to_listing_after_detail",
+        successful_budget_unavailable_return,
+    )
+
+    summary = download_completed_budgets_from_current_page(
+        ListingPage(),
+        downloads_root=tmp_path,
+        max_completed=1,
+        settings=Settings(),
+    )
+
+    assert summary["total_errors"] == 0
+    assert summary["total_cdp_errors"] == 0
+    assert summary["total_download_errors"] == 0
+    assert summary["total_budget_unavailable"] == 1
+    [result] = summary["results"]
+    assert result["download_status"] == "budget_unavailable"
+    assert result["has_connection_budget"] is False
+    assert result["budget_unavailable"] is True
+    assert result["selected_for_processing"] is True
+    assert result["processing_reason"] == "budget_unavailable_metadata_only"
+    assert result["process_pdf_path"] is None
+    assert result["cdp_error"] is None
+    assert result["download_error"] is None
+    assert result["completion_date_normalized"] == "2026-01-09"
+    assert return_flags == [True]
+
+
+def test_cancelled_origin_status_is_skipped_without_detail_or_error(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    class Settings(DummySettings):
+        ENABLE_PORTAL_PAGINATION = True
+        MAX_PORTAL_PAGES = 1
+
+    selected = PortalSolicitation(
+        protocol="2600001048",
+        client_name="CLIENTE SINTETICO LTDA",
+        status="CONCLUIDA",
+        page_number=1,
+        row_index=3,
+        entry_date="10/01/2026",
+    )
+    cancelled = PortalSolicitation(
+        protocol=selected.protocol,
+        client_name=selected.client_name,
+        status="Solicitação Cancelada",
+        page_number=1,
+        row_index=3,
+        entry_date=selected.entry_date,
+    )
+
+    monkeypatch.setattr(cdp_portal_service, "get_settings", lambda: Settings())
+    monkeypatch.setattr(
+        cdp_portal_service,
+        "ensure_listing_starts_on_page_one",
+        lambda page: {
+            "success": True,
+            "status": "already_on_first_page",
+            "initial_active_page": 1,
+            "active_page_after": 1,
+        },
+    )
+    monkeypatch.setattr(
+        cdp_portal_service,
+        "_collect_completed_listing_rows_across_pages",
+        lambda page, settings, **kwargs: {
+            "pages_read": 1,
+            "total_rows": 1,
+            "total_completed": 1,
+            "completed_records": [selected],
+            "duplicates_skipped": [],
+            "pagination_warnings": [],
+            "pagination_enabled": True,
+            "pagination_stop_reason": "last_page_reached",
+            "pagination_next_found": False,
+            "pagination_click_attempts": 0,
+            "pagination_mode": "numeric",
+            "pagination_current_page": 1,
+            "pagination_target_page": None,
+            "pagination_numeric_links_found": [],
+            "pagination_diagnostics": [],
+        },
+    )
+    monkeypatch.setattr(
+        cdp_portal_service,
+        "ensure_request_origin_page",
+        lambda *args, **kwargs: {
+            "success": True,
+            "status": "protocol_found_on_origin_page",
+            "method": "already_on_origin_page",
+            "row": {
+                "record": cancelled,
+                "row_locator": object(),
+                "action_cell_index": 6,
+            },
+        },
+    )
+    monkeypatch.setattr(
+        cdp_portal_service,
+        "click_follow_eye_button",
+        lambda *args: (_ for _ in ()).throw(
+            AssertionError("cancelled protocol must not open detail")
+        ),
+    )
+
+    summary = download_completed_budgets_from_current_page(
+        FakePage(),
+        downloads_root=tmp_path,
+        max_completed=1,
+        settings=Settings(),
+    )
+
+    assert summary["total_errors"] == 0
+    [result] = summary["results"]
+    assert result["download_status"] == "skipped_cancelled"
+    assert result["skip_reason"] == "status_cancelled"
+    assert result["selected_for_processing"] is False
+    assert result["abriu_detalhe"] is False
+    assert result["cdp_error"] is None
 
 
 def test_batch_fast_reuses_existing_pdf_with_listing_completion_without_opening_detail(
@@ -5000,6 +5464,122 @@ def test_cdp_error_without_valid_pdf_is_not_sent_to_processing() -> None:
     }
 
     assert _pdf_paths_for_processing(download_summary) == []
+
+
+def test_budget_unavailable_is_selected_for_metadata_only_op5_action() -> None:
+    summary = {
+        "results": [
+            {
+                "protocol": "2601",
+                "download_status": "budget_unavailable",
+                "budget_unavailable": True,
+                "selected_for_processing": True,
+                "processing_reason": "budget_unavailable_metadata_only",
+                "process_pdf_path": None,
+                "completion_date_normalized": "2026-01-09",
+            }
+        ],
+        "selected_protocols": [{"protocol": "2601"}],
+    }
+
+    limited = full_pipeline.apply_authorized_global_protocol_limit(
+        summary,
+        full_pipeline.BatchAuthorization(
+            requested_batch_limit=1,
+            authorized_batch_limit=60,
+            authorization_scope="CONTROLLED_PRODUCTION_OPTION5_UP_TO_60",
+        ),
+    ).summary
+
+    assert _pdf_paths_for_processing(limited) == []
+    assert limited["protocols_selected_by_global_limit"] == ["2601"]
+    assert limited["total_protocols_selected_by_global_limit"] == 1
+    assert limited["total_metadata_only_for_processing"] == 1
+    assert limited["total_sent_to_processing"] == 1
+    assert limited["results"][0]["global_limit_status"] == "selected"
+
+
+def test_process_budget_unavailable_metadata_only_plans_excel_false_update(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    workbook_path = tmp_path / "synthetic_workbook.xlsx"
+    downloads_root = tmp_path / "downloads"
+    clientes_root = tmp_path / "clientes"
+    logs_dir = tmp_path / "logs"
+    downloads_root.mkdir()
+    clientes_root.mkdir()
+    logs_dir.mkdir()
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.title = "2026"
+    sheet.append(
+        [
+            "Cliente",
+            "Protocolo",
+            "Data de ingresso",
+            "Conclusão",
+            "Parecer",
+            "Placa",
+            "Inversor",
+        ]
+    )
+    sheet.append(
+        [
+            "CLIENTE SINTETICO LTDA",
+            "2601",
+            "01/06/2026",
+            None,
+            True,
+            "1x MODULO EXISTENTE",
+            "1x INVERSOR EXISTENTE",
+        ]
+    )
+    workbook.save(workbook_path)
+
+    settings = SimpleNamespace(
+        logs_dir_path=logs_dir,
+        downloads_dir_path=downloads_root,
+        OP5_PDF_WORKERS=1,
+    )
+    monkeypatch.setattr(processing_service, "get_settings", lambda: settings)
+
+    payload = processing_service.process_downloaded_pdfs(
+        downloads_root=downloads_root,
+        workbook_path=workbook_path,
+        clientes_root=clientes_root,
+        dry_run=True,
+        pdf_paths=[],
+        apply_excel=True,
+        apply_archive=True,
+        allowed_protocols={"2601"},
+        metadata_only_protocols={"2601"},
+        portal_metadata_by_protocol={
+            "2601": {
+                "protocol": "2601",
+                "client_name": "CLIENTE SINTETICO LTDA",
+                "status": "Solicitação Concluída",
+                "entry_date": "01/06/2026",
+                "completion_date": "10/06/2026",
+                "completion_date_raw": "Concluído em 10/06/2026",
+                "completion_date_normalized": "2026-06-10",
+                "completion_extraction_status": "FOUND",
+            }
+        },
+    )
+
+    assert payload["status"] == "SUCESSO"
+    assert payload["total_pdfs"] == 0
+    assert payload["total_metadata_only"] == 1
+    assert payload["total_updates_planned"] == 1
+    result = payload["results"][0]
+    assert result["success"] is True
+    assert result["download_status"] == "budget_unavailable"
+    assert result["budget_unavailable"] is True
+    assert result["technical_validation_status"] == "metadata_only"
+    assert result["excel_status"]["action"] == "update_existing"
+    assert result["excel_status"]["can_write"] is True
+    assert result["archive_status"]["reason"] == "budget_unavailable"
 
 
 def test_existing_pdf_after_skip_can_be_sent_to_processing(tmp_path: Path) -> None:

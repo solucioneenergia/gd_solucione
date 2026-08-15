@@ -416,9 +416,9 @@ def format_canonical_collection(
 ) -> tuple[str, str]:
     module_text = _format_category(
         collection.modules,
-        label="módulos",
+        singular_label="módulo",
+        plural_label="módulos",
         total_quantity=collection.module_total_quantity,
-        include_item_quantities=True,
     )
     inverter_text = _format_inverter_categories(
         collection.conventional_inverters,
@@ -1409,38 +1409,14 @@ def _source_identifier(value: object) -> str | None:
 def _format_category(
     items: tuple[CanonicalEquipment, ...],
     *,
-    label: str,
+    singular_label: str,
+    plural_label: str,
     total_quantity: int | None = None,
-    include_item_quantities: bool = False,
 ) -> str:
     if not items:
         return ""
-    if len(items) == 1:
-        item = items[0]
-        if item.quantity is None and total_quantity is not None:
-            return format_canonical_equipment(
-                CanonicalEquipment(
-                    equipment_type=item.equipment_type,
-                    canonical_manufacturer=item.canonical_manufacturer,
-                    raw_manufacturer=item.raw_manufacturer,
-                    canonical_model=item.canonical_model,
-                    raw_model=item.raw_model,
-                    quantity=total_quantity,
-                    power_value=item.power_value,
-                    power_unit=item.power_unit,
-                    technical_attributes=item.technical_attributes,
-                    source=item.source,
-                    violations=item.violations,
-                    warnings=item.warnings,
-                )
-            )
-        return format_canonical_equipment(item)
     lines = [
-        (
-            f"{item.quantity}x {item.canonical_manufacturer} | {item.canonical_model}"
-            if include_item_quantities and item.quantity is not None
-            else f"{item.canonical_manufacturer} | {item.canonical_model}"
-        )
+        f"{item.canonical_manufacturer} | {item.canonical_model}"
         for item in items
     ]
     quantities = [item.quantity for item in items]
@@ -1451,6 +1427,7 @@ def _format_category(
     )
     total = total_quantity if total_quantity is not None else calculated_total
     if total is not None:
+        label = singular_label if total == 1 else plural_label
         lines.append(f"Qtd. total: {total} {label}")
     return "\n".join(lines)
 
@@ -1465,20 +1442,24 @@ def _format_inverter_categories(
     if not microinverters:
         return _format_category(
             inverters,
-            label="inversores",
+            singular_label="inversor",
+            plural_label="inversores",
             total_quantity=inverter_total,
-            include_item_quantities=False,
         )
     if not inverters and len(microinverters) == 1:
         item = microinverters[0]
-        text = f"MICROINVERSOR {item.canonical_manufacturer} {item.canonical_model}"
-        return f"{item.quantity}x {text}" if item.quantity is not None else text
+        text = f"{item.canonical_manufacturer} | {item.canonical_model}"
+        total = microinverter_total if microinverter_total is not None else item.quantity
+        if total is not None:
+            label = "microinversor" if total == 1 else "microinversores"
+            return f"{text}\nQtd. total: {total} {label}"
+        return text
     lines = [
-        f"INVERSOR — {item.canonical_manufacturer} | {item.canonical_model}"
+        f"{item.canonical_manufacturer} | {item.canonical_model}"
         for item in inverters
     ]
     lines.extend(
-        f"MICROINVERSOR — {item.canonical_manufacturer} | {item.canonical_model}"
+        f"{item.canonical_manufacturer} | {item.canonical_model}"
         for item in microinverters
     )
     parts: list[str] = []

@@ -74,6 +74,60 @@ def test_missing_protocol_is_reported_without_creating_workbook_row(tmp_path: Pa
     wb.close()
 
 
+def test_workbook_protocol_index_handles_read_only_sheet_without_dimensions(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from automacao_gd.application import reconciliation_service
+
+    class SheetWithoutDimensions:
+        title = "2026"
+        max_row = None
+        max_column = None
+
+        def iter_rows(self, min_row=1, max_row=None, max_col=None, values_only=True):
+            rows = [
+                (
+                    "Cliente",
+                    "Protocolo",
+                    "Data de ingresso",
+                    "Conclusao",
+                    "Parecer",
+                    "Placa",
+                    "Inversor",
+                ),
+                (
+                    "Cliente",
+                    "2600000001",
+                    datetime(2026, 1, 1),
+                    datetime(2026, 2, 1),
+                    True,
+                    "MOD | MODELO\nQtd. total: 1 módulo",
+                    "INV | MODELO\nQtd. total: 1 inversor",
+                ),
+            ]
+            stop = max_row if max_row is not None else len(rows)
+            selected = rows[min_row - 1 : stop]
+            for row in selected:
+                yield row[:max_col] if max_col is not None else row
+
+    class WorkbookWithoutDimensions:
+        worksheets = [SheetWithoutDimensions()]
+
+        def close(self) -> None:
+            return None
+
+    monkeypatch.setattr(
+        reconciliation_service,
+        "load_workbook",
+        lambda *_args, **_kwargs: WorkbookWithoutDimensions(),
+    )
+
+    index = build_workbook_protocol_index(tmp_path / "planilha.xlsx")
+
+    assert list(index.records_by_protocol) == ["2600000001"]
+    assert index.records_by_protocol["2600000001"][0].row_number == 2
+
+
 def test_duplicate_protocols_are_reported_in_same_sheet_and_across_sheets(tmp_path: Path) -> None:
     workbook_path = _workbook(
         tmp_path / "planilha.xlsx",

@@ -658,6 +658,6 @@ def test_synthetic_workbook_and_pdfs_cover_semantic_audit_without_writing(
     assert "TSUN TSUN" not in update_text
     assert " MODULO " not in f" {update_text} "
     assert "585W" in update_text
-    assert "SOLPLANET ASW5000-S" in update_text
+    assert "SOLPLANET | ASW5000-S" in update_text
     assert "MODEL-A 500W" in update_text and "MODEL-B 510W" in update_text
-    assert "MICROINVERSOR" in update_text
+    assert "APSYSTEMS | DS3D" in update_text

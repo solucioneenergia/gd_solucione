@@ -92,6 +92,7 @@ def process_downloaded_pdfs(
     apply_archive: bool = True,
     state_store=None,
     allowed_protocols: set[str] | None = None,
+    metadata_only_protocols: set[str] | None = None,
     portal_metadata_by_protocol: dict[str, dict[str, Any]] | None = None,
     authorization: OfflineOperationAuthorization | None = None,
     lock_proof: OperationalLockProof | None = None,
@@ -107,6 +108,7 @@ def process_downloaded_pdfs(
             apply_archive=apply_archive,
             state_store=state_store,
             allowed_protocols=allowed_protocols,
+            metadata_only_protocols=metadata_only_protocols,
             portal_metadata_by_protocol=portal_metadata_by_protocol,
             settings=get_settings(),
         )
@@ -146,6 +148,7 @@ def process_downloaded_pdfs(
             apply_archive=apply_archive,
             state_store=state_store,
             allowed_protocols=allowed_protocols,
+            metadata_only_protocols=metadata_only_protocols,
             portal_metadata_by_protocol=portal_metadata_by_protocol,
             settings=settings,
         )
@@ -167,6 +170,7 @@ def process_downloaded_pdfs(
             apply_archive=apply_archive,
             state_store=state_store,
             allowed_protocols=allowed_protocols,
+            metadata_only_protocols=metadata_only_protocols,
             portal_metadata_by_protocol=portal_metadata_by_protocol,
             settings=settings,
         )
@@ -203,6 +207,7 @@ def _process_downloaded_pdfs_locked(
     apply_archive: bool = True,
     state_store=None,
     allowed_protocols: set[str] | None = None,
+    metadata_only_protocols: set[str] | None = None,
     portal_metadata_by_protocol: dict[str, dict[str, Any]] | None = None,
     *,
     settings,
@@ -234,6 +239,11 @@ def _process_downloaded_pdfs_locked(
     )
 
     pdfs = _resolve_pdf_paths(downloads_root, pdf_paths)
+    metadata_only_protocols = {
+        str(protocol).strip()
+        for protocol in (metadata_only_protocols or set())
+        if str(protocol).strip()
+    }
     pdf_workers = int(getattr(settings, "OP5_PDF_WORKERS", 1) or 1)
     if allowed_protocols is not None:
         unknown_protocols = sorted(
@@ -247,6 +257,16 @@ def _process_downloaded_pdfs_locked(
             return _scope_violation_summary(
                 pdfs,
                 unknown_protocols,
+                logs_dir=logs_dir,
+                dry_run=dry_run,
+                apply_excel=apply_excel,
+                apply_archive=apply_archive,
+            )
+        unknown_metadata_only = sorted(metadata_only_protocols - allowed_protocols)
+        if unknown_metadata_only:
+            return _scope_violation_summary(
+                pdfs,
+                unknown_metadata_only,
                 logs_dir=logs_dir,
                 dry_run=dry_run,
                 apply_excel=apply_excel,
@@ -272,6 +292,10 @@ def _process_downloaded_pdfs_locked(
     if preflight_error:
         logger.error(preflight_error)
         results = [_blocked_result(pdf_path, preflight_error) for pdf_path in pdfs]
+        results.extend(
+            _blocked_metadata_only_result(protocol, preflight_error)
+            for protocol in sorted(metadata_only_protocols)
+        )
     elif not dry_run:
         simulation_results = run_limited_pdf_tasks(
             pdfs,
@@ -287,6 +311,17 @@ def _process_downloaded_pdfs_locked(
                 None,
                 portal_metadata_by_protocol=portal_metadata_by_protocol,
             ),
+        )
+        simulation_results.extend(
+            _process_metadata_only_protocols(
+                metadata_only_protocols,
+                workbook_path=workbook_path,
+                dry_run=True,
+                backup_path=None,
+                apply_excel=apply_excel,
+                state_store=None,
+                portal_metadata_by_protocol=portal_metadata_by_protocol,
+            )
         )
         extracted_scope_violations = _extracted_scope_violations(
             pdfs,
@@ -368,6 +403,17 @@ def _process_downloaded_pdfs_locked(
                     state_store=state_store,
                     portal_metadata_by_protocol=portal_metadata_by_protocol,
                 )
+                results.extend(
+                    _apply_metadata_only_subset_from_simulation(
+                        metadata_only_protocols=metadata_only_protocols,
+                        simulation_results=simulation_results,
+                        workbook_path=workbook_path,
+                        backup_path=backup_path,
+                        apply_excel=apply_excel,
+                        state_store=state_store,
+                        portal_metadata_by_protocol=portal_metadata_by_protocol,
+                    )
+                )
                 systemic_issues = _systemic_real_apply_issues(results, apply_excel)
                 if systemic_issues:
                     systemic_apply_failure = True
@@ -408,6 +454,17 @@ def _process_downloaded_pdfs_locked(
                 portal_metadata_by_protocol=portal_metadata_by_protocol,
             ),
         )
+        results.extend(
+            _process_metadata_only_protocols(
+                metadata_only_protocols,
+                workbook_path=workbook_path,
+                dry_run=True,
+                backup_path=backup_path,
+                apply_excel=apply_excel,
+                state_store=state_store,
+                portal_metadata_by_protocol=portal_metadata_by_protocol,
+            )
+        )
         if apply_excel:
             results = project_dry_run_target_rows(results, workbook_path)
     finished_at = datetime.now()
@@ -446,6 +503,7 @@ def _process_downloaded_pdfs_locked(
         "workbook_path": str(workbook_path),
         "clientes_root": str(clientes_root),
         "total_pdfs": len(pdfs),
+        "total_metadata_only": len(metadata_only_protocols),
         "pdf_workers": pdf_workers,
         **metrics,
         "total_success": total_success,
@@ -1216,6 +1274,271 @@ def _process_single_pdf_for_metadata_scope(
     )
 
 
+def _process_metadata_only_protocols(
+    protocols: set[str],
+    *,
+    workbook_path: Path,
+    dry_run: bool,
+    backup_path: Path | None,
+    apply_excel: bool,
+    state_store,
+    portal_metadata_by_protocol: dict[str, dict[str, Any]] | None,
+) -> list[dict]:
+    return [
+        _process_metadata_only_protocol(
+            protocol,
+            workbook_path=workbook_path,
+            dry_run=dry_run,
+            backup_path=backup_path,
+            apply_excel=apply_excel,
+            state_store=state_store,
+            portal_metadata_by_protocol=portal_metadata_by_protocol,
+        )
+        for protocol in sorted(protocols)
+    ]
+
+
+def _apply_metadata_only_subset_from_simulation(
+    *,
+    metadata_only_protocols: set[str],
+    simulation_results: list[dict],
+    workbook_path: Path,
+    backup_path: Path | None,
+    apply_excel: bool,
+    state_store,
+    portal_metadata_by_protocol: dict[str, dict[str, Any]] | None,
+) -> list[dict]:
+    simulation_by_protocol = {
+        str(item.get("protocol") or ""): item
+        for item in simulation_results
+        if str(item.get("protocol") or "") in metadata_only_protocols
+    }
+    results: list[dict] = []
+    for protocol in sorted(metadata_only_protocols):
+        simulation_item = simulation_by_protocol.get(protocol)
+        if simulation_item is not None:
+            if _is_protocol_no_change(simulation_item):
+                item = dict(simulation_item)
+                item["processing_phase"] = "simulation_only"
+                item["real_run_skipped_reason"] = "excel_already_updated"
+                results.append(item)
+                continue
+            if not _is_protocol_safe_or_no_change(simulation_item, apply_excel):
+                item = dict(simulation_item)
+                item["processing_phase"] = "simulation_only"
+                item["real_run_skipped_reason"] = "protocol_not_safe_to_apply"
+                results.append(item)
+                continue
+        result = _process_metadata_only_protocol(
+            protocol,
+            workbook_path=workbook_path,
+            dry_run=False,
+            backup_path=backup_path,
+            apply_excel=apply_excel,
+            state_store=state_store,
+            portal_metadata_by_protocol=portal_metadata_by_protocol,
+        )
+        result["processing_phase"] = "application"
+        results.append(result)
+    return results
+
+
+def _process_metadata_only_protocol(
+    protocol: str,
+    *,
+    workbook_path: Path,
+    dry_run: bool,
+    backup_path: Path | None,
+    apply_excel: bool,
+    state_store,
+    portal_metadata_by_protocol: dict[str, dict[str, Any]] | None,
+) -> dict:
+    result = _empty_result(Path(f"metadata_only_{protocol}.pdf"))
+    result["pdf_path"] = None
+    result["protocol"] = protocol
+    result["processing_reason"] = "budget_unavailable_metadata_only"
+    result["download_status"] = "budget_unavailable"
+    result["budget_unavailable"] = True
+
+    portal_metadata, metadata_source = _load_metadata_for_protocol(
+        protocol,
+        portal_metadata_by_protocol,
+    )
+    if not portal_metadata:
+        message = "Metadados congelados ausentes para protocolo sem orcamento disponivel."
+        result.update(
+            {
+                "success": False,
+                "error": message,
+                "technical_validation_status": "metadata_only",
+                "archive_status": {
+                    **result["archive_status"],
+                    "success": False,
+                    "simulated": dry_run,
+                    "skipped": True,
+                    "error": message,
+                    "reason": "frozen_metadata_missing",
+                },
+            }
+        )
+        return result
+
+    client_name = (
+        portal_metadata.get("detail_client_name")
+        or portal_metadata.get("client_name")
+        or "CLIENTE_NAO_IDENTIFICADO"
+    )
+    entry_date = portal_metadata.get("entry_date") or portal_metadata.get("entry_date_raw")
+    completion_decision = _completion_value_from_metadata(portal_metadata)
+    completion_date = completion_decision["value"]
+
+    if apply_excel:
+        excel_status = update_excel_from_pdf_data(
+            workbook_path=workbook_path,
+            protocol=protocol,
+            client_name=str(client_name),
+            entry_date=entry_date,
+            completion_date=completion_date,
+            module_text=None,
+            inverter_text=None,
+            parecer="False",
+            dry_run=dry_run,
+            backup_path=backup_path,
+            require_completion_date=bool(_is_completed_status(portal_metadata.get("status"))),
+        )
+    else:
+        excel_status = _skipped_excel_status(protocol, dry_run)
+
+    archive_status = {
+        "success": True,
+        "simulated": dry_run,
+        "skipped": True,
+        "error": None,
+        "match_type": "not_applicable",
+        "reason": "budget_unavailable",
+        "created_folder": False,
+        "fallback_mode": "disabled",
+        "legacy_gd_ignored": False,
+    }
+    result["excel_effect"] = _excel_effect(excel_status, dry_run, apply_excel)
+    result["archive_effect"] = _archive_effect(archive_status, dry_run, True)
+    result["rollback_possible"] = result["excel_effect"] == "applied"
+
+    if state_store:
+        state_store.update_section(
+            protocol,
+            "excel",
+            _state_excel_payload(excel_status, workbook_path, dry_run, apply_excel),
+            last_step=_state_excel_last_step(excel_status, dry_run, apply_excel),
+        )
+        state_store.update_section(
+            protocol,
+            "archive",
+            {
+                **_state_archive_payload(
+                    archive_status,
+                    None,
+                    None,
+                    dry_run,
+                    True,
+                ),
+                "status": "skipped_budget_unavailable",
+            },
+            last_step="archive_skipped_budget_unavailable",
+        )
+        result["state_effect"] = "persisted"
+
+    success = bool(excel_status.get("success")) and archive_status["success"]
+    result.update(
+        {
+            "success": success,
+            "client_name": client_name,
+            "entry_date": entry_date,
+            "completion_date": completion_date,
+            "completion_raw": completion_decision["raw"],
+            "completion_normalized": completion_decision["normalized"],
+            "completion_source_stage": completion_decision["source_stage"],
+            "completion_extraction_status": completion_decision["extraction_status"],
+            "completion_action": excel_status.get("completion_action"),
+            "completion_reason": completion_decision["reason"],
+            "completion_pending_review": completion_decision["pending_review"],
+            "metadata_source": metadata_source,
+            "target_sheet": excel_status.get("target_sheet"),
+            "source_sheet": excel_status.get("source_sheet"),
+            "source_row": excel_status.get("source_row"),
+            "target_row": excel_status.get("target_row"),
+            "existing_row": excel_status.get("existing_row"),
+            "new_row": excel_status.get("new_row"),
+            "moved_from": excel_status.get("moved_from"),
+            "moved_to": excel_status.get("moved_to"),
+            "action": excel_status.get("action"),
+            "row_number": excel_status.get("row_number"),
+            "warning": excel_status.get("warning"),
+            "technical_validation_status": "metadata_only",
+            "technical_review_required": False,
+            "technical_validation_errors": [],
+            "technical_validation_warnings": ["BUDGET_UNAVAILABLE"],
+            "client_folder_match_type": "not_applicable",
+            "client_folder_confidence": 0.0,
+            "client_folder_cache_hit": False,
+            "client_folder_reason": "budget_unavailable",
+            "reason": "budget_unavailable",
+            "archive_reason": "budget_unavailable",
+            "archive_match_type": "not_applicable",
+            "archive_created_folder": False,
+            "archive_fallback_mode": "disabled",
+            "legacy_gd_ignored": False,
+            "archive_status": archive_status,
+            "excel_status": _compact_excel_status(excel_status),
+            "error": None if success else excel_status.get("error"),
+        }
+    )
+    if success and state_store:
+        state_store.mark_completed(protocol)
+        result["state_effect"] = "persisted"
+    return result
+
+
+def _load_metadata_for_protocol(
+    protocol: str,
+    portal_metadata_by_protocol: dict[str, dict[str, Any]] | None,
+) -> tuple[dict[str, Any] | None, str | None]:
+    if portal_metadata_by_protocol and protocol in portal_metadata_by_protocol:
+        return dict(portal_metadata_by_protocol[protocol]), "frozen_op5_plan"
+    metadata, source = load_portal_metadata(
+        get_settings().downloads_dir_path,
+        get_settings().logs_dir_path,
+        protocol,
+    )
+    return metadata, source
+
+
+def _blocked_metadata_only_result(protocol: str, error: str) -> dict:
+    result = _empty_result(Path(f"metadata_only_{protocol}.pdf"))
+    result.update(
+        {
+            "pdf_path": None,
+            "protocol": protocol,
+            "download_status": "budget_unavailable",
+            "budget_unavailable": True,
+            "processing_reason": "budget_unavailable_metadata_only",
+            "technical_validation_status": "metadata_only",
+            "error": error,
+        }
+    )
+    result["excel_status"]["error"] = error
+    result["archive_status"].update(
+        {
+            "success": False,
+            "simulated": None,
+            "skipped": True,
+            "error": "Arquivamento nao executado por falha na planilha.",
+            "reason": "preflight_blocked",
+        }
+    )
+    return result
+
+
 def _record_completed_index_best_effort(
     *,
     protocol: str,
@@ -1907,6 +2230,8 @@ def _archive_effect(status: dict[str, Any], dry_run: bool, apply_archive: bool) 
         return "not_applied"
     if status.get("reason") == "archive_already_done":
         return "already_present"
+    if status.get("success") and status.get("skipped"):
+        return "no_change"
     if status.get("success") and not status.get("skipped"):
         return "archived"
     return "failed"
@@ -2089,7 +2414,7 @@ def _classify_processing_result(
         )
     if total_errors:
         return OperationStatus.FALHOU, "Nenhum PDF foi processado com sucesso."
-    if total_pdfs == 0:
+    if total_pdfs == 0 and total_success == 0:
         return OperationStatus.SUCESSO, "Nenhuma atualização necessária."
     return OperationStatus.SUCESSO, (
         "Simulação concluída com sucesso."

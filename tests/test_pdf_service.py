@@ -100,8 +100,14 @@ def test_parallel_equipment_columns_are_separated_deterministically() -> None:
     assert data.inverter_manufacturer == "GROWATT"
     assert data.inverter_model == "MIC 3000TL-X"
     assert data.inverter_quantity == 1
-    assert data.format_module_for_planilha() == "5x LEAPTON BIFACIAL 585W N-TYPE"
-    assert data.format_inverter_for_planilha() == "1x GROWATT MIC 3000TL-X"
+    assert data.format_module_for_planilha() == (
+        "LEAPTON | BIFACIAL 585W N-TYPE\n"
+        "Qtd. total: 5 módulos"
+    )
+    assert data.format_inverter_for_planilha() == (
+        "GROWATT | MIC 3000TL-X\n"
+        "Qtd. total: 1 inversor"
+    )
     assert data.module_source == "parallel_table"
     assert data.inverter_source == "parallel_table"
 
@@ -176,7 +182,10 @@ def test_simple_module_planilha_format() -> None:
         """
     )
 
-    assert data.format_module_for_planilha() == "10x JINKO JKM625N-78HL4-BDV"
+    assert data.format_module_for_planilha() == (
+        "JINKO | JKM625N-78HL4-BDV\n"
+        "Qtd. total: 10 módulos"
+    )
 
 
 def test_simple_inverter_planilha_format() -> None:
@@ -191,7 +200,10 @@ def test_simple_inverter_planilha_format() -> None:
         """
     )
 
-    assert data.format_inverter_for_planilha() == "1x HUAWEI SUN2000-5KTL"
+    assert data.format_inverter_for_planilha() == (
+        "HUAWEI | SUN2000-5KTL\n"
+        "Qtd. total: 1 inversor"
+    )
 
 
 def test_gokin_is_filtered_from_inverter_identity_but_kept_as_module() -> None:
@@ -291,7 +303,7 @@ def test_one_manufacturer_with_multiple_models_repeats_manufacturer_without_quan
     assert data.format_inverter_for_planilha() == (
         "HUAWEI | SUN2000-5KTL\n"
         "HUAWEI | SUN2000-10KTL\n"
-        "Total: 3 inversores"
+        "Qtd. total: 3 inversores"
     )
 
 
@@ -346,7 +358,7 @@ def test_real_multiple_equipment_example_formats_planilha_without_ambiguity() ->
         "HUAWEI | SUN2000-30KTL\n"
         "ABB | Aurora Trio-20.0TL-OUTD\n"
         "HUAWEI | SUN2000-20KTL\n"
-        "Total: 3 inversores"
+        "Qtd. total: 3 inversores"
     )
 
 
@@ -372,7 +384,7 @@ def test_multiple_equipment_quantities_are_paired_and_formatted_per_model() -> N
     assert data.format_inverter_for_planilha() == (
         "HUAWEI | SUN2000-30KTL\n"
         "ABB | Aurora Trio-20.0TL-OUTD\n"
-        "Total: 3 inversores"
+        "Qtd. total: 3 inversores"
     )
     assert data.equipment_parse_warning is None
 
@@ -417,7 +429,10 @@ def test_microinverter_used_when_traditional_inverter_is_empty() -> None:
         """
     )
 
-    assert data.format_inverter_for_planilha() == "10x MICROINVERSOR APSYSTEMS DS3D"
+    assert data.format_inverter_for_planilha() == (
+        "APSYSTEMS | DS3D\n"
+        "Qtd. total: 10 microinversores"
+    )
 
 
 def test_microinverter_quantity_table_layout_after_connection_type_header() -> None:
@@ -456,7 +471,8 @@ def test_microinverter_quantity_table_layout_after_connection_type_header() -> N
     assert data.microinverter_total_kw == "2"
     assert data.equipment_parse_warning is None
     assert data.format_inverter_for_planilha() == (
-        "1x MICROINVERSOR HOYMYLES HMS-2000DW-4T"
+        "HOYMYLES | HMS-2000DW-4T\n"
+        "Qtd. total: 1 microinversor"
     )
 
 
@@ -479,9 +495,9 @@ def test_traditional_inverter_and_microinverter_are_both_formatted() -> None:
     )
 
     assert data.format_inverter_for_planilha() == (
-        "INVERSOR: HUAWEI | SUN2000-30KTL\n"
-        "MICROINVERSOR: APSYSTEMS | DS3D\n"
-        "Total: 1 inversor + 10 microinversores"
+        "HUAWEI | SUN2000-30KTL\n"
+        "APSYSTEMS | DS3D\n"
+        "Qtd. total: 1 inversor + 10 microinversores"
     )
 
 
@@ -518,6 +534,12 @@ def test_grouped_section_headers_before_values_are_matched_by_order() -> None:
     assert data.inverter_model == "ASW15K-LT-G2"
     assert data.inverter_quantity == 1
     assert data.inverter_total_kw == "15"
-    assert data.format_module_for_planilha() == "38x HANERSUN HN21RN-66HT"
-    assert data.format_inverter_for_planilha() == "1x SOLPLANET ASW15K-LT-G2"
+    assert data.format_module_for_planilha() == (
+        "HANERSUN | HN21RN-66HT\n"
+        "Qtd. total: 38 m?dulos"
+    )
+    assert data.format_inverter_for_planilha() == (
+        "SOLPLANET | ASW15K-LT-G2\n"
+        "Qtd. total: 1 inversor"
+    )
     assert data.equipment_parse_warning is None

@@ -31,11 +31,12 @@ from automacao_gd.domain.models import PortalSolicitation
 from automacao_gd.infrastructure.pdf.service import extract_generation_data
 
 
-DOWNLOAD_TIMEOUT_MS = 30_000
+DOWNLOAD_TIMEOUT_MS = 5_000
 BUDGET_BUTTON_TIMEOUT_MS = 10_000
 DETAIL_TIMEOUT_MS = 20_000
 LISTING_RECOVERY_ATTEMPTS = 3
 VALID_DOWNLOAD_STATUSES_FOR_PROCESSING = {"downloaded", "existing_pdf_after_skip"}
+METADATA_ONLY_DOWNLOAD_STATUSES_FOR_PROCESSING = {"budget_unavailable"}
 POINT_OF_CONNECTION_STAGE = "PONTO_DE_CONEXAO_APROVADO"
 POINT_OF_CONNECTION_STAGE_LABEL = "Ponto de Conexão Aprovado"
 POINT_OF_CONNECTION_NO_DATE_STATUSES = {
@@ -61,6 +62,7 @@ OPERATIONAL_ORIGIN_NAVIGATION_STATUSES = {
     "pagination_click_failed",
     "pagination_active_page_mismatch",
     "cannot_confirm_active_page",
+    "pagination_target_beyond_last_page",
 }
 INCOMPLETE_PAGINATION_STOP_REASONS = {
     "safety_cap_reached_with_next_page",
@@ -77,11 +79,20 @@ class DownloadNotProducedError(RuntimeError):
     """Erro operacional quando o portal não entrega o PDF após o clique."""
 
 
+def _is_cancelled_status(status: str | None) -> bool:
+    normalized = _normalize_search(status or "")
+    return "CANCELAD" in normalized
+
+
 def _log_origin_navigation_failure(message: str, status: str | None) -> None:
     if status in OPERATIONAL_ORIGIN_NAVIGATION_STATUSES:
         logger.warning(message)
         return
     logger.error(message)
+
+
+def _origin_navigation_failure_is_skippable(navigation: dict) -> bool:
+    return navigation.get("status") == "pagination_target_beyond_last_page"
 
 
 def connect_to_existing_edge(playwright, cdp_endpoint: str):
@@ -2658,6 +2669,19 @@ def download_completed_budgets_from_current_page(
             )
             _apply_origin_page_navigation_result(result, origin_navigation)
             if not origin_navigation["success"]:
+                if _origin_navigation_failure_is_skippable(origin_navigation):
+                    result["download_status"] = "skipped_origin_page_unavailable"
+                    result["skip_reason"] = "origin_page_beyond_last_page"
+                    result["selected_for_processing"] = False
+                    result["processing_reason"] = "origin_page_beyond_last_page"
+                    result["origin_page_unavailable"] = True
+                    logger.warning(
+                        "Protocolo ignorado porque a pagina de origem congelada "
+                        "nao esta mais disponivel no Portal: "
+                        f"protocol={protocol}; page={record.page_number}; "
+                        f"reason={origin_navigation.get('error')}"
+                    )
+                    continue
                 result["download_status"] = "cdp_error"
                 result["cdp_error"] = origin_navigation["error"]
                 _log_origin_navigation_failure(
@@ -2685,6 +2709,16 @@ def download_completed_budgets_from_current_page(
             current_record = current_row["record"]
             result["status"] = current_record.status
             if not is_completed_status(current_record.status):
+                if _is_cancelled_status(current_record.status):
+                    result["download_status"] = "skipped_cancelled"
+                    result["skip_reason"] = "status_cancelled"
+                    result["selected_for_processing"] = False
+                    result["processing_reason"] = "status_cancelled"
+                    logger.info(
+                        "Protocolo cancelado ignorado sem abrir detalhe: "
+                        f"{protocol}."
+                    )
+                    continue
                 result["download_status"] = "cdp_error"
                 result["cdp_error"] = (
                     f"Protocolo {protocol} nao esta mais concluido. "
@@ -2796,13 +2830,12 @@ def download_completed_budgets_from_current_page(
                 budget_target = find_connection_budget_target(detail_page)
                 if budget_target is None:
                     result["has_connection_budget"] = False
-                    result["download_status"] = "download_error"
-                    result["download_error"] = (
-                        "Botao/link 'Orcamento de Conexao' nao encontrado."
-                    )
-                    result["error"] = (
-                        "Botao/link 'Orcamento de Conexao' nao encontrado."
-                    )
+                    result["download_status"] = "budget_unavailable"
+                    result["budget_unavailable"] = True
+                    result["selected_for_processing"] = True
+                    result["processing_reason"] = "budget_unavailable_metadata_only"
+                    result["skip_reason"] = "budget_unavailable"
+                    result["archive_status"] = "skipped_budget_unavailable"
                     logger.warning(
                         "Orcamento de Conexao nao encontrado para "
                         f"{protocol}."
@@ -2871,20 +2904,32 @@ def download_completed_budgets_from_current_page(
                                 protocol, "download", result["download_error"]
                             )
         except DownloadNotProducedError as exc:
-            logger.error(f"Erro ao processar protocolo {protocol}: {exc}")
-            result["download_status"] = (
-                result.get("download_status")
-                if result.get("process_pdf_path")
-                else "cdp_error"
+            logger.warning(
+                "Orcamento de Conexao indisponivel para download; "
+                f"protocolo={protocol}; motivo={exc}"
             )
-            result["cdp_error"] = str(exc)
+            result["has_connection_budget"] = False
+            result["download_status"] = "budget_unavailable"
+            result["budget_unavailable"] = True
+            result["selected_for_processing"] = True
+            result["processing_reason"] = "budget_unavailable_metadata_only"
+            result["skip_reason"] = "budget_unavailable"
+            result["budget_unavailable_reason"] = str(exc)
+            result["process_pdf_path"] = None
+            result["cdp_error"] = None
+            result["download_error"] = None
             if state_store:
                 _call_state_store(
                     state_store,
-                    "add_error",
+                    "update_section",
                     protocol,
-                    "cdp",
-                    result["cdp_error"],
+                    "download",
+                    {
+                        "status": "budget_unavailable",
+                        "pdf_exists": False,
+                        "reason": str(exc),
+                    },
+                    last_step="budget_unavailable",
                 )
         except Exception as exc:
             logger.exception(f"Erro ao processar protocolo {protocol}: {exc}")
@@ -2906,7 +2951,12 @@ def download_completed_budgets_from_current_page(
             if detail_page is not None:
                 try:
                     page, listing_recovery = _return_to_listing_after_detail(
-                        detail_page, listing_page, listing_url
+                        detail_page,
+                        listing_page,
+                        listing_url,
+                        allow_active_navigation=_result_is_metadata_only_for_processing(
+                            result
+                        ),
                     )
                     _apply_listing_recovery_result(result, listing_recovery)
                     if not listing_recovery["success"]:
@@ -2954,7 +3004,9 @@ def download_completed_budgets_from_current_page(
             if result.get("download_status") == "pending":
                 result["download_status"] = "cdp_error" if result.get("cdp_error") else "skipped"
             result["error"] = result.get("download_error") or result.get("cdp_error")
-            if not _result_has_valid_pdf_for_processing(result):
+            if not _result_has_valid_pdf_for_processing(
+                result
+            ) and not _result_is_metadata_only_for_processing(result):
                 result["process_pdf_path"] = None
                 result["selected_for_processing"] = False
             if append_result:
@@ -2995,8 +3047,11 @@ def _initial_download_summary(
         "total_existing_reused": 0,
         "total_skipped_existing": 0,
         "total_skipped_duplicate": 0,
+        "total_skipped_origin_page_unavailable": 0,
         "total_for_processing": 0,
         "total_sent_to_processing": 0,
+        "total_metadata_only_for_processing": 0,
+        "total_budget_unavailable": 0,
         "total_cdp_errors": 0,
         "total_download_errors": 0,
         "total_errors": 0,
@@ -3623,6 +3678,134 @@ def _navigate_to_numeric_page_via_visible_window(
     return result
 
 
+def _navigate_to_numeric_page_forward_via_visible_window(
+    page,
+    *,
+    target_page_number: int,
+    active_page_before: int,
+    signature_before: tuple,
+    click_result: dict,
+) -> dict:
+    target = int(target_page_number)
+    active_before = int(active_page_before)
+    visible_pages = sorted(
+        {
+            int(str(link))
+            for link in click_result.get("numeric_page_links_found", [])
+            if str(link).isdigit()
+        }
+    )
+    intermediate_candidates = [
+        page_number
+        for page_number in visible_pages
+        if active_before < page_number < target
+    ]
+    diagnostics: list[dict] = []
+    result = {
+        "success": False,
+        "status": "pagination_forward_visible_window_not_available",
+        "method": "forward_visible_numeric_window_navigation",
+        "target_page_number": target,
+        "active_page_before": active_before,
+        "active_page_after": active_before,
+        "signature_before": signature_before,
+        "signature_after": signature_before,
+        "visible_pages": visible_pages,
+        "intermediate_page_number": None,
+        "diagnostics": diagnostics,
+        "url_after": _safe_page_url(page),
+        "error": None,
+    }
+    if target - active_before <= 3 or not intermediate_candidates:
+        result["error"] = (
+            "Nao ha pagina numerica intermediaria futura visivel para recalcular "
+            "o paginador."
+        )
+        return result
+
+    intermediate = intermediate_candidates[-1]
+    if target - intermediate > 5:
+        result["error"] = (
+            "Janela numerica visivel ainda esta distante da pagina alvo."
+        )
+        return result
+    result["intermediate_page_number"] = intermediate
+    first_click = find_and_click_next_numeric_page(page, intermediate - 1)
+    diagnostics.append(first_click)
+    if (
+        not first_click.get("found")
+        or not first_click.get("enabled")
+        or not first_click.get("clicked")
+    ):
+        result["status"] = (
+            first_click.get("stop_reason") or "pagination_intermediate_click_failed"
+        )
+        result["error"] = f"Nao foi possivel clicar na pagina intermediaria {intermediate}."
+        result["url_after"] = _safe_page_url(page)
+        return result
+
+    _wait_after_pagination_click(page)
+    rows_intermediate = read_current_page_table_with_row_handles(page)
+    signature_intermediate = _listing_rows_signature(rows_intermediate)
+    active_intermediate = get_active_numeric_page(page)
+    result["active_page_after"] = active_intermediate
+    result["signature_after"] = signature_intermediate
+    result["url_after"] = _safe_page_url(page)
+    if active_intermediate != intermediate:
+        result["status"] = "pagination_intermediate_active_page_mismatch"
+        result["error"] = (
+            f"Pagina ativa apos clique intermediario: {active_intermediate}; "
+            f"esperado: {intermediate}."
+        )
+        return result
+    if signature_intermediate == signature_before:
+        result["status"] = "pagination_intermediate_click_no_change"
+        result["error"] = (
+            f"Clique intermediario na pagina {intermediate} nao alterou a tabela."
+        )
+        return result
+
+    target_click = find_and_click_next_numeric_page(page, target - 1)
+    diagnostics.append(target_click)
+    if (
+        not target_click.get("found")
+        or not target_click.get("enabled")
+        or not target_click.get("clicked")
+    ):
+        result["status"] = target_click.get("stop_reason") or "pagination_target_click_failed"
+        result["error"] = (
+            f"Nao foi possivel clicar na pagina alvo {target} apos janela futura."
+        )
+        result["url_after"] = _safe_page_url(page)
+        return result
+
+    _wait_after_pagination_click(page)
+    rows_after = read_current_page_table_with_row_handles(page)
+    signature_after = _listing_rows_signature(rows_after)
+    active_after = get_active_numeric_page(page)
+    result["active_page_after"] = active_after
+    result["signature_after"] = signature_after
+    result["url_after"] = _safe_page_url(page)
+    if active_after != target:
+        result["status"] = "pagination_target_active_page_mismatch"
+        result["error"] = (
+            f"Pagina ativa apos janela futura: {active_after}; esperado: {target}."
+        )
+        return result
+    if signature_after == signature_intermediate:
+        result["status"] = "pagination_target_click_no_change"
+        result["error"] = f"Clique na pagina alvo {target} nao alterou a tabela."
+        return result
+    result.update(
+        {
+            "success": True,
+            "status": "recovered_listing_by_forward_visible_numeric_window",
+            "error": None,
+        }
+    )
+    return result
+
+
 def _recover_first_page_after_context_destruction(page, navigation: dict) -> dict:
     result = {
         "success": False,
@@ -3677,8 +3860,16 @@ def _recover_first_page_without_active_indicator(page) -> dict:
             result["error"] = str(exc)
             return result
         if not rows_before:
-            result["error"] = "Listagem visivel sem linhas para confirmar pagina inicial."
-            return result
+            reload_probe = _reload_current_listing_when_rows_are_empty(page)
+            result["empty_listing_reload"] = reload_probe
+            if reload_probe.get("success"):
+                rows_before = reload_probe.get("rows") or []
+            else:
+                result["error"] = (
+                    reload_probe.get("error")
+                    or "Listagem visivel sem linhas para confirmar pagina inicial."
+                )
+                return result
 
     click_result = find_and_click_next_numeric_page(page, 0)
     result["click_result"] = click_result
@@ -3716,6 +3907,51 @@ def _recover_first_page_without_active_indicator(page) -> dict:
     result["error"] = (
         click_result.get("stop_reason")
         or "Nao foi possivel confirmar ou selecionar a pagina 1 do paginador."
+    )
+    return result
+
+
+def _reload_current_listing_when_rows_are_empty(page) -> dict:
+    url_before = _safe_page_url(page)
+    result = {
+        "success": False,
+        "status": "empty_listing_reload_not_available",
+        "method": "reload_current_listing",
+        "url_before": url_before,
+        "url_after": None,
+        "rows": [],
+        "error": None,
+    }
+    if not _is_listing_like_portal_url(url_before or ""):
+        result["error"] = "Pagina atual nao parece ser a listagem do portal."
+        return result
+    reload = getattr(page, "reload", None)
+    if not callable(reload):
+        result["error"] = "Pagina CDP nao suporta reload controlado."
+        return result
+    try:
+        try:
+            reload(wait_until="domcontentloaded", timeout=DETAIL_TIMEOUT_MS)
+        except TypeError:
+            reload()
+        _wait_after_pagination_click(page)
+        rows_after = read_current_page_table_with_row_handles(page)
+    except Exception as exc:
+        result["error"] = str(exc)
+        result["url_after"] = _safe_page_url(page)
+        return result
+    result["url_after"] = _safe_page_url(page)
+    result["rows"] = rows_after
+    if not rows_after:
+        result["status"] = "empty_listing_after_reload"
+        result["error"] = "Listagem continuou sem linhas apos reload."
+        return result
+    result.update(
+        {
+            "success": True,
+            "status": "listing_rows_available_after_reload",
+            "error": None,
+        }
     )
     return result
 
@@ -3768,6 +4004,27 @@ def navigate_to_numeric_page(page, target_page_number: int) -> dict:
 
         if not click_result.get("found"):
             if target > active_before:
+                visible_window = _navigate_to_numeric_page_forward_via_visible_window(
+                    page,
+                    target_page_number=target,
+                    active_page_before=active_before,
+                    signature_before=signature_before,
+                    click_result=click_result,
+                )
+                result["visible_window_navigation"] = visible_window
+                result["url_after"] = visible_window.get("url_after")
+                if visible_window.get("success"):
+                    result.update(
+                        {
+                            "success": True,
+                            "status": "recovered_listing_by_numeric_page",
+                            "method": "recovered_listing_by_forward_visible_numeric_window",
+                            "active_page_after": visible_window.get("active_page_after"),
+                            "signature_after": visible_window.get("signature_after"),
+                            "error": None,
+                        }
+                    )
+                    return result
                 sequential = _navigate_to_numeric_page_sequentially(
                     page,
                     target_page_number=target,
@@ -3776,6 +4033,8 @@ def navigate_to_numeric_page(page, target_page_number: int) -> dict:
                 )
                 result["sequential_navigation"] = sequential
                 result["url_after"] = sequential.get("url_after")
+                result["active_page_after"] = sequential.get("active_page_after")
+                result["signature_after"] = sequential.get("signature_after")
                 if sequential.get("success"):
                     result.update(
                         {
@@ -3829,6 +4088,8 @@ def navigate_to_numeric_page(page, target_page_number: int) -> dict:
                 )
                 result["sequential_navigation"] = sequential
                 result["url_after"] = sequential.get("url_after")
+                result["active_page_after"] = sequential.get("active_page_after")
+                result["signature_after"] = sequential.get("signature_after")
                 if sequential.get("success"):
                     result.update(
                         {
@@ -4091,15 +4352,25 @@ def _navigate_to_numeric_page_sequentially(
             or not click_result.get("enabled")
             or not click_result.get("clicked")
         ):
-            result["status"] = (
+            stop_reason = (
                 click_result.get("stop_reason")
                 or "pagination_numeric_target_not_found"
             )
-            result["error"] = (
-                "Nao foi possivel navegar sequencialmente ate a pagina "
-                f"{target_page_number}. Parou antes da pagina "
-                f"{current_page_number + 1}. Motivo: {result['status']}"
-            )
+            if stop_reason == "last_page_reached":
+                result["status"] = "pagination_target_beyond_last_page"
+                result["error"] = (
+                    "A pagina "
+                    f"{target_page_number} nao esta mais disponivel no Portal. "
+                    "A navegacao sequencial encontrou a ultima pagina antes da "
+                    f"pagina {current_page_number + 1}."
+                )
+            else:
+                result["status"] = stop_reason
+                result["error"] = (
+                    "Nao foi possivel navegar sequencialmente ate a pagina "
+                    f"{target_page_number}. Parou antes da pagina "
+                    f"{current_page_number + 1}. Motivo: {result['status']}"
+                )
             result["url_after"] = _safe_page_url(page)
             return result
         _wait_after_pagination_click(page)
@@ -5492,7 +5763,13 @@ def _ensure_listing_page(page, listing_url: str):
     return ensure_listing_page(page, listing_url)
 
 
-def _return_to_listing_after_detail(detail_page, listing_page, listing_url: str):
+def _return_to_listing_after_detail(
+    detail_page,
+    listing_page,
+    listing_url: str,
+    *,
+    allow_active_navigation: bool = False,
+):
     if detail_page is not listing_page:
         if not _page_is_closed(listing_page):
             if not _page_is_closed(detail_page):
@@ -5503,14 +5780,14 @@ def _return_to_listing_after_detail(detail_page, listing_page, listing_url: str)
             recovery = _recover_minhas_solicitacoes(
                 listing_page,
                 listing_url,
-                allow_active_navigation=False,
+                allow_active_navigation=allow_active_navigation,
             )
             if not recovery["success"]:
                 fallback_page, fallback_recovery = _recover_listing_in_new_context_page(
                     listing_page,
                     listing_url,
                     previous_error=recovery.get("error"),
-                    allow_active_navigation=False,
+                    allow_active_navigation=allow_active_navigation,
                 )
                 if fallback_recovery["success"] or fallback_recovery.get("error"):
                     return fallback_page, fallback_recovery
@@ -5518,7 +5795,7 @@ def _return_to_listing_after_detail(detail_page, listing_page, listing_url: str)
     recovery = _recover_minhas_solicitacoes(
         detail_page,
         listing_url,
-        allow_active_navigation=False,
+        allow_active_navigation=allow_active_navigation,
     )
     if not recovery["success"]:
         local_return_recovery = _recover_listing_by_detail_return_control(
@@ -5539,7 +5816,7 @@ def _return_to_listing_after_detail(detail_page, listing_page, listing_url: str)
             detail_page,
             listing_url,
             previous_error=recovery.get("error"),
-            allow_active_navigation=False,
+            allow_active_navigation=allow_active_navigation,
         )
         if fallback_recovery["success"] or fallback_recovery.get("error"):
             return fallback_page, fallback_recovery
@@ -6257,6 +6534,18 @@ def _result_has_valid_pdf_for_processing(result: dict) -> bool:
     )
 
 
+def _result_is_metadata_only_for_processing(result: dict) -> bool:
+    return (
+        result.get("download_status") in METADATA_ONLY_DOWNLOAD_STATUSES_FOR_PROCESSING
+        and bool(result.get("selected_for_processing"))
+        and bool(
+            result.get("completion_date")
+            or result.get("completion_date_raw")
+            or result.get("completion_date_normalized")
+        )
+    )
+
+
 def _refresh_download_totals(summary: dict) -> None:
     results = summary["results"]
     summary["total_processed"] = len(results)
@@ -6272,10 +6561,23 @@ def _refresh_download_totals(summary: dict) -> None:
         1 for result in results if result.get("skipped_download")
     )
     summary["total_skipped_duplicate"] = len(summary.get("duplicates_skipped", []))
+    summary["total_skipped_origin_page_unavailable"] = sum(
+        1
+        for result in results
+        if result.get("download_status") == "skipped_origin_page_unavailable"
+    )
     summary["total_for_processing"] = sum(
         1 for result in results if _result_has_valid_pdf_for_processing(result)
     )
-    summary["total_sent_to_processing"] = summary["total_for_processing"]
+    summary["total_metadata_only_for_processing"] = sum(
+        1 for result in results if _result_is_metadata_only_for_processing(result)
+    )
+    summary["total_budget_unavailable"] = sum(
+        1 for result in results if result.get("download_status") == "budget_unavailable"
+    )
+    summary["total_sent_to_processing"] = (
+        summary["total_for_processing"] + summary["total_metadata_only_for_processing"]
+    )
     summary["total_cdp_errors"] = sum(
         1
         for result in results

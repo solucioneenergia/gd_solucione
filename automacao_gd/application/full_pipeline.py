@@ -60,6 +60,7 @@ PIPELINE_SHAREABLE_MARKDOWN_REPORT_NAME = "pipeline_cdp_shareable.md"
 DOWNLOAD_SHAREABLE_JSON_REPORT_NAME = "downloads_cdp_shareable.json"
 DOWNLOAD_SHAREABLE_MARKDOWN_REPORT_NAME = "downloads_cdp_shareable.md"
 VALID_DOWNLOAD_STATUSES_FOR_PROCESSING = {"downloaded", "existing_pdf_after_skip"}
+METADATA_ONLY_DOWNLOAD_STATUSES_FOR_PROCESSING = {"budget_unavailable"}
 CONTROLLED_PRODUCTION_AUTHORIZATION_SCOPE = "CONTROLLED_PRODUCTION_V2_0_1"
 CONTROLLED_PRODUCTION_UP_TO_60_AUTHORIZATION_SCOPE = (
     "CONTROLLED_PRODUCTION_OPTION5_UP_TO_60"
@@ -374,6 +375,10 @@ def run_op5_archive_plan(
             apply_excel=True,
             apply_archive=True,
             allowed_protocols=set(plan.frozen_batch.protocols),
+            metadata_only_protocols=_metadata_only_protocols_for_processing(
+                plan.summary
+            ),
+            portal_metadata_by_protocol=_frozen_portal_metadata_by_protocol(plan.summary),
         )
         download_report_path = _save_download_summary(
             archive_settings.logs_dir_path,
@@ -478,11 +483,11 @@ def _load_archive_only_source_plan(
     frozen_batch = _frozen_batch_from_dry_run_report(download_summary, authorization)
     frozen_pdf_scope = _frozen_pdf_scope_from_dry_run_report(download_summary)
     _validate_frozen_pdf_scope_from_plan(frozen_pdf_scope)
-    if tuple(artifact.protocol for artifact in frozen_pdf_scope.artifacts) != frozen_batch.protocols:
-        raise _dry_run_plan_block(
-            "Protocolos dos PDFs congelados divergem do lote aprovado no dry-run.",
-            technical_cause="pdf_scope_protocol_mismatch",
-        )
+    _validate_frozen_batch_pdf_or_metadata_scope(
+        download_summary,
+        frozen_batch,
+        frozen_pdf_scope,
+    )
     download_summary["archive_only_local"] = True
     download_summary["reused_from_dry_run_plan"] = True
     download_summary["dry_run_plan_source"] = str(source_path)
@@ -630,6 +635,7 @@ def _run_full_cdp_pipeline_locked(
         total=download_summary.get("total_completed"),
     )
     pdf_paths = _pdf_paths_for_processing(download_summary)
+    metadata_only_protocols = _metadata_only_protocols_for_processing(download_summary)
     frozen_pdf_scope = (
         dry_run_plan.frozen_pdf_scope
         if dry_run_plan is not None
@@ -677,6 +683,7 @@ def _run_full_cdp_pipeline_locked(
             apply_archive=settings.APPLY_ARCHIVE,
             state_store=state_store,
             allowed_protocols=set(limited_selection.frozen_batch.protocols),
+            metadata_only_protocols=metadata_only_protocols,
             portal_metadata_by_protocol=(
                 _frozen_portal_metadata_by_protocol(download_summary)
                 if dry_run_plan is not None
@@ -1150,7 +1157,82 @@ def _pdf_paths_for_processing(download_summary: dict) -> list[Path]:
     return selected
 
 
+def _download_item_is_metadata_only_for_processing(item: dict) -> bool:
+    return (
+        item.get("download_status") in METADATA_ONLY_DOWNLOAD_STATUSES_FOR_PROCESSING
+        and bool(item.get("selected_for_processing"))
+        and bool(
+            item.get("completion_date")
+            or item.get("completion_date_raw")
+            or item.get("completion_date_normalized")
+        )
+    )
+
+
+def _metadata_only_protocols_for_processing(download_summary: dict) -> set[str]:
+    return {
+        str(item.get("protocol") or "")
+        for item in download_summary.get("results") or []
+        if str(item.get("protocol") or "")
+        and _download_item_is_metadata_only_for_processing(item)
+    }
+
+
 def freeze_selected_pdf_scope(
+    download_summary: dict,
+    frozen_batch: FrozenProtocolBatch,
+) -> FrozenPdfScope:
+    return _freeze_selected_pdf_or_metadata_scope(download_summary, frozen_batch)
+
+
+def _freeze_selected_pdf_or_metadata_scope(
+    download_summary: dict,
+    frozen_batch: FrozenProtocolBatch,
+) -> FrozenPdfScope:
+    download_by_protocol = {
+        str(item.get("protocol") or ""): item
+        for item in download_summary.get("results") or []
+        if isinstance(item, dict) and str(item.get("protocol") or "")
+    }
+    artifacts: list[FrozenPdfArtifact] = []
+    for protocol in frozen_batch.protocols:
+        item = download_by_protocol.get(protocol)
+        if not item:
+            raise FrozenBatchScopeError(
+                "FROZEN_BATCH_SCOPE_VIOLATION",
+                "Lote congelado contem protocolo sem registro de download.",
+            )
+        if _download_item_is_metadata_only_for_processing(item):
+            continue
+        raw_path = item.get("process_pdf_path")
+        path = Path(str(raw_path or ""))
+        if (
+            item.get("download_status") not in VALID_DOWNLOAD_STATUSES_FOR_PROCESSING
+            or item.get("cdp_error")
+            or not raw_path
+            or not _is_valid_pdf(path)
+        ):
+            raise FrozenBatchScopeError(
+                "FROZEN_BATCH_SCOPE_VIOLATION",
+                "PDFs validos ou metadados seguros nao correspondem ao lote congelado.",
+            )
+        artifacts.append(
+            FrozenPdfArtifact(
+                protocol=protocol,
+                path=path.resolve(strict=True),
+                sha256=_file_sha256(path),
+            )
+        )
+    digest_source = "\n".join(
+        f"{artifact.protocol}:{artifact.sha256}" for artifact in artifacts
+    )
+    return FrozenPdfScope(
+        artifacts=tuple(artifacts),
+        digest=hashlib.sha256(digest_source.encode("utf-8")).hexdigest(),
+    )
+
+
+def _freeze_selected_pdf_scope_legacy_unreachable(
     download_summary: dict,
     frozen_batch: FrozenProtocolBatch,
 ) -> FrozenPdfScope:
@@ -1508,6 +1590,7 @@ def _download_summary_for_planned_actions(
             for protocol in planned_protocols
             if protocol in frozen_metadata
         }
+    _refresh_processing_selection_totals(download)
     return download
 
 
@@ -1592,11 +1675,11 @@ def load_frozen_dry_run_plan(
     frozen_batch = _frozen_batch_from_dry_run_report(download_summary, authorization)
     frozen_pdf_scope = _frozen_pdf_scope_from_dry_run_report(download_summary)
     _validate_frozen_pdf_scope_from_plan(frozen_pdf_scope)
-    if tuple(artifact.protocol for artifact in frozen_pdf_scope.artifacts) != frozen_batch.protocols:
-        raise _dry_run_plan_block(
-            "Protocolos dos PDFs congelados divergem do lote aprovado no dry-run.",
-            technical_cause="pdf_scope_protocol_mismatch",
-        )
+    _validate_frozen_batch_pdf_or_metadata_scope(
+        download_summary,
+        frozen_batch,
+        frozen_pdf_scope,
+    )
 
     download_summary["reused_from_dry_run_plan"] = True
     download_summary["dry_run_plan_source"] = str(path)
@@ -1764,7 +1847,7 @@ def _frozen_pdf_scope_from_dry_run_report(download_summary: dict) -> FrozenPdfSc
 
 
 def _validate_frozen_pdf_scope_from_plan(scope: FrozenPdfScope) -> None:
-    if not scope.artifacts or not scope.digest:
+    if not scope.digest:
         raise _dry_run_plan_block(
             "Dry-run anterior não contém fingerprint completo dos PDFs.",
             technical_cause="pdf_scope_missing",
@@ -1784,6 +1867,46 @@ def _validate_frozen_pdf_scope_from_plan(scope: FrozenPdfScope) -> None:
         raise _dry_run_plan_block(
             "Digest do lote de PDFs congelado não confere.",
             technical_cause="pdf_scope_digest_mismatch",
+        )
+
+
+def _validate_frozen_batch_pdf_or_metadata_scope(
+    download_summary: dict,
+    frozen_batch: FrozenProtocolBatch,
+    scope: FrozenPdfScope,
+) -> None:
+    artifact_protocols = [artifact.protocol for artifact in scope.artifacts]
+    duplicate_artifacts = {
+        protocol
+        for protocol in artifact_protocols
+        if artifact_protocols.count(protocol) > 1
+    }
+    if duplicate_artifacts:
+        raise _dry_run_plan_block(
+            "Escopo congelado contem PDFs duplicados para o mesmo protocolo.",
+            technical_cause="pdf_scope_duplicate_protocol",
+        )
+    frozen_set = set(frozen_batch.protocols)
+    artifact_set = set(artifact_protocols)
+    if not artifact_set <= frozen_set:
+        raise _dry_run_plan_block(
+            "Escopo congelado contem PDF fora do lote aprovado no dry-run.",
+            technical_cause="pdf_scope_protocol_mismatch",
+        )
+    download_by_protocol = {
+        str(item.get("protocol") or ""): item
+        for item in download_summary.get("results") or []
+        if isinstance(item, dict) and str(item.get("protocol") or "")
+    }
+    for protocol in frozen_batch.protocols:
+        if protocol in artifact_set:
+            continue
+        item = download_by_protocol.get(protocol)
+        if item and _download_item_is_metadata_only_for_processing(item):
+            continue
+        raise _dry_run_plan_block(
+            "Protocolos do plano congelado nao possuem PDF nem metadados seguros.",
+            technical_cause="pdf_or_metadata_scope_protocol_mismatch",
         )
 
 
@@ -1923,8 +2046,19 @@ def _exclude_from_processing(item: dict, status: str) -> None:
 
 def _refresh_processing_selection_totals(download_summary: dict) -> None:
     results = download_summary.get("results") or []
-    total_for_processing = sum(1 for item in results if _download_item_sent_to_processing(item))
+    total_pdf_for_processing = sum(
+        1
+        for item in results
+        if item.get("download_status") in VALID_DOWNLOAD_STATUSES_FOR_PROCESSING
+        and _download_item_sent_to_processing(item)
+    )
+    total_metadata_only = sum(
+        1 for item in results if _download_item_is_metadata_only_for_processing(item)
+    )
+    total_for_processing = total_pdf_for_processing + total_metadata_only
     download_summary["total_for_processing"] = total_for_processing
+    download_summary["total_pdf_for_processing"] = total_pdf_for_processing
+    download_summary["total_metadata_only_for_processing"] = total_metadata_only
     download_summary["total_sent_to_processing"] = total_for_processing
 
 
@@ -2246,6 +2380,8 @@ def _protocol_row(selected: dict, download_item: dict, processing_item: dict | N
 
 
 def _download_item_sent_to_processing(download_item: dict) -> bool:
+    if _download_item_is_metadata_only_for_processing(download_item):
+        return True
     raw_path = download_item.get("process_pdf_path")
     return bool(
         download_item.get("download_status") in VALID_DOWNLOAD_STATUSES_FOR_PROCESSING

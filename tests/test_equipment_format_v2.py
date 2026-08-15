@@ -140,7 +140,7 @@ def _write_equipment_to_synthetic_workbook(
     )
 
 
-def test_module_single_keeps_compact_format_without_total_power() -> None:
+def test_module_single_uses_pair_and_total_without_total_power() -> None:
     data = parse_generation_data_from_text(
         _budget_text(
             module_manufacturers="RONMA",
@@ -153,14 +153,17 @@ def test_module_single_keeps_compact_format_without_total_power() -> None:
     formatted = format_modules_for_excel_v2(data)
     result = formatted.text
 
-    assert result == "14x RONMA RM182/144TB 585W"
+    assert result == (
+        "RONMA | RM182/144TB 585W\n"
+        "Qtd. total: 14 módulos"
+    )
     assert formatted.format_version == EQUIPMENT_FORMAT_VERSION
     assert "8,19" not in result
     assert "kWp" not in result
     assert "585W" in result
 
 
-def test_inverter_single_keeps_compact_format_without_total_power() -> None:
+def test_inverter_single_uses_pair_and_total_without_total_power() -> None:
     data = parse_generation_data_from_text(
         _budget_text(
             inverter_manufacturers="HUAWEI",
@@ -173,7 +176,10 @@ def test_inverter_single_keeps_compact_format_without_total_power() -> None:
     formatted = format_inverters_for_excel_v2(data)
     result = formatted.text
 
-    assert result == "1x HUAWEI SUN2000-6KTL"
+    assert result == (
+        "HUAWEI | SUN2000-6KTL\n"
+        "Qtd. total: 1 inversor"
+    )
     assert formatted.format_version == EQUIPMENT_FORMAT_VERSION
     assert "6 kW" not in result
     assert "kW" not in result
@@ -191,8 +197,10 @@ def test_solplanet_aiswei_is_canonical_inverter_manufacturer() -> None:
 
     formatted = format_inverters_for_excel_v2(data)
 
-    assert formatted.text == "1x SOLPLANET ASW6000-S-G2"
-    assert "SOLPLANET | ASW6000-S-G2" not in formatted.text
+    assert formatted.text == (
+        "SOLPLANET | ASW6000-S-G2\n"
+        "Qtd. total: 1 inversor"
+    )
     assert "AISWEI | ASW6000-S-G2" not in formatted.text
 
 
@@ -224,7 +232,8 @@ def test_solplanet_aliases_use_one_canonical_name(alias: str) -> None:
     )
 
     assert format_inverters_for_excel_v2(data).text == (
-        "1x SOLPLANET ASW6000-S-G2"
+        "SOLPLANET | ASW6000-S-G2\n"
+        "Qtd. total: 1 inversor"
     )
 
 
@@ -238,7 +247,8 @@ def test_duplicate_solplanet_aliases_for_same_model_are_deduplicated() -> None:
     )
 
     assert format_inverters_for_excel_v2(data).text == (
-        "1x SOLPLANET ASW6000-S-G2"
+        "SOLPLANET | ASW6000-S-G2\n"
+        "Qtd. total: 1 inversor"
     )
 
 
@@ -277,7 +287,10 @@ def test_gokin_is_module_manufacturer_and_not_inverter_manufacturer() -> None:
     module_text = format_modules_for_excel_v2(data).text
     inverter = format_inverters_for_excel_v2(data)
 
-    assert module_text == "20x GOKIN GKM-550M"
+    assert module_text == (
+        "GOKIN | GKM-550M\n"
+        "Qtd. total: 20 módulos"
+    )
     assert inverter.text == ""
     assert "GOKIN" not in inverter.text
     assert any("GOKIN" in warning for warning in inverter.warnings)
@@ -323,7 +336,7 @@ def test_modules_multiple_pipe_use_equipment_format_v2_total_label() -> None:
     assert "109x" not in result
 
 
-def test_modules_multiple_models_same_manufacturer_include_distributed_quantities() -> None:
+def test_modules_multiple_models_same_manufacturer_use_pair_lines_and_total() -> None:
     data = parse_generation_data_from_text(
         _budget_text(
             module_manufacturers="GOKIN",
@@ -336,8 +349,8 @@ def test_modules_multiple_models_same_manufacturer_include_distributed_quantitie
     result = format_modules_for_excel_v2(data).text
 
     assert result == (
-        "10x GOKIN | GKM-550M\n"
-        "12x GOKIN | GKM-555M\n"
+        "GOKIN | GKM-550M\n"
+        "GOKIN | GKM-555M\n"
         "Qtd. total: 22 m\u00f3dulos"
     )
     assert "12,16" not in result
@@ -377,7 +390,25 @@ def test_modules_slash_inside_single_model_is_preserved() -> None:
 
     result = format_modules_for_excel_v2(data).text
 
-    assert result == "14x RONMA RM182/144TB 585W"
+    assert result == (
+        "RONMA | RM182/144TB 585W\n"
+        "Qtd. total: 14 módulos"
+    )
+
+
+def test_single_module_uses_pair_and_total_lines() -> None:
+    data = parse_generation_data_from_text(
+        _budget_text(
+            module_manufacturers="GOKIN",
+            module_models="GK-1-72HTBD 585W",
+            module_quantity="22",
+        )
+    )
+
+    assert format_modules_for_excel_v2(data).text == (
+        "GOKIN | GK-1-72HTBD 585W\n"
+        "Qtd. total: 22 módulos"
+    )
 
 
 @pytest.mark.parametrize(
@@ -440,7 +471,8 @@ def test_solplanet_aiswei_from_pdf_path_does_not_create_two_inverters() -> None:
     assert len(data.inverters) == 1
     assert data.inverters[0].manufacturer == "SOLPLANET"
     assert format_inverters_for_excel_v2(data).text == (
-        "1x SOLPLANET ASW6000-S-G2"
+        "SOLPLANET | ASW6000-S-G2\n"
+        "Qtd. total: 1 inversor"
     )
 
 
@@ -457,7 +489,10 @@ def test_separate_solplanet_alias_rows_are_deduplicated_during_extraction() -> N
     assert len(data.inverters) == 1
     assert data.inverters[0].manufacturer == "SOLPLANET"
     assert data.inverters[0].model == "ASW6000-S-G2"
-    assert format_inverters_for_excel_v2(data).text == "1x SOLPLANET ASW6000-S-G2"
+    assert format_inverters_for_excel_v2(data).text == (
+        "SOLPLANET | ASW6000-S-G2\n"
+        "Qtd. total: 1 inversor"
+    )
 
 
 def test_inverters_mismatched_manufacturer_model_counts_warns() -> None:
@@ -497,10 +532,13 @@ def test_microinverter_single_keeps_compact_format() -> None:
         )
     )
 
-    assert format_inverters_for_excel_v2(data).text == "1x MICROINVERSOR APSYSTEMS DS3D"
+    assert format_inverters_for_excel_v2(data).text == (
+        "APSYSTEMS | DS3D\n"
+        "Qtd. total: 1 microinversor"
+    )
 
 
-def test_microinverters_multiple_use_type_prefix_and_v2_total_label() -> None:
+def test_microinverters_multiple_use_pair_and_v2_total_label() -> None:
     data = parse_generation_data_from_text(
         _budget_text(
             inverter_manufacturers=None,
@@ -514,8 +552,8 @@ def test_microinverters_multiple_use_type_prefix_and_v2_total_label() -> None:
     )
 
     assert format_inverters_for_excel_v2(data).text == (
-        "MICROINVERSOR — APSYSTEMS | DS3D\n"
-        "MICROINVERSOR — HOYMYLES | HMS-2000DW-4T\n"
+        "APSYSTEMS | DS3D\n"
+        "HOYMYLES | HMS-2000DW-4T\n"
         "Qtd. total: 11 microinversores"
     )
 
@@ -537,8 +575,8 @@ def test_conventional_inverter_and_microinverter_are_both_identified_v2() -> Non
     result = format_inverters_for_excel_v2(data).text
 
     assert result == (
-        "INVERSOR — SOLIS | S5-GC25K\n"
-        "MICROINVERSOR — APSYSTEMS | DS3D\n"
+        "SOLIS | S5-GC25K\n"
+        "APSYSTEMS | DS3D\n"
         "Qtd. total: 1 inversor + 10 microinversores"
     )
     assert "25 kW" not in result
@@ -592,7 +630,7 @@ def test_excel_update_preserves_header_filter_color_and_width(tmp_path: Path) ->
         client_name="CLIENTE SINTETICO LTDA",
         entry_date="10/01/2026",
         module_text="BYD | P6C-30 260\nTRINA | TSM-NEG21C 695\nQtd. total: 218 módulos",
-        inverter_text="1x HUAWEI SUN2000-6KTL",
+        inverter_text="HUAWEI | SUN2000-6KTL\nQtd. total: 1 inversor",
         dry_run=False,
     )
 
@@ -627,7 +665,7 @@ def test_excel_dry_run_does_not_save_workbook(tmp_path: Path) -> None:
         client_name="CLIENTE SINTETICO LTDA",
         entry_date="10/01/2026",
         module_text="BYD | P6C-30 260\nTRINA | TSM-NEG21C 695\nQtd. total: 218 módulos",
-        inverter_text="1x HUAWEI SUN2000-6KTL",
+        inverter_text="HUAWEI | SUN2000-6KTL\nQtd. total: 1 inversor",
         dry_run=True,
     )
 
@@ -635,7 +673,7 @@ def test_excel_dry_run_does_not_save_workbook(tmp_path: Path) -> None:
     assert _read_workbook_bytes(workbook_path) == before
 
 
-def test_excel_writes_single_module_and_single_inverter_compact_values(
+def test_excel_writes_single_module_and_single_inverter_pair_total_values(
     tmp_path: Path,
 ) -> None:
     workbook_path = tmp_path / "planilha_sintetica.xlsx"
@@ -663,8 +701,14 @@ def test_excel_writes_single_module_and_single_inverter_compact_values(
     ws = wb["2026"]
     try:
         assert result["action"] == "update_existing"
-        assert ws.cell(row=2, column=6).value == "14x RONMA RM182/144TB 585W"
-        assert ws.cell(row=2, column=7).value == "1x HUAWEI SUN2000-6KTL"
+        assert ws.cell(row=2, column=6).value == (
+            "RONMA | RM182/144TB 585W\n"
+            "Qtd. total: 14 módulos"
+        )
+        assert ws.cell(row=2, column=7).value == (
+            "HUAWEI | SUN2000-6KTL\n"
+            "Qtd. total: 1 inversor"
+        )
         assert "8,19" not in ws.cell(row=2, column=6).value
         assert "kWp" not in ws.cell(row=2, column=6).value
         assert "6 kW" not in ws.cell(row=2, column=7).value
@@ -744,7 +788,10 @@ def test_excel_writes_isolated_microinverter_in_inverter_column(tmp_path: Path) 
     wb = load_workbook(workbook_path)
     ws = wb["2026"]
     try:
-        assert ws.cell(row=2, column=7).value == "1x MICROINVERSOR APSYSTEMS DS3D"
+        assert ws.cell(row=2, column=7).value == (
+            "APSYSTEMS | DS3D\n"
+            "Qtd. total: 1 microinversor"
+        )
         assert "2 kW" not in ws.cell(row=2, column=7).value
     finally:
         wb.close()
@@ -778,8 +825,8 @@ def test_excel_writes_conventional_inverter_and_microinverter_together(
     ws = wb["2026"]
     try:
         assert ws.cell(row=2, column=7).value == (
-            "INVERSOR — SOLIS | S5-GC25K\n"
-            "MICROINVERSOR — APSYSTEMS | DS3D\n"
+            "SOLIS | S5-GC25K\n"
+            "APSYSTEMS | DS3D\n"
             "Qtd. total: 1 inversor + 10 microinversores"
         )
         assert "25 kW" not in ws.cell(row=2, column=7).value
@@ -802,7 +849,7 @@ def test_excel_existing_protocol_update_preserves_non_equipment_cell_values(
     _write_equipment_to_synthetic_workbook(
         workbook_path,
         module_text="BYD | P6C-30 260\nTRINA | TSM-NEG21C 695\nQtd. total: 218 módulos",
-        inverter_text="1x HUAWEI SUN2000-6KTL",
+        inverter_text="HUAWEI | SUN2000-6KTL\nQtd. total: 1 inversor",
     )
 
     wb = load_workbook(workbook_path)
@@ -823,7 +870,7 @@ def test_excel_workbook_remains_valid_after_equipment_update(tmp_path: Path) -> 
     _write_equipment_to_synthetic_workbook(
         workbook_path,
         module_text="BYD | P6C-30 260\nTRINA | TSM-NEG21C 695\nQtd. total: 218 módulos",
-        inverter_text="1x HUAWEI SUN2000-6KTL",
+        inverter_text="HUAWEI | SUN2000-6KTL\nQtd. total: 1 inversor",
     )
 
     wb = load_workbook(workbook_path)

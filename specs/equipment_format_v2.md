@@ -272,6 +272,33 @@ Não há backfill nesta etapa. Registros históricos serão tratados somente na 
 - [ ] Dado modelo com fabricante interno ou rótulo sem origem comprobatória, então nenhum token é
   descartado e eventual ambiguidade fica pendente.
 
+## Adendo 2026-08-14 - padrao obrigatorio das colunas Placa e Inversor
+
+As colunas `Placa` e `Inversor` devem usar o mesmo contrato visual para item unico e
+multiplos itens. A linha de equipamento sempre representa `Fabricante | Modelo`, sem
+potencia agregada (`kW`/`kWp`) e sem quantidade compactada no inicio da linha.
+
+`Placa`:
+
+```text
+GOKIN | GK-1-72HTBD 585W
+JINKO | JKM-625
+Qtd. total: 22 modulos
+```
+
+`Inversor`:
+
+```text
+SOLPLANET | ASW7300-S
+HYXIPOWER | HYX M2000-S
+Qtd. total: 1 inversor + 1 microinversor
+```
+
+Quando houver somente um modulo, inversor ou microinversor, o mesmo padrao permanece:
+uma linha `Fabricante | Modelo` e uma linha `Qtd. total`. A coluna `Inversor` sempre
+usa apenas `Fabricante | Modelo` nas linhas de equipamento; a distinção de quantidade
+entre inversor e microinversor fica na linha `Qtd. total`.
+
 ## Rollout
 
 Aplicar somente ao caminho canônico `automacao_gd/`; validar primeiro com fixtures, depois com

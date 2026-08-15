@@ -246,9 +246,14 @@ def protocol_row_has_required_values(workbook_path: Path, protocol: str) -> dict
         occurrence = occurrences[0]
         info = sheet_map[occurrence["sheet"]]
         row = occurrence["row"]
+        required_columns = _required_columns_for_completed_protocol_row(
+            info["worksheet"],
+            row,
+            info["columns"],
+        )
         missing = [
             column_name
-            for column_name in REQUIRED_COLUMNS
+            for column_name in required_columns
             if not _has_text(
                 info["worksheet"].cell(
                     row=row,
@@ -274,11 +279,40 @@ def protocol_row_has_required_values(workbook_path: Path, protocol: str) -> dict
             wb.close()
 
 
+def _required_columns_for_completed_protocol_row(
+    ws: Worksheet,
+    row: int,
+    columns: dict[str, int],
+) -> list[str]:
+    parecer = ws.cell(row=row, column=columns["Parecer"]).value
+    if isinstance(parecer, bool) and parecer is False:
+        return [
+            column
+            for column in REQUIRED_COLUMNS
+            if column not in {"Placa", "Inversor"}
+        ]
+    if _normalize_cell(parecer).upper() in {
+        "FALSE",
+        "FALSO",
+        "NAO",
+        "NÃƒO",
+        "NÃO",
+        "NO",
+        "0",
+    }:
+        return [
+            column
+            for column in REQUIRED_COLUMNS
+            if column not in {"Placa", "Inversor"}
+        ]
+    return REQUIRED_COLUMNS
+
+
 def update_excel_equipment_columns(
     workbook_path: Path,
     protocol: str,
-    module_text: str,
-    inverter_text: str,
+    module_text: str | None,
+    inverter_text: str | None,
     *,
     dry_run: bool = True,
     backup_path: Path | None = None,
@@ -386,8 +420,8 @@ def update_excel_from_pdf_data(
     client_name: str,
     entry_date: Any = None,
     completion_date: Any = None,
-    module_text: str = "",
-    inverter_text: str = "",
+    module_text: str | None = "",
+    inverter_text: str | None = "",
     parecer: str = "Sim",
     dry_run: bool = True,
     backup_path: Path | None = None,
@@ -503,8 +537,8 @@ def _handle_existing_row(
     protocol: str,
     client_name: str,
     completion_date: Any,
-    module_text: str,
-    inverter_text: str,
+    module_text: str | None,
+    inverter_text: str | None,
     parecer: str,
     dry_run: bool,
     backup_path: Path | None,
@@ -581,6 +615,7 @@ def _handle_existing_row(
         completion_date,
         module_text,
         inverter_text,
+        parecer,
     )
     result.update(update_state)
     if update_state["all_no_change"]:
@@ -618,6 +653,7 @@ def _handle_existing_row(
             completion_date,
             module_text,
             inverter_text,
+            parecer,
             update_state,
         )
         _save_workbook_atomically(wb, workbook_path)
@@ -634,8 +670,8 @@ def _handle_wrong_sheet(
     protocol: str,
     client_name: str,
     completion_date: Any,
-    module_text: str,
-    inverter_text: str,
+    module_text: str | None,
+    inverter_text: str | None,
     parecer: str,
     dry_run: bool,
     backup_path: Path | None,
@@ -744,8 +780,8 @@ def _handle_new_row(
     protocol: str,
     client_name: str,
     completion_date: Any,
-    module_text: str,
-    inverter_text: str,
+    module_text: str | None,
+    inverter_text: str | None,
     parecer: str,
     dry_run: bool,
     backup_path: Path | None,
@@ -1626,8 +1662,8 @@ def _adjust_equipment_row_layout(
     ws: Worksheet,
     row: int,
     columns: dict[str, int],
-    module_text: str,
-    inverter_text: str,
+    module_text: str | None,
+    inverter_text: str | None,
 ) -> None:
     line_count = max(
         len(str(module_text or "").splitlines()),
@@ -2040,8 +2076,8 @@ def _write_excel_row(
     client_name: str,
     entry_dt: date,
     completion_date: Any,
-    module_text: str,
-    inverter_text: str,
+    module_text: str | None,
+    inverter_text: str | None,
     parecer: str,
     parecer_boolean: bool | None = None,
 ) -> None:
@@ -2078,8 +2114,9 @@ def _write_existing_excel_row_updates(
     row: int,
     columns: dict[str, int],
     completion_date: Any,
-    module_text: str,
-    inverter_text: str,
+    module_text: str | None,
+    inverter_text: str | None,
+    parecer: str,
     update_state: dict[str, Any],
 ) -> None:
     completion_col = _column_by_normalized_name(columns, "CONCLUSAO")
@@ -2104,6 +2141,13 @@ def _write_existing_excel_row_updates(
         _set_cell_if_value(ws, row, columns["Inversor"], cleaned_inverter)
     if module_changed or inverter_changed:
         _adjust_equipment_row_layout(ws, row, columns, cleaned_module, cleaned_inverter)
+    if not update_state.get("parecer_no_change"):
+        ws.cell(row=row, column=columns["Parecer"]).value = _parecer_value(
+            ws,
+            columns["Parecer"],
+            parecer,
+            _column_uses_boolean(ws, columns["Parecer"]),
+        )
 
 
 def _row_has_required_update_values(
@@ -2134,6 +2178,7 @@ def _row_required_update_state(
     completion_date: Any = None,
     module_text: str | None = None,
     inverter_text: str | None = None,
+    parecer: str | None = None,
 ) -> dict[str, Any]:
     row_entry_dt = parse_date(ws.cell(row=row, column=columns["Data de ingresso"]).value)
     ingress_no_change = bool(
@@ -2145,6 +2190,20 @@ def _row_required_update_state(
     module_no_change = _equipment_text_matches(current_module, module_text)
     inverter_no_change = _equipment_text_matches(current_inverter, inverter_text)
     equipment_no_change = module_no_change and inverter_no_change
+    current_parecer = ws.cell(row=row, column=columns["Parecer"]).value
+    expected_parecer = (
+        None
+        if parecer is None
+        else _parecer_value(
+            ws,
+            columns["Parecer"],
+            parecer,
+            _column_uses_boolean(ws, columns["Parecer"]),
+        )
+    )
+    parecer_no_change = (
+        True if expected_parecer is None else current_parecer == expected_parecer
+    )
 
     completion_col = _column_by_normalized_name(columns, "CONCLUSAO")
     current_completion = ws.cell(row=row, column=completion_col).value
@@ -2163,9 +2222,15 @@ def _row_required_update_state(
         "module_no_change": module_no_change,
         "inverter_no_change": inverter_no_change,
         "equipment_no_change": equipment_no_change,
+        "parecer_no_change": parecer_no_change,
         "completion_no_change": completion_no_change,
         "completion_action": completion_action,
-        "all_no_change": ingress_no_change and equipment_no_change and completion_no_change,
+        "all_no_change": (
+            ingress_no_change
+            and equipment_no_change
+            and parecer_no_change
+            and completion_no_change
+        ),
     }
 
 
@@ -2245,12 +2310,19 @@ def _parecer_value(
     ws: Worksheet, parecer_col: int, parecer: str, parecer_boolean: bool | None = None
 ) -> bool | str:
     if parecer_boolean is True:
-        return True
+        return _parecer_to_bool(parecer)
     for row in range(1, ws.max_row + 1):
         value = ws.cell(row=row, column=parecer_col).value
         if isinstance(value, bool):
-            return True
+            return _parecer_to_bool(parecer)
     return parecer
+
+
+def _parecer_to_bool(parecer: str | bool | None) -> bool:
+    if isinstance(parecer, bool):
+        return parecer
+    normalized = _normalize_cell(parecer).upper()
+    return normalized not in {"FALSE", "FALSO", "NAO", "NÃO", "NO", "0"}
 
 
 def _column_uses_boolean(ws: Worksheet, column: int) -> bool:

@@ -157,6 +157,24 @@ listagem, e sem protocolos pendentes dentro de `planned_excel_actions`/`frozen_b
 interativo deve bloquear apenas quando nao houver nenhuma acao planejada segura, quando o plano
 exceder N, ou quando houver erro/condicao operacional bloqueante.
 
+Quando o detalhe do Portal indicar conclusao, mas o clique em `Orcamento de Conexao` nao entregar
+arquivo dentro do timeout operacional, isso deve ser tratado como orcamento indisponivel para
+download, nao como erro CDP bloqueante. O protocolo pode continuar no lote como acao
+`metadata_only`: deve congelar os metadados do Portal, nao exigir PDF em `frozen_pdf_scope`, nao
+tentar extracao tecnica nem arquivamento, e deve planejar/aplicar somente campos seguros da
+planilha. Nessa acao, `Conclusao` usa a data do Portal quando disponivel e `Parecer` deve ser
+marcado como `False`/falso para registrar que o orcamento/parecer nao foi baixado/arquivado.
+Depois do clique em `Orcamento de Conexao`, o OP5 deve aguardar no maximo 5 segundos pelo evento de
+download. Sem arquivo nesse prazo, deve registrar `budget_unavailable`, nao repetir a tentativa no
+mesmo processamento do protocolo e seguir com os metadados ja capturados.
+Se o clique abrir `edge://downloads-hub/` ou outra aba sem PDF, o caso permanece
+`budget_unavailable`; o retorno a listagem pode usar recuperacao ativa segura pela URL de listagem
+ja conhecida, sem navegar para raiz HTTP ou tentar nova autenticacao automatica.
+
+Protocolos cujo status atual da linha de origem esteja cancelado devem ser pulados sem abrir
+detalhe, sem download, sem planilha e sem erro operacional. O relatorio deve registrar
+`download_status=skipped_cancelled` e o motivo de skip.
+
 ### RF-003 — Separação da reconciliação global
 
 A reconciliação global da SPEC-004 permanece válida, mas deve ser controlada por modo explícito:
@@ -258,6 +276,9 @@ estimada não substitui a validação da página do Portal: a navegação só é
 após o clique for exatamente a página estimada, e a varredura leve deve confirmar a tabela visível
 antes de iniciar qualquer coleta operacional. Se a navegação estimada não for confirmada, o fluxo
 deve voltar ao reset seguro para página 1 e seguir a varredura normal.
+Planilhas lidas em modo somente leitura podem não expor `max_row`/`max_column`; dimensões ausentes
+não devem causar `TypeError` nem desabilitar a âncora por exceção estrutural. O índice local deve usar
+limites conservadores para localizar cabeçalhos e calcular a última linha materializada.
 
 Se o alvo estimado nao estiver na janela numerica visivel do paginador, a navegacao pode avancar
 pela janela do paginador ate expor o alvo. Quando o clique de proxima janela altera os links
@@ -288,6 +309,16 @@ retornar `pagination_numeric_target_not_found`, mas listar o número alvo em
 `numeric_page_links_found`, o adaptador CDP deve tentar o clique exato via locator Playwright antes
 de declarar falha. A falha só pode ser registrada como `pagination_numeric_target_not_found` depois
 desse fallback.
+
+Para origens registradas em paginas altas, como 12 a 15, o retorno apos detalhe deve preferir
+`navigate_to_numeric_page(page, origem)` e usar a pagina/linha congelada, evitando avancar uma a
+uma desde a pagina 1 quando o numero da origem puder ser confirmado pelo paginador.
+
+Se a origem congelada apontar para uma pagina alta, mas a navegacao progressiva confirmar
+`last_page_reached` antes da pagina alvo, o item deve ser considerado indisponivel por mudanca da
+listagem/encurtamento do paginador. O OP5 deve registrar `pagination_target_beyond_last_page` e
+`download_status=skipped_origin_page_unavailable`, seguir o lote e nao classificar isso como
+`cdp_error` nem como falha parcial do pipeline.
 
 Se o clique numérico direto reportar sucesso, mas o Portal permanecer na mesma página ativa e com a
 mesma assinatura de tabela, o `op5-plan` deve tentar a navegação sequencial já validada pelo

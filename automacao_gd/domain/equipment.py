@@ -185,16 +185,21 @@ def format_modules_for_excel_v2(generation_data) -> EquipmentFormatResult:
 
     if len(items) <= 1:
         item = items[0] if items else EquipmentItem(equipment_type="module")
-        name = _join_name(item.manufacturer, item.model)
-        if not name:
+        pair = _join_pair(item.manufacturer, item.model)
+        if not pair:
             return EquipmentFormatResult("", warnings)
         if total_quantity is not None:
-            return EquipmentFormatResult(f"{total_quantity}x {name}", warnings)
-        return EquipmentFormatResult(name, warnings)
+            return EquipmentFormatResult(
+                f"{pair}\nQtd. total: {total_quantity} {_pluralize(total_quantity, 'módulo', 'módulos')}",
+                warnings,
+            )
+        return EquipmentFormatResult(pair, warnings)
 
-    lines = [_join_module_line(item) for item in items]
+    lines = [_join_pair(item.manufacturer, item.model) for item in items]
     if total_quantity is not None:
-        lines.append(f"Qtd. total: {total_quantity} módulos")
+        lines.append(
+            f"Qtd. total: {total_quantity} {_pluralize(total_quantity, 'módulo', 'módulos')}"
+        )
     return EquipmentFormatResult("\n".join(line for line in lines if line), warnings)
 
 
@@ -248,28 +253,37 @@ def format_inverters_for_excel_v2(generation_data) -> EquipmentFormatResult:
 
     if not inverter_items and len(micro_items) == 1:
         item = micro_items[0]
-        name = _join_name(item.manufacturer, item.model)
-        if micro_quantity is not None and name:
-            return EquipmentFormatResult(f"{micro_quantity}x MICROINVERSOR {name}", warnings)
-        return EquipmentFormatResult(f"MICROINVERSOR {name}".strip(), warnings)
+        pair = _join_pair(item.manufacturer, item.model)
+        if micro_quantity is not None and pair:
+            return EquipmentFormatResult(
+                f"{pair}\n"
+                f"Qtd. total: {micro_quantity} "
+                f"{_pluralize(micro_quantity, 'microinversor', 'microinversores')}",
+                warnings,
+            )
+        return EquipmentFormatResult(pair.strip(), warnings)
 
     if inverter_items and not micro_items and len(inverter_items) == 1:
         item = inverter_items[0]
-        name = _join_name(item.manufacturer, item.model)
-        if inverter_quantity is not None and name:
-            return EquipmentFormatResult(f"{inverter_quantity}x {name}", warnings)
-        return EquipmentFormatResult(name, warnings)
+        pair = _join_pair(item.manufacturer, item.model)
+        if inverter_quantity is not None and pair:
+            return EquipmentFormatResult(
+                f"{pair}\n"
+                f"Qtd. total: {inverter_quantity} "
+                f"{_pluralize(inverter_quantity, 'inversor', 'inversores')}",
+                warnings,
+            )
+        return EquipmentFormatResult(pair.strip(), warnings)
 
     lines: list[str] = []
-    include_type = bool(inverter_items and micro_items) or bool(micro_items)
     for item in inverter_items:
         pair = _join_pair(item.manufacturer, item.model)
         if pair:
-            lines.append(f"INVERSOR — {pair}" if include_type else pair)
+            lines.append(pair)
     for item in micro_items:
         pair = _join_pair(item.manufacturer, item.model)
         if pair:
-            lines.append(f"MICROINVERSOR — {pair}")
+            lines.append(pair)
 
     total = _quantity_total_text(inverter_quantity, micro_quantity)
     if total:
@@ -391,6 +405,10 @@ def _quantity_total_text(
         suffix = "microinversor" if micro_quantity == 1 else "microinversores"
         parts.append(f"{micro_quantity} {suffix}")
     return " + ".join(parts)
+
+
+def _pluralize(quantity: int, singular: str, plural: str) -> str:
+    return singular if quantity == 1 else plural
 
 
 def _existing_warnings(generation_data) -> list[str]:
