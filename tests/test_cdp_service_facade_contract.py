@@ -43,3 +43,13 @@ def test_cdp_service_keeps_navigation_facade() -> None:
         is internal_is_portal_root_or_index_url
     )
     assert cdp_service.is_insecure_portal_http_url is internal_is_insecure_portal_http_url
+
+
+def test_cdp_service_keeps_numeric_paginator_click_signature() -> None:
+    signature = inspect.signature(cdp_service._click_numeric_paginator_with_playwright)
+
+    assert list(signature.parameters) == ["page", "target_page_number"]
+    assert (
+        signature.parameters["target_page_number"].kind
+        is inspect.Parameter.KEYWORD_ONLY
+    )

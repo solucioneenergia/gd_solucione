@@ -54,3 +54,84 @@ def _is_portal_root_or_index_url(url: str, expected_host: str | None = None) -> 
         return False
     path = (parsed.path or "/").rstrip("/").lower()
     return path in {"", "/index.jsf"}
+
+
+def click_numeric_paginator_with_playwright(
+    page,
+    *,
+    target_page_number: int,
+    playwright_error,
+    wait_portal_loader_idle,
+    click_locator_via_dom,
+    wait_after_pagination_click,
+) -> dict:
+    target_text = str(target_page_number)
+    selectors = (
+        ".ui-paginator a.ui-paginator-page",
+        "[class*='paginator'] a",
+        "[class*='paginator'] button",
+        "[class*='paginator'] [role='button']",
+        "[class*='paginator'] span",
+        "[class*='pagination'] a",
+        "[class*='pagination'] button",
+        "[class*='pagination'] [role='button']",
+        "[class*='pagination'] span",
+    )
+    last_selector = selectors[0]
+    try:
+        for selector in selectors:
+            last_selector = selector
+            links = page.locator(selector)
+            count = links.count()
+            for index in range(count):
+                link = links.nth(index)
+                try:
+                    text = (link.inner_text(timeout=1_000) or "").strip()
+                    class_name = str(
+                        link.get_attribute("class", timeout=1_000) or ""
+                    )
+                except (playwright_error, AttributeError):
+                    continue
+                if text != target_text:
+                    continue
+                if (
+                    "ui-state-active" in class_name
+                    or "ui-state-disabled" in class_name
+                ):
+                    continue
+                wait_portal_loader_idle(page, timeout_ms=5_000)
+                try:
+                    link.click(timeout=5_000)
+                except (playwright_error, AttributeError) as exc:
+                    if not click_locator_via_dom(link):
+                        raise exc
+                    wait_after_pagination_click(page)
+                    return {
+                        "clicked": True,
+                        "selector": selector,
+                        "index": index,
+                        "text": text,
+                        "class_name": class_name,
+                        "stop_reason": "pagination_numeric_page_clicked_dom_fallback",
+                    }
+                return {
+                    "clicked": True,
+                    "selector": selector,
+                    "index": index,
+                    "text": text,
+                    "class_name": class_name,
+                    "stop_reason": "pagination_numeric_page_clicked",
+                }
+        return {
+            "clicked": False,
+            "selector": last_selector,
+            "text": target_text,
+            "stop_reason": "pagination_numeric_locator_target_not_found",
+        }
+    except (playwright_error, AttributeError) as exc:
+        return {
+            "clicked": False,
+            "selector": last_selector,
+            "text": target_text,
+            "stop_reason": f"pagination_numeric_locator_click_error: {exc}",
+        }

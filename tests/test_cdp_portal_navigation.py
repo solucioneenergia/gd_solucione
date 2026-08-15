@@ -87,6 +87,60 @@ def test_numeric_paginator_uses_dom_fallback_when_loader_intercepts(
     assert page.link.dom_clicked is True
 
 
+def test_numeric_paginator_ignores_active_or_disabled_target(
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(cdp_service, "PlaywrightError", RuntimeError)
+
+    class Link:
+        clicked = False
+
+        def __init__(self, class_name: str) -> None:
+            self.class_name = class_name
+
+        def inner_text(self, **kwargs) -> str:
+            return "12"
+
+        def get_attribute(self, name: str, **kwargs) -> str:
+            assert name == "class"
+            return self.class_name
+
+        def click(self, **kwargs) -> None:
+            self.clicked = True
+
+    class Links:
+        def __init__(self) -> None:
+            self.links = [
+                Link("ui-state-active"),
+                Link("ui-state-disabled"),
+            ]
+
+        def count(self) -> int:
+            return len(self.links)
+
+        def nth(self, index: int) -> Link:
+            return self.links[index]
+
+    class Page:
+        def __init__(self) -> None:
+            self.links = Links()
+
+        def locator(self, selector: str):
+            return self.links
+
+    page = Page()
+
+    result = cdp_service._click_numeric_paginator_with_playwright(
+        page,
+        target_page_number=12,
+    )
+
+    assert result["clicked"] is False
+    assert result["text"] == "12"
+    assert result["stop_reason"] == "pagination_numeric_locator_target_not_found"
+    assert [link.clicked for link in page.links.links] == [False, False]
+
+
 def test_existing_pdf_and_metadata_do_not_open_detail(tmp_path: Path) -> None:
     record = _record()
     protocol_dir = tmp_path / record.protocol

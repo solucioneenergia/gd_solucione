@@ -44,6 +44,7 @@ from automacao_gd.infrastructure.portal.cdp_navigation import (
     _is_unsafe_navigation_url,
     is_insecure_portal_http_url,
 )
+from automacao_gd.infrastructure.portal import cdp_navigation as cdp_navigation_helpers
 from automacao_gd.infrastructure.pdf.service import extract_generation_data
 
 
@@ -5037,76 +5038,14 @@ def find_and_click_next_numeric_page(page, current_page_number: int) -> dict:
 
 
 def _click_numeric_paginator_with_playwright(page, *, target_page_number: int) -> dict:
-    target_text = str(target_page_number)
-    selectors = (
-        ".ui-paginator a.ui-paginator-page",
-        "[class*='paginator'] a",
-        "[class*='paginator'] button",
-        "[class*='paginator'] [role='button']",
-        "[class*='paginator'] span",
-        "[class*='pagination'] a",
-        "[class*='pagination'] button",
-        "[class*='pagination'] [role='button']",
-        "[class*='pagination'] span",
+    return cdp_navigation_helpers.click_numeric_paginator_with_playwright(
+        page,
+        target_page_number=target_page_number,
+        playwright_error=PlaywrightError,
+        wait_portal_loader_idle=_wait_portal_loader_idle,
+        click_locator_via_dom=_click_locator_via_dom,
+        wait_after_pagination_click=_wait_after_pagination_click,
     )
-    last_selector = selectors[0]
-    try:
-        for selector in selectors:
-            last_selector = selector
-            links = page.locator(selector)
-            count = links.count()
-            for index in range(count):
-                link = links.nth(index)
-                try:
-                    text = (link.inner_text(timeout=1_000) or "").strip()
-                    class_name = str(
-                        link.get_attribute("class", timeout=1_000) or ""
-                    )
-                except (PlaywrightError, AttributeError):
-                    continue
-                if text != target_text:
-                    continue
-                if (
-                    "ui-state-active" in class_name
-                    or "ui-state-disabled" in class_name
-                ):
-                    continue
-                _wait_portal_loader_idle(page, timeout_ms=5_000)
-                try:
-                    link.click(timeout=5_000)
-                except (PlaywrightError, AttributeError) as exc:
-                    if not _click_locator_via_dom(link):
-                        raise exc
-                    _wait_after_pagination_click(page)
-                    return {
-                        "clicked": True,
-                        "selector": selector,
-                        "index": index,
-                        "text": text,
-                        "class_name": class_name,
-                        "stop_reason": "pagination_numeric_page_clicked_dom_fallback",
-                    }
-                return {
-                    "clicked": True,
-                    "selector": selector,
-                    "index": index,
-                    "text": text,
-                    "class_name": class_name,
-                    "stop_reason": "pagination_numeric_page_clicked",
-                }
-        return {
-            "clicked": False,
-            "selector": last_selector,
-            "text": target_text,
-            "stop_reason": "pagination_numeric_locator_target_not_found",
-        }
-    except (PlaywrightError, AttributeError) as exc:
-        return {
-            "clicked": False,
-            "selector": last_selector,
-            "text": target_text,
-            "stop_reason": f"pagination_numeric_locator_click_error: {exc}",
-        }
 
 
 def _wait_portal_loader_idle(page, *, timeout_ms: int = 8_000) -> bool:
