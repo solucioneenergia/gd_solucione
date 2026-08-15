@@ -219,7 +219,10 @@ def test_duplicate_solplanet_and_single_field_difference_are_updates(tmp_path: P
     assert result.items[0].action is models.BackfillAction.UPDATE_EQUIPMENT
     assert result.items[1].action is models.BackfillAction.PENDING_TECHNICAL_REVIEW
     assert "SOLPLANET_ALIAS_NORMALIZED" in result.items[0].reasons
-    assert result.items[1].proposed_module_text == result.items[1].current_module_text
+    assert (
+        result.items[1].proposed_module_text
+        == "LEAPTON | LP182\nQtd. total: 5 módulos"
+    )
 
 
 def test_audit_classifies_semantic_differences_without_using_them_as_source(
@@ -408,8 +411,8 @@ def test_apply_creates_integral_backup_preserves_workbook_and_is_idempotent(
     assert result.backup_path.read_bytes() != b""
     assert result.original_hash == result.backup_hash
     saved = load_workbook(workbook)
-    assert saved["2025"]["B2"].value == "5x LEAPTON LP182"
-    assert saved["2025"]["C2"].value == "1x HUAWEI SUN2000"
+    assert saved["2025"]["B2"].value == "LEAPTON | LP182\nQtd. total: 5 módulos"
+    assert saved["2025"]["C2"].value == "HUAWEI | SUN2000\nQtd. total: 1 inversor"
     assert saved["2025"]["B3"].value == "OK"
     assert saved["2025"]["D3"].value == "=1+1"
     assert saved["2025"].auto_filter.ref == "A1:D3"
@@ -542,9 +545,9 @@ def test_apply_public_report_omits_backup_path(tmp_path: Path) -> None:
                 protocol="2600001029",
                 action=models.BackfillAction.UPDATE_EQUIPMENT,
                 previous_module_text="ANTIGA",
-                final_module_text="5x LEAPTON LP182",
+                final_module_text="LEAPTON | LP182\nQtd. total: 5 módulos",
                 previous_inverter_text="ANTIGO",
-                final_inverter_text="1x HUAWEI SUN2000",
+                final_inverter_text="HUAWEI | SUN2000\nQtd. total: 1 inversor",
             ),
         ),
         backup_path=backup,
@@ -596,8 +599,11 @@ def test_only_module_difference_still_proposes_the_complete_pair(tmp_path: Path)
     )
 
     assert result.items[0].action is models.BackfillAction.UPDATE_EQUIPMENT
-    assert result.items[0].proposed_module_text == "5x LEAPTON LP182"
-    assert result.items[0].proposed_inverter_text == "1x HUAWEI SUN2000"
+    assert result.items[0].proposed_module_text == "LEAPTON | LP182\nQtd. total: 5 módulos"
+    assert (
+        result.items[0].proposed_inverter_text
+        == "HUAWEI | SUN2000\nQtd. total: 1 inversor"
+    )
 
 
 def test_preflight_block_prevents_backup_and_write(tmp_path: Path, monkeypatch) -> None:

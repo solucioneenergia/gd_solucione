@@ -2836,6 +2836,20 @@ def download_completed_budgets_from_current_page(
                     result["processing_reason"] = "budget_unavailable_metadata_only"
                     result["skip_reason"] = "budget_unavailable"
                     result["archive_status"] = "skipped_budget_unavailable"
+                    result["process_pdf_path"] = None
+                    if state_store:
+                        _call_state_store(
+                            state_store,
+                            "update_section",
+                            protocol,
+                            "download",
+                            {
+                                "status": "budget_unavailable",
+                                "pdf_exists": False,
+                                "reason": "connection_budget_link_not_found",
+                            },
+                            last_step="budget_unavailable",
+                        )
                     logger.warning(
                         "Orcamento de Conexao nao encontrado para "
                         f"{protocol}."
@@ -3985,14 +3999,19 @@ def navigate_to_numeric_page(page, target_page_number: int) -> dict:
         )
         return result
     if active_before is None:
-        result.update(
-            {
-                "status": "cannot_confirm_active_page",
-                "error": "Nao foi possivel detectar a pagina ativa antes da navegacao.",
-                "url_after": _safe_page_url(page),
-            }
-        )
-        return result
+        if _has_minhas_solicitacoes_table(page):
+            active_before = 1
+            result["active_page_before"] = active_before
+            result["active_page_assumed"] = True
+        else:
+            result.update(
+                {
+                    "status": "cannot_confirm_active_page",
+                    "error": "Nao foi possivel detectar a pagina ativa antes da navegacao.",
+                    "url_after": _safe_page_url(page),
+                }
+            )
+            return result
 
     try:
         rows_before = read_current_page_table_with_row_handles(page)
@@ -5130,7 +5149,21 @@ def _click_numeric_paginator_with_playwright(page, *, target_page_number: int) -
                     or "ui-state-disabled" in class_name
                 ):
                     continue
-                link.click(timeout=DETAIL_TIMEOUT_MS)
+                _wait_portal_loader_idle(page, timeout_ms=5_000)
+                try:
+                    link.click(timeout=5_000)
+                except (PlaywrightError, AttributeError) as exc:
+                    if not _click_locator_via_dom(link):
+                        raise exc
+                    _wait_after_pagination_click(page)
+                    return {
+                        "clicked": True,
+                        "selector": selector,
+                        "index": index,
+                        "text": text,
+                        "class_name": class_name,
+                        "stop_reason": "pagination_numeric_page_clicked_dom_fallback",
+                    }
                 return {
                     "clicked": True,
                     "selector": selector,
@@ -5152,6 +5185,23 @@ def _click_numeric_paginator_with_playwright(page, *, target_page_number: int) -
             "text": target_text,
             "stop_reason": f"pagination_numeric_locator_click_error: {exc}",
         }
+
+
+def _wait_portal_loader_idle(page, *, timeout_ms: int = 8_000) -> bool:
+    try:
+        loader = page.locator("#page-loader, .ui-blockui, .ui-widget-overlay").first
+        loader.wait_for(state="hidden", timeout=timeout_ms)
+        return True
+    except (PlaywrightError, AttributeError):
+        return False
+
+
+def _click_locator_via_dom(locator) -> bool:
+    try:
+        locator.evaluate("(element) => element.click()")
+        return True
+    except (PlaywrightError, AttributeError):
+        return False
 
 
 def find_and_click_next_listing_page(page, current_page_number: int) -> dict:
@@ -6132,8 +6182,9 @@ def _has_minhas_solicitacoes_table(page) -> bool:
     )
 
 
-def _wait_minhas_solicitacoes(page, attempts: int = 3) -> bool:
+def _wait_minhas_solicitacoes(page, attempts: int = 5) -> bool:
     for _ in range(attempts):
+        _wait_portal_loader_idle(page, timeout_ms=5_000)
         if _has_minhas_solicitacoes_table(page):
             return True
         try:

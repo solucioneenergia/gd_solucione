@@ -28,6 +28,62 @@ def _record(protocol: str = "2601") -> PortalSolicitation:
     )
 
 
+def test_numeric_paginator_uses_dom_fallback_when_loader_intercepts(
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(cdp_service, "PlaywrightError", RuntimeError)
+    monkeypatch.setattr(cdp_service, "_wait_after_pagination_click", lambda page: None)
+
+    class Loader:
+        def wait_for(self, **kwargs) -> None:
+            return None
+
+    class Link:
+        dom_clicked = False
+
+        def inner_text(self, **kwargs) -> str:
+            return "12"
+
+        def get_attribute(self, name: str, **kwargs) -> str:
+            return ""
+
+        def click(self, **kwargs) -> None:
+            raise RuntimeError("page-loader intercepts pointer events")
+
+        def evaluate(self, script: str) -> None:
+            self.dom_clicked = True
+
+    class Links:
+        def __init__(self, link: Link) -> None:
+            self.link = link
+
+        def count(self) -> int:
+            return 1
+
+        def nth(self, index: int) -> Link:
+            return self.link
+
+    class Page:
+        def __init__(self) -> None:
+            self.link = Link()
+
+        def locator(self, selector: str):
+            if selector.startswith("#page-loader"):
+                return SimpleNamespace(first=Loader())
+            return Links(self.link)
+
+    page = Page()
+
+    result = cdp_service._click_numeric_paginator_with_playwright(
+        page,
+        target_page_number=12,
+    )
+
+    assert result["clicked"] is True
+    assert result["stop_reason"] == "pagination_numeric_page_clicked_dom_fallback"
+    assert page.link.dom_clicked is True
+
+
 def test_existing_pdf_and_metadata_do_not_open_detail(tmp_path: Path) -> None:
     record = _record()
     protocol_dir = tmp_path / record.protocol

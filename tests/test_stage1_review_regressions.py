@@ -137,7 +137,7 @@ def test_parallel_table_preserves_multiline_module_model() -> None:
 
     assert data.module_model == "BIFACIAL 585W N-TYPE"
     assert format_modules_for_excel_v2(data).text == (
-        "5x LEAPTON BIFACIAL 585W N-TYPE"
+        "LEAPTON | BIFACIAL 585W N-TYPE\nQtd. total: 5 módulos"
     )
 
 
@@ -364,8 +364,8 @@ def _valid_structured_cache(**overrides) -> dict:
         "technical_validation_warnings": [],
         "module_excel": "LEAPTON LP182 | 5 módulos",
         "inverter_excel": "HUAWEI SUN2000 | 1 inversor",
-        "placa_planilha": "5x LEAPTON LP182",
-        "inversor_planilha": "1x HUAWEI SUN2000",
+        "placa_planilha": "LEAPTON | LP182\nQtd. total: 5 módulos",
+        "inversor_planilha": "HUAWEI | SUN2000\nQtd. total: 1 inversor",
         "module_source": "linear",
         "inverter_source": "linear",
         "equipment": serialize_equipment_cache(data),
@@ -472,7 +472,7 @@ def test_v6_cache_is_semantically_revalidated_without_pdf_extraction(
 
     extraction.assert_not_called()
     assert result[6].approved is True
-    assert result[4] == "5x LEAPTON LP182"
+    assert result[4] == "LEAPTON | LP182\nQtd. total: 5 módulos"
 
 
 class _OrderedState:

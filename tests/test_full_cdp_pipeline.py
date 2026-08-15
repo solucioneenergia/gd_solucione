@@ -3146,6 +3146,42 @@ def test_numeric_navigation_to_first_page_uses_lowest_visible_page_when_previous
     assert numeric_clicks == [0, 1, 0]
 
 
+def test_numeric_navigation_assumes_first_page_when_listing_has_no_active_marker(
+    monkeypatch,
+) -> None:
+    state = {"page": None}
+
+    monkeypatch.setattr(cdp_portal_service, "get_active_numeric_page", lambda page: state["page"])
+    monkeypatch.setattr(cdp_portal_service, "_has_minhas_solicitacoes_table", lambda page: True)
+    monkeypatch.setattr(
+        cdp_portal_service,
+        "read_current_page_table_with_row_handles",
+        lambda page: _page(1 if state["page"] is None else state["page"] * 10, 2),
+    )
+
+    def fake_numeric(page, current_page_number: int) -> dict:
+        state["page"] = 11
+        return {
+            "found": True,
+            "enabled": True,
+            "clicked": True,
+            "current_page_number": current_page_number,
+            "target_page_number": 11,
+            "numeric_page_links_found": ["11"],
+            "stop_reason": "pagination_numeric_page_clicked",
+        }
+
+    monkeypatch.setattr(cdp_portal_service, "find_and_click_next_numeric_page", fake_numeric)
+    monkeypatch.setattr(cdp_portal_service, "_wait_after_pagination_click", lambda page: None)
+
+    result = navigate_to_numeric_page(FakePage(), 11)
+
+    assert result["success"] is True
+    assert result["active_page_before"] == 1
+    assert result["active_page_assumed"] is True
+    assert result["active_page_after"] == 11
+
+
 def test_numeric_navigation_accepts_changed_table_when_active_indicator_is_stale(
     monkeypatch,
 ) -> None:

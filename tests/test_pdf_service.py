@@ -325,7 +325,7 @@ def test_mismatched_manufacturer_model_counts_generates_warning() -> None:
         "BYD | P6C-30 260\n"
         "TRINA | TSM-NEG21C 695\n"
         "JINKO\n"
-        "Total: 218 módulos"
+        "Qtd. total: 218 módulos"
     )
     assert "109x" not in data.format_module_for_planilha()
     assert data.equipment_parse_warning
@@ -352,7 +352,7 @@ def test_real_multiple_equipment_example_formats_planilha_without_ambiguity() ->
     assert data.format_module_for_planilha() == (
         "BYD | P6C-30 260\n"
         "TRINA | TSM-NEG21C 695\n"
-        "Total: 218 módulos"
+        "Qtd. total: 218 módulos"
     )
     assert data.format_inverter_for_planilha() == (
         "HUAWEI | SUN2000-30KTL\n"
@@ -379,7 +379,7 @@ def test_multiple_equipment_quantities_are_paired_and_formatted_per_model() -> N
     assert data.format_module_for_planilha() == (
         "BYD | P6C-30 260\n"
         "TRINA | TSM-NEG21C 695\n"
-        "Total: 218 módulos"
+        "Qtd. total: 218 módulos"
     )
     assert data.format_inverter_for_planilha() == (
         "HUAWEI | SUN2000-30KTL\n"
@@ -406,7 +406,7 @@ def test_multiple_models_with_only_total_quantity_does_not_distribute_quantity()
     assert data.format_module_for_planilha() == (
         "BYD | P6C-30 260\n"
         "TRINA | TSM-NEG21C 695\n"
-        "Total: 218 módulos"
+        "Qtd. total: 218 módulos"
     )
     assert "109x" not in data.format_module_for_planilha()
     return
@@ -536,7 +536,7 @@ def test_grouped_section_headers_before_values_are_matched_by_order() -> None:
     assert data.inverter_total_kw == "15"
     assert data.format_module_for_planilha() == (
         "HANERSUN | HN21RN-66HT\n"
-        "Qtd. total: 38 m?dulos"
+        "Qtd. total: 38 módulos"
     )
     assert data.format_inverter_for_planilha() == (
         "SOLPLANET | ASW15K-LT-G2\n"

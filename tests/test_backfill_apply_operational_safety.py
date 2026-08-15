@@ -21,6 +21,7 @@ from automacao_gd.domain.equipment_semantics import (
     EquipmentSourceType,
     canonical_collection_to_dict,
     canonicalize_equipment,
+    format_canonical_collection,
 )
 
 SYNTHETIC_PROTOCOL = "9999999999999"
@@ -179,9 +180,10 @@ def test_row_quality_gate_accepts_valid_cross_field_transition() -> None:
         module=("LEAPTON", "LP182-M-72-MH 585W", 12, EquipmentSourceType.TABLE_CELL),
         inverter=("SOLPLANET", "ASW5000-S", 1, EquipmentSourceType.TABLE_CELL),
     )
+    proposed_module, proposed_inverter = format_canonical_collection(source)
     item = _quality_gate_item(
-        proposed_module="12x LEAPTON LP182-M-72-MH 585W",
-        proposed_inverter="1x SOLPLANET ASW5000-S",
+        proposed_module=proposed_module,
+        proposed_inverter=proposed_inverter,
         collection=source,
         warnings=("CROSS_FIELD_CONTAMINATION_RESOLVED",),
     )
@@ -202,9 +204,10 @@ def test_row_quality_gate_blocks_real_equipment_loss() -> None:
         module=("LEAPTON", "LP182-M-72-MH 585W", 12, EquipmentSourceType.TABLE_CELL),
         inverter=("SOLPLANET", "ASW5000-S", 1, EquipmentSourceType.TABLE_CELL),
     )
+    proposed_module, proposed_inverter = format_canonical_collection(source)
     item = _quality_gate_item(
-        proposed_module="12x LEAPTON LP182-M-72-MH 585W",
-        proposed_inverter="1x SOLPLANET ASW5000-S",
+        proposed_module=proposed_module,
+        proposed_inverter=proposed_inverter,
         collection=source,
     )
 
@@ -220,9 +223,10 @@ def test_row_quality_gate_does_not_accept_warning_as_bypass() -> None:
         module=("LEAPTON", "LP182-M-72-MH 585W", 12, EquipmentSourceType.TABLE_CELL),
         inverter=("SOLPLANET", "ASW5000-S", 1, EquipmentSourceType.TABLE_CELL),
     )
+    proposed_module, proposed_inverter = format_canonical_collection(source)
     item = _quality_gate_item(
-        proposed_module="12x LEAPTON LP182-M-72-MH 585W",
-        proposed_inverter="1x SOLPLANET ASW5000-S",
+        proposed_module=proposed_module,
+        proposed_inverter=proposed_inverter,
         collection=source,
         warnings=("CROSS_FIELD_CONTAMINATION_RESOLVED",),
     )
@@ -265,9 +269,10 @@ def test_row_quality_gate_accepts_duplicate_manufacturer_cleanup(
     proposed_module: str,
     collection: CanonicalEquipmentCollection,
 ) -> None:
+    formatted_module, formatted_inverter = format_canonical_collection(collection)
     item = _quality_gate_item(
-        proposed_module=proposed_module,
-        proposed_inverter="1x GROWATT MIC 3000TL-X",
+        proposed_module=formatted_module,
+        proposed_inverter=formatted_inverter,
         collection=collection,
         warnings=("DUPLICATED_MANUFACTURER_IN_MODEL_REMOVED",),
     )
@@ -284,9 +289,10 @@ def test_row_quality_gate_accepts_solplanet_alias_cleanup() -> None:
         module=("JINKO", "JKM625N-78HL4-BDV 625W", 8, EquipmentSourceType.TABLE_CELL),
         inverter=("SOLPLANET", "ASW4000-S", 1, EquipmentSourceType.TABLE_CELL),
     )
+    proposed_module, proposed_inverter = format_canonical_collection(source)
     item = _quality_gate_item(
-        proposed_module="8x JINKO JKM625N-78HL4-BDV 625W",
-        proposed_inverter="1x SOLPLANET ASW4000-S",
+        proposed_module=proposed_module,
+        proposed_inverter=proposed_inverter,
         collection=source,
         warnings=("SOLPLANET_ALIAS_NORMALIZED",),
     )
@@ -383,8 +389,8 @@ def test_synthetic_application_validates_backup_temp_atomicity_and_idempotency(
     assert result.updates_by_sheet == {"2025": 1}
     assert result.idempotency_result == "NO_ADDITIONAL_CHANGES"
     saved = load_workbook(workbook, read_only=True)
-    assert saved["2025"]["B2"].value == "5x LEAPTON LP182"
-    assert saved["2025"]["C2"].value == "1x HUAWEI SUN2000"
+    assert saved["2025"]["B2"].value == "LEAPTON | LP182\nQtd. total: 5 módulos"
+    assert saved["2025"]["C2"].value == "HUAWEI | SUN2000\nQtd. total: 1 inversor"
     assert saved["2025"]["D2"].value == "PRESERVAR"
     saved.close()
 
@@ -540,8 +546,8 @@ def test_authorized_cells_are_the_only_functional_changes(tmp_path: Path) -> Non
             "workbook_row": 2,
             "module_column": 2,
             "inverter_column": 3,
-            "proposed_module_text": "5x LEAPTON LP182",
-            "proposed_inverter_text": "1x HUAWEI SUN2000",
+            "proposed_module_text": "LEAPTON | LP182\nQtd. total: 5 módulos",
+            "proposed_inverter_text": "HUAWEI | SUN2000\nQtd. total: 1 inversor",
         }
     ]
     workbook = load_workbook(workbook_path, data_only=False)
@@ -549,8 +555,8 @@ def test_authorized_cells_are_the_only_functional_changes(tmp_path: Path) -> Non
         target_values = {("2025", 2, 2), ("2025", 2, 3)}
         before = apply_service._preservation_fingerprint(workbook, target_values)
         sheet = workbook["2025"]
-        sheet["B2"] = "5x LEAPTON LP182"
-        sheet["C2"] = "1x HUAWEI SUN2000"
+        sheet["B2"] = "LEAPTON | LP182\nQtd. total: 5 módulos"
+        sheet["C2"] = "HUAWEI | SUN2000\nQtd. total: 1 inversor"
         temporary = apply_service._save_temporary_workbook(workbook, workbook_path)
     finally:
         workbook.close()
@@ -577,8 +583,8 @@ def test_unexpected_functional_change_is_still_blocked(tmp_path: Path) -> None:
             "workbook_row": 2,
             "module_column": 2,
             "inverter_column": 3,
-            "proposed_module_text": "5x LEAPTON LP182",
-            "proposed_inverter_text": "1x HUAWEI SUN2000",
+            "proposed_module_text": "LEAPTON | LP182\nQtd. total: 5 módulos",
+            "proposed_inverter_text": "HUAWEI | SUN2000\nQtd. total: 1 inversor",
         }
     ]
     workbook = load_workbook(workbook_path, data_only=False)
@@ -586,8 +592,8 @@ def test_unexpected_functional_change_is_still_blocked(tmp_path: Path) -> None:
         target_values = {("2025", 2, 2), ("2025", 2, 3)}
         before = apply_service._preservation_fingerprint(workbook, target_values)
         sheet = workbook["2025"]
-        sheet["B2"] = "5x LEAPTON LP182"
-        sheet["C2"] = "1x HUAWEI SUN2000"
+        sheet["B2"] = "LEAPTON | LP182\nQtd. total: 5 módulos"
+        sheet["C2"] = "HUAWEI | SUN2000\nQtd. total: 1 inversor"
         sheet["D2"] = "=LEN(E2)"
         temporary = apply_service._save_temporary_workbook(workbook, workbook_path)
     finally:

@@ -451,8 +451,8 @@ def test_apply_saves_synthetic_workbook_and_temporary_state(tmp_path: Path) -> N
 
     values = _row_values(workbook_path)
     assert values[5] == (
-        "100x BYD | P6C-30 260\n"
-        "118x TRINA | TSM-NEG21C 695\n"
+        "BYD | P6C-30 260\n"
+        "TRINA | TSM-NEG21C 695\n"
         "Qtd. total: 218 módulos"
     )
     assert store.get_protocol(PROTOCOL)["equipment_format_version"] == EQUIPMENT_FORMAT_VERSION

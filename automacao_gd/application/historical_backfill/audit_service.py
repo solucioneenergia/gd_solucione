@@ -210,12 +210,15 @@ def audit_historical_workbook(
                 source=EquipmentSourceType.STRUCTURED_CACHE,
             )
         )
+        proposed_module_text, proposed_inverter_text = format_canonical_collection(
+            proposed_collection
+        )
         if proposal.canonical_collection is not None:
             semantic = compare_equipment_row_transition(
                 row.module_text,
                 row.inverter_text,
-                proposal.module_text,
-                proposal.inverter_text,
+                proposed_module_text,
+                proposed_inverter_text,
                 proposal.canonical_collection,
             )
         else:
@@ -225,13 +228,13 @@ def audit_historical_workbook(
             text_semantic = semantic_compare_equipment_cells(
                 row.module_text,
                 row.inverter_text,
-                proposal.module_text,
-                proposal.inverter_text,
+                proposed_module_text,
+                proposed_inverter_text,
             )
             semantic = _merge_semantic_results(semantic, text_semantic)
         exact_text_no_change = equipment_texts_equal(
-            row.module_text, proposal.module_text
-        ) and equipment_texts_equal(row.inverter_text, proposal.inverter_text)
+            row.module_text, proposed_module_text
+        ) and equipment_texts_equal(row.inverter_text, proposed_inverter_text)
         if exact_text_no_change and set(semantic.errors).issubset(
             {"CANONICAL_STRUCTURE_INCOMPLETE", "SEMANTIC_REGRESSION"}
         ):
@@ -251,8 +254,8 @@ def audit_historical_workbook(
                         *comparison_reasons(
                             row.module_text,
                             row.inverter_text,
-                            proposal.module_text,
-                            proposal.inverter_text,
+                            proposed_module_text,
+                            proposed_inverter_text,
                         ),
                     )
                 )
@@ -265,8 +268,8 @@ def audit_historical_workbook(
                     "pending_review",
                     semantic_reasons,
                     fingerprint,
-                    proposed_module=proposal.module_text,
-                    proposed_inverter=proposal.inverter_text,
+                    proposed_module=proposed_module_text,
+                    proposed_inverter=proposed_inverter_text,
                     warnings=proposal.warnings,
                     source_hash=proposal.source_hash,
                     semantic_status=semantic.status,
@@ -291,8 +294,8 @@ def audit_historical_workbook(
         comparison_reasons_ = comparison_reasons(
             row.module_text,
             row.inverter_text,
-            proposal.module_text,
-            proposal.inverter_text,
+            proposed_module_text,
+            proposed_inverter_text,
         )
         mandatory_cleanup_reasons = _mandatory_textual_cleanup_reasons(
             exact_text_no_change=exact_text_no_change,
@@ -301,8 +304,8 @@ def audit_historical_workbook(
             cleanup_warnings=cleanup_warnings,
             current_module=row.module_text,
             current_inverter=row.inverter_text,
-            proposed_module=proposal.module_text,
-            proposed_inverter=proposal.inverter_text,
+            proposed_module=proposed_module_text,
+            proposed_inverter=proposed_inverter_text,
             proposed_collection=proposed_collection,
         )
         no_change = exact_text_no_change or (
@@ -322,8 +325,8 @@ def audit_historical_workbook(
                 "approved",
                 reasons,
                 fingerprint,
-                proposed_module=proposal.module_text,
-                proposed_inverter=proposal.inverter_text,
+                proposed_module=proposed_module_text,
+                proposed_inverter=proposed_inverter_text,
                 warnings=warnings,
                 source_hash=proposal.source_hash,
                 semantic_status=semantic.status,

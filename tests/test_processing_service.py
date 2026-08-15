@@ -233,8 +233,8 @@ def test_processing_uses_per_model_equipment_quantities(
     result = processing_service._load_or_extract_technical_data(pdf_path)
 
     assert result[4] == (
-        "100x BYD | P6C-30 260\n"
-        "118x TRINA | TSM-NEG21C 695\n"
+        "BYD | P6C-30 260\n"
+        "TRINA | TSM-NEG21C 695\n"
         "Qtd. total: 218 módulos"
     )
     assert result[5] == (
@@ -380,7 +380,7 @@ def test_processing_ignores_previous_technical_cache_version_for_equipment_fix(
 
     result = processing_service._load_or_extract_technical_data(pdf_path, state_store)
 
-    assert result[5] == "1x SOLPLANET ASW6000-S-G2"
+    assert result[5] == "SOLPLANET | ASW6000-S-G2\nQtd. total: 1 inversor"
     assert state_store.updated_payload is not None
     assert (
         state_store.updated_payload["format_version"]
@@ -1675,10 +1675,10 @@ def test_valid_v6_cache_is_reused_without_pdf_extraction(
                     ),
                     "technical_validation_status": "approved",
                     "technical_review_required": False,
-                        "module_excel": "LEAPTON LP182 | 5 módulos",
+                    "module_excel": "LEAPTON LP182 | 5 módulos",
                     "inverter_excel": "GROWATT MIC3000 | 1 inversor",
-                        "placa_planilha": "5x LEAPTON LP182",
-                    "inversor_planilha": "1x GROWATT MIC3000",
+                    "placa_planilha": "LEAPTON | LP182\nQtd. total: 5 módulos",
+                    "inversor_planilha": "GROWATT | MIC3000\nQtd. total: 1 inversor",
                     "technical_validation_errors": [],
                     "technical_validation_warnings": [],
                     "module_source": "parallel_table",
@@ -1773,8 +1773,8 @@ def test_invalid_or_pending_v4_cache_is_reextracted(
     )
 
     extraction_mock.assert_called_once()
-    assert result[4] == "5x LEAPTON LP182-585W"
-    assert result[5] == "1x GROWATT MIC 3000TL-X"
+    assert result[4] == "LEAPTON | LP182-585W\nQtd. total: 5 módulos"
+    assert result[5] == "GROWATT | MIC 3000TL-X\nQtd. total: 1 inversor"
     assert result[6].approved is True
     assert (
         state_store.updated_payload["format_version"]

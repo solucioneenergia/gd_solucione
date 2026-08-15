@@ -299,6 +299,12 @@ uma linha `Fabricante | Modelo` e uma linha `Qtd. total`. A coluna `Inversor` se
 usa apenas `Fabricante | Modelo` nas linhas de equipamento; a distinção de quantidade
 entre inversor e microinversor fica na linha `Qtd. total`.
 
+O parser canonico de celulas formatadas deve interpretar a linha `Qtd. total` como
+quantidade agregada da categoria correspondente. Para item unico, o total pode ser
+propagado ao item canonico; para multiplos itens, o comparador semantico deve aceitar
+quantidades individuais ausentes quando o total agregado positivo da categoria for preservado.
+Essa regra vale para plano historico, cache tecnico e validacao de reaplicacao.
+
 ## Rollout
 
 Aplicar somente ao caminho canônico `automacao_gd/`; validar primeiro com fixtures, depois com

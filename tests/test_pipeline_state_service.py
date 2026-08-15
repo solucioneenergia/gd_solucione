@@ -69,13 +69,13 @@ def _completed_artifacts(tmp_path: Path, protocol: str) -> dict:
     generation = GenerationData(
         modules=[
             ModuleEquipment(
-                manufacturer="FAB", model="MOD", quantity=10, source="linear"
+                manufacturer="LEAPTON", model="MOD-500W", quantity=10, source="linear"
             )
         ],
         module_total_quantity=10,
         inverters=[
             InverterEquipment(
-                manufacturer="FAB", model="INV", quantity=1, source="linear"
+                manufacturer="HUAWEI", model="INV-5K", quantity=1, source="linear"
             )
         ],
         inverter_total_quantity=1,
@@ -96,10 +96,10 @@ def _completed_artifacts(tmp_path: Path, protocol: str) -> dict:
             "equipment_rules_version": EQUIPMENT_RULES_VERSION,
             "technical_validation_status": "approved",
             "technical_review_required": False,
-            "module_excel": "FAB MOD | 10 módulos",
-            "inverter_excel": "FAB INV | 1 inversor",
-            "placa_planilha": "10x FAB MOD",
-            "inversor_planilha": "1x FAB INV",
+            "module_excel": "LEAPTON MOD-500W | 10 módulos",
+            "inverter_excel": "HUAWEI INV-5K | 1 inversor",
+            "placa_planilha": "LEAPTON | MOD-500W\nQtd. total: 10 módulos",
+            "inversor_planilha": "HUAWEI | INV-5K\nQtd. total: 1 inversor",
             "module_source": "synthetic",
             "inverter_source": "synthetic",
             "equipment": serialize_equipment_cache(generation),

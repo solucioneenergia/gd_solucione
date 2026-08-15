@@ -4,7 +4,7 @@ import hashlib
 import json
 import re
 import unicodedata
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, replace
 from decimal import Decimal, InvalidOperation
 from enum import Enum
 from typing import Any, Literal, cast
@@ -332,24 +332,31 @@ def canonical_collection_from_formatted_cells(
     *,
     source: EquipmentSourceType = EquipmentSourceType.FORMATTED_CELL,
 ) -> CanonicalEquipmentCollection:
-    module_items = _deduplicate_unquantified_aliases(
-        _parse_cell(module_text, "module", source)
+    module_items, module_total, _, _ = _parse_cell_with_totals(
+        module_text, "module", source
     )
-    inverter_items = _deduplicate_unquantified_aliases(
-        _parse_cell(inverter_text, "inverter", source)
+    inverter_items, _, inverter_total, microinverter_total = _parse_cell_with_totals(
+        inverter_text, "inverter", source
+    )
+    module_items = _assign_single_total_quantity(
+        _deduplicate_unquantified_aliases(module_items), module_total
+    )
+    inverter_items = _deduplicate_unquantified_aliases(inverter_items)
+    conventional_inverters = _assign_single_total_quantity(
+        tuple(item for item in inverter_items if item.equipment_type == "inverter"),
+        inverter_total,
+    )
+    microinverters = _assign_single_total_quantity(
+        tuple(item for item in inverter_items if item.equipment_type == "microinverter"),
+        microinverter_total,
     )
     return CanonicalEquipmentCollection(
         modules=module_items,
-        conventional_inverters=tuple(
-            item
-            for item in inverter_items
-            if item.equipment_type == "inverter"
-        ),
-        microinverters=tuple(
-            item
-            for item in inverter_items
-            if item.equipment_type == "microinverter"
-        ),
+        conventional_inverters=conventional_inverters,
+        microinverters=microinverters,
+        module_total_quantity=module_total,
+        inverter_total_quantity=inverter_total,
+        microinverter_total_quantity=microinverter_total,
     )
 
 
@@ -441,13 +448,31 @@ def compare_canonical_collections(
         *proposed.collection_warnings,
         *(warning for item in proposed.all_items() for warning in item.warnings),
     ]
-    for current_items, proposed_items in (
-        (current.modules, proposed.modules),
-        (current.conventional_inverters, proposed.conventional_inverters),
-        (current.microinverters, proposed.microinverters),
+    for current_items, proposed_items, current_total, proposed_total in (
+        (
+            current.modules,
+            proposed.modules,
+            current.module_total_quantity,
+            proposed.module_total_quantity,
+        ),
+        (
+            current.conventional_inverters,
+            proposed.conventional_inverters,
+            current.inverter_total_quantity,
+            proposed.inverter_total_quantity,
+        ),
+        (
+            current.microinverters,
+            proposed.microinverters,
+            current.microinverter_total_quantity,
+            proposed.microinverter_total_quantity,
+        ),
     ):
         category_errors, category_warnings = _compare_category(
-            current_items, proposed_items
+            current_items,
+            proposed_items,
+            current_total=current_total,
+            proposed_total=proposed_total,
         )
         errors.extend(category_errors)
         warnings.extend(category_warnings)
@@ -659,6 +684,9 @@ def semantic_fingerprint(equipment: tuple[CanonicalEquipment, ...]) -> str:
 def _compare_category(
     current: tuple[CanonicalEquipment, ...],
     proposed: tuple[CanonicalEquipment, ...],
+    *,
+    current_total: int | None = None,
+    proposed_total: int | None = None,
 ) -> tuple[list[str], list[str]]:
     errors: list[str] = []
     warnings: list[str] = []
@@ -709,12 +737,21 @@ def _compare_category(
             )
         ):
             errors.append("POWER_UNIT_LOST")
-        if current_item.quantity is not None and (
-            proposed_item.quantity is None or proposed_item.quantity <= 0
+        quantity_covered_by_category_total = (
+            current_total is not None
+            and proposed_total is not None
+            and current_total == proposed_total
+        )
+        if (
+            current_item.quantity is not None
+            and (proposed_item.quantity is None or proposed_item.quantity <= 0)
+            and not quantity_covered_by_category_total
         ):
             errors.append("QUANTITY_LOST")
-        elif current_item.quantity != proposed_item.quantity and not _has_evidence(
-            proposed_item.source
+        elif (
+            current_item.quantity != proposed_item.quantity
+            and not quantity_covered_by_category_total
+            and not _has_evidence(proposed_item.source)
         ):
             errors.append("QUANTITY_CHANGED_WITHOUT_EVIDENCE")
     for index in unmatched:
@@ -1109,10 +1146,29 @@ def _parse_cell(
     default_type: EquipmentType,
     source_type: EquipmentSourceType,
 ) -> tuple[CanonicalEquipment, ...]:
+    return _parse_cell_with_totals(text, default_type, source_type)[0]
+
+
+def _parse_cell_with_totals(
+    text: str,
+    default_type: EquipmentType,
+    source_type: EquipmentSourceType,
+) -> tuple[tuple[CanonicalEquipment, ...], int | None, int | None, int | None]:
     items: list[CanonicalEquipment] = []
+    module_total: int | None = None
+    inverter_total: int | None = None
+    microinverter_total: int | None = None
     for raw_line in re.split(r"[\r\n]+", str(text or "")):
         line = _clean(raw_line)
-        if not line or _is_total_line(line):
+        if not line:
+            continue
+        if _is_total_line(line):
+            parsed = _parse_total_line(line, default_type)
+            module_total = parsed[0] if parsed[0] is not None else module_total
+            inverter_total = parsed[1] if parsed[1] is not None else inverter_total
+            microinverter_total = (
+                parsed[2] if parsed[2] is not None else microinverter_total
+            )
             continue
         quantity: int | None = None
         quantity_match = re.match(r"^(\d+)\s*x\s*", line, flags=re.IGNORECASE)
@@ -1150,7 +1206,48 @@ def _parse_cell(
                 ),
             )
         )
-    return tuple(items)
+    return tuple(items), module_total, inverter_total, microinverter_total
+
+
+def _parse_total_line(
+    line: str, default_type: EquipmentType
+) -> tuple[int | None, int | None, int | None]:
+    module_total: int | None = None
+    inverter_total: int | None = None
+    microinverter_total: int | None = None
+    tail = re.sub(
+        r"(?i)^\s*(?:qtd\.?|quantidade)?\s*total\s*[:=-]?\s*",
+        "",
+        line,
+    )
+    for match in re.finditer(r"(?<!\d)(\d+)(?!\d)([^+\r\n]*)", tail):
+        quantity = int(match.group(1))
+        label_key = _key(match.group(2))
+        if "microinversor" in label_key:
+            microinverter_total = quantity
+        elif "inversor" in label_key:
+            inverter_total = quantity
+        elif any(token in label_key for token in ("modulo", "module", "placa")):
+            module_total = quantity
+        elif default_type == "module":
+            module_total = quantity
+        elif default_type == "microinverter":
+            microinverter_total = quantity
+        else:
+            inverter_total = quantity
+    return module_total, inverter_total, microinverter_total
+
+
+def _assign_single_total_quantity(
+    items: tuple[CanonicalEquipment, ...], total_quantity: int | None
+) -> tuple[CanonicalEquipment, ...]:
+    if (
+        total_quantity is None
+        or len(items) != 1
+        or items[0].quantity is not None
+    ):
+        return items
+    return (replace(items[0], quantity=total_quantity),)
 
 
 def _split_cell_manufacturer_model(line: str) -> tuple[str, str]:

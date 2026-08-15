@@ -648,7 +648,7 @@ def test_synthetic_workbook_and_pdfs_cover_semantic_audit_without_writing(
 
     assert workbook.read_bytes() == before
     assert audited.items[-1].action is BackfillAction.PENDING_TECHNICAL_REVIEW
-    assert audited.items[4].action is BackfillAction.NO_CHANGE
+    assert audited.items[4].action is BackfillAction.UPDATE_EQUIPMENT
     update_text = "\n".join(
         f"{item.proposed_module_text}\n{item.proposed_inverter_text}"
         for item in audited.items
