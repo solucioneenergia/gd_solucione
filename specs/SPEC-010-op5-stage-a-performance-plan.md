@@ -187,6 +187,23 @@ A reconciliação global da SPEC-004 permanece válida, mas deve ser controlada 
 
 A mudança de modo não pode mascarar erro de extração, erro de aplicação ou divergência de lote.
 
+### RF-003A - Garantia de cobertura OP5
+
+Toda execução OP5 deve registrar uma seção `op5_workbook_coverage` no payload consolidado e nos
+relatorios operacionais. Essa seção deve separar claramente:
+
+- sucesso da aplicacao do lote congelado;
+- total de elegiveis conhecidos no Portal durante a leitura do lote;
+- elegiveis conhecidos ja cobertos por `planned_excel_actions` aplicadas ou por protocolos
+  comprovadamente sem alteracao/ja atualizados;
+- elegiveis conhecidos restantes fora do lote aplicado;
+- se existe reconciliacao global autoritativa da SPEC-004.
+
+Em `batch_fast`, `status=SUCESSO` significa que o lote seguro foi concluido, nao que todo o Portal
+foi esgotado. Quando houver elegiveis conhecidos restantes ou quando a reconciliacao global nao for
+autoritativa, o relatorio deve declarar isso explicitamente e nao pode apresentar garantia global de
+que todas as solicitacoes elegiveis do Portal foram adicionadas a planilha.
+
 ### RF-004 — Seleção incremental
 
 Em `batch_fast`, a leitura do Portal deve parar quando houver N ações reais planejadas

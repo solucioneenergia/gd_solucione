@@ -241,6 +241,8 @@ def _pipeline_summary(result: OperationResult, payload: dict) -> str:
             *_pipeline_completion_lines(payload, dry_run=dry_run),
             "",
             *_pipeline_reconciliation_lines(payload),
+            "",
+            *_pipeline_op5_coverage_lines(payload),
         ]
         if processing.get("blocked_real_run"):
             lines.extend(["", "Os PDFs permanecem disponíveis para retomada."])
@@ -277,6 +279,8 @@ def _pipeline_summary(result: OperationResult, payload: dict) -> str:
         *_pipeline_completion_lines(payload, dry_run=dry_run),
         "",
         *_pipeline_reconciliation_lines(payload),
+        "",
+        *_pipeline_op5_coverage_lines(payload),
         f"- PDFs arquivados: {payload.get('total_archived', 0)}",
         f"- Pendentes de conferência: {payload.get('total_pending_review', 0)}",
     ]
@@ -369,6 +373,41 @@ def _pipeline_reconciliation_lines(payload: dict) -> list[str]:
         f"{reconciliation.get('equipment_empty_requires_review', 0)}",
         f"- Registros incompletos: {reconciliation.get('incomplete_records', 0)}",
         f"- Relatório: {report_path or '-'}",
+    ]
+
+
+def _pipeline_op5_coverage_lines(payload: dict) -> list[str]:
+    coverage = payload.get("op5_workbook_coverage")
+    if not isinstance(coverage, dict) or not coverage:
+        return []
+    labels = {
+        "SIMULATION_ONLY": "simulacao; nenhuma escrita real",
+        "PLANNED_BATCH_NOT_FULLY_APPLIED": "lote planejado nao aplicado integralmente",
+        "KNOWN_ELIGIBLE_REMAINING": "ha elegiveis conhecidos restantes",
+        "ALL_KNOWN_ELIGIBLE_COVERED_NOT_GLOBAL": (
+            "todos os elegiveis conhecidos cobertos; sem garantia global"
+        ),
+        "GLOBAL_AUTHORITATIVE_COMPLETE": "garantia global autoritativa completa",
+        "NOT_AUTHORITATIVE": "sem garantia autoritativa",
+    }
+    status = labels.get(
+        str(coverage.get("guarantee_status") or ""),
+        str(coverage.get("guarantee_status") or "-"),
+    )
+    known_all = "sim" if coverage.get("all_known_eligible_added_to_workbook") else "nao"
+    global_all = "sim" if coverage.get("all_portal_eligible_added_to_workbook") else "nao"
+    authoritative = "sim" if coverage.get("global_coverage_authoritative") else "nao"
+    return [
+        "Cobertura OP5:",
+        f"- Status: {status}",
+        f"- Acoes Excel planejadas no lote: {coverage.get('planned_excel_actions', 0)}",
+        f"- Acoes Excel aplicadas: {coverage.get('applied_excel_actions', 0)}",
+        f"- Ja cobertos/sem alteracao: {coverage.get('already_covered_protocols', 0)}",
+        f"- Elegiveis conhecidos no Portal: {coverage.get('known_eligible_protocols', 0)}",
+        f"- Elegiveis conhecidos restantes: {coverage.get('known_eligible_remaining', 0)}",
+        f"- Todos os elegiveis conhecidos na planilha: {known_all}",
+        f"- Garantia global autoritativa: {authoritative}",
+        f"- Todos os elegiveis do Portal na planilha: {global_all}",
     ]
 
 
@@ -572,6 +611,18 @@ def _attention_lines(result: OperationResult, payload: dict) -> list[str]:
         for key, value in candidates.items()
         if value
     ]
+    coverage = payload.get("op5_workbook_coverage")
+    if isinstance(coverage, dict):
+        remaining = int(coverage.get("known_eligible_remaining", 0) or 0)
+        if remaining > 0:
+            lines.append(
+                "- cobertura_op5: "
+                f"{remaining} elegiveis conhecidos ainda nao cobertos pelo lote"
+            )
+        elif not coverage.get("global_coverage_authoritative"):
+            lines.append(
+                "- cobertura_op5: reconciliacao global autoritativa nao executada"
+            )
     if not result.success and not lines:
         lines.append(f"- erro: {sanitize_for_console(result.message)}")
     return lines

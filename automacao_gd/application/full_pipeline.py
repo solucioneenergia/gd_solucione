@@ -1291,17 +1291,24 @@ def _project_accepted_op5_plan_payload(payload: dict, plan: dict) -> None:
     planned_set = set(planned_protocols)
     payload["source_total_selected"] = payload.get("total_selected", 0)
     payload["source_total_updates_planned"] = payload.get("total_updates_planned", 0)
+    payload["source_total_eligible_after_skip"] = payload.get(
+        "total_eligible_after_skip",
+        0,
+    )
     payload["source_total_errors"] = payload.get("total_errors", 0)
     for key in (
         "status",
         "total_selected",
+        "total_eligible_after_skip",
         "total_updates_planned",
         "total_updates_applied",
         "total_errors",
         "total_pending_review",
+        "source_total_no_change_protocols",
         "frozen_batch",
         "frozen_pdf_scope",
         "planned_excel_actions",
+        "op5_workbook_coverage",
         "download",
     ):
         if key in plan:
@@ -1329,6 +1336,7 @@ def _project_accepted_op5_plan_payload(payload: dict, plan: dict) -> None:
         if isinstance(item, dict)
         and str(item.get("protocol") or "") in planned_set
     ]
+    payload["op5_workbook_coverage"] = _build_op5_workbook_coverage(payload)
 
 
 def _mark_op5_plan_accepted(payload: dict, *, source_status: object) -> None:
@@ -1361,6 +1369,7 @@ def _invalidate_latest_op5_plan(logs_dir: Path, payload: dict) -> Path:
         "authorization_scope": payload.get("authorization_scope"),
         "total_errors": max(int(payload.get("total_errors", 0) or 0), 1),
         "planned_excel_actions": [],
+        "op5_workbook_coverage": _build_op5_workbook_coverage(payload),
         "source_report_path": payload.get("json_report_path"),
     }
     atomic_write_json(path, marker)
@@ -1377,6 +1386,13 @@ def _build_op5_plan_payload(payload: dict) -> dict:
     if requested_limit > 0:
         planned_actions = planned_actions[:requested_limit]
     download = _download_summary_for_planned_actions(download, planned_actions)
+    source_total_eligible = int(payload.get("total_eligible_after_skip", 0) or 0)
+    source_total_no_change = max(
+        int(payload.get("total_no_change_protocols", 0) or 0),
+        int(payload.get("total_excel_already_updated", 0) or 0),
+    )
+    download["source_total_eligible_after_skip"] = source_total_eligible
+    download["source_total_no_change_protocols"] = source_total_no_change
     planned_count = len(planned_actions)
     persistable_plan = _op5_payload_can_persist_plan(
         payload,
@@ -1407,12 +1423,21 @@ def _build_op5_plan_payload(payload: dict) -> dict:
         "total_updates_applied": payload.get("total_updates_applied", 0),
         "total_errors": 0 if persistable_plan else payload.get("total_errors", 0),
         "source_total_errors": payload.get("total_errors", 0),
+        "total_eligible_after_skip": source_total_eligible,
+        "source_total_no_change_protocols": source_total_no_change,
         "total_pending_review": processing.get("total_pending_review", 0)
         if isinstance(processing, dict)
         else 0,
         "frozen_batch": download.get("frozen_batch"),
         "frozen_pdf_scope": download.get("frozen_pdf_scope"),
         "planned_excel_actions": planned_actions,
+        "op5_workbook_coverage": _build_op5_workbook_coverage(
+            {
+                **payload,
+                "planned_excel_actions": planned_actions,
+                "download": download,
+            }
+        ),
         "download": download,
     }
 
@@ -1437,6 +1462,82 @@ def _planned_excel_actions(processing_summary: dict) -> list[dict[str, str]]:
         if protocol and action in EXCEL_WRITE_ACTIONS:
             actions.append({"protocol": protocol, "action": action})
     return actions
+
+
+def _build_op5_workbook_coverage(payload: dict) -> dict[str, object]:
+    processing = payload.get("processing")
+    processing = processing if isinstance(processing, dict) else {}
+    download = payload.get("download")
+    download = download if isinstance(download, dict) else {}
+    reconciliation = payload.get("reconciliation")
+    reconciliation = reconciliation if isinstance(reconciliation, dict) else {}
+    planned_actions = payload.get("planned_excel_actions")
+    if isinstance(planned_actions, list):
+        planned_count = len(
+            [
+                item
+                for item in planned_actions
+                if isinstance(item, dict) and str(item.get("protocol") or "").strip()
+            ]
+        )
+    else:
+        planned_count = len(_planned_excel_actions(processing))
+    if planned_count == 0:
+        planned_count = int(payload.get("total_updates_planned", 0) or 0)
+    dry_run = bool(payload.get("dry_run", True))
+    applied_count = 0 if dry_run else int(payload.get("total_excel_updated", 0) or 0)
+    already_covered = max(
+        int(payload.get("source_total_no_change_protocols", 0) or 0),
+        int(download.get("source_total_no_change_protocols", 0) or 0),
+        int(payload.get("total_no_change_protocols", 0) or 0),
+        int(payload.get("total_excel_already_updated", 0) or 0),
+    )
+    known_eligible = max(
+        int(payload.get("total_eligible_after_skip", 0) or 0),
+        int(payload.get("source_total_eligible_after_skip", 0) or 0),
+        int(download.get("source_total_eligible_after_skip", 0) or 0),
+    )
+    covered_after_apply = already_covered + applied_count
+    known_remaining = max(known_eligible - covered_after_apply, 0)
+    planned_batch_applied = (not dry_run) and (
+        planned_count == 0 or applied_count >= planned_count
+    )
+    all_known_added = planned_batch_applied and known_remaining == 0
+    global_authoritative = bool(reconciliation.get("set_reconciliation_authoritative"))
+    missing_global = int(reconciliation.get("missing_in_workbook_unique", 0) or 0)
+    global_complete = global_authoritative and missing_global == 0
+    if dry_run:
+        guarantee_status = "SIMULATION_ONLY"
+    elif not planned_batch_applied:
+        guarantee_status = "PLANNED_BATCH_NOT_FULLY_APPLIED"
+    elif global_complete:
+        guarantee_status = "GLOBAL_AUTHORITATIVE_COMPLETE"
+    elif known_remaining > 0:
+        guarantee_status = "KNOWN_ELIGIBLE_REMAINING"
+    elif all_known_added:
+        guarantee_status = "ALL_KNOWN_ELIGIBLE_COVERED_NOT_GLOBAL"
+    else:
+        guarantee_status = "NOT_AUTHORITATIVE"
+    return {
+        "schema_version": 1,
+        "mode": "simulation" if dry_run else "production",
+        "reconciliation_mode": str(
+            payload.get("reconciliation_mode")
+            or download.get("op5_reconciliation_mode")
+            or ""
+        ),
+        "planned_excel_actions": planned_count,
+        "applied_excel_actions": applied_count,
+        "already_covered_protocols": already_covered,
+        "known_eligible_protocols": known_eligible,
+        "known_eligible_remaining": known_remaining,
+        "planned_batch_applied": planned_batch_applied,
+        "all_known_eligible_added_to_workbook": all_known_added,
+        "global_coverage_authoritative": global_authoritative,
+        "global_missing_in_workbook": missing_global,
+        "all_portal_eligible_added_to_workbook": global_complete,
+        "guarantee_status": guarantee_status,
+    }
 
 
 def _op5_planning_candidate_limit(
@@ -2113,6 +2214,11 @@ def build_pipeline_payload(
         "synthetic_validation": False,
         "enable_portal_pagination": settings.ENABLE_PORTAL_PAGINATION,
         "max_portal_pages": settings.MAX_PORTAL_PAGES,
+        "reconciliation_mode": getattr(
+            settings,
+            "OP5_RECONCILIATION_MODE",
+            "inline_global",
+        ),
         "reprocess_existing_pdfs": settings.REPROCESS_EXISTING_PDFS,
         "process_existing_after_skip": settings.PROCESS_EXISTING_AFTER_SKIP,
         "resume_pipeline": settings.RESUME_PIPELINE,
@@ -2136,6 +2242,7 @@ def build_pipeline_payload(
     status, operation_message = _classify_pipeline_result(payload)
     payload["status"] = status.value
     payload["operation_message"] = operation_message
+    payload["op5_workbook_coverage"] = _build_op5_workbook_coverage(payload)
     return payload
 
 
@@ -2892,6 +2999,7 @@ def _build_markdown_report(payload: dict) -> str:
         f"- Total protocolos falhos: {payload.get('total_failed_protocols', 0)}",
         f"- Total updates planejados: {payload.get('total_updates_planned', 0)}",
         f"- Total updates aplicados: {payload.get('total_updates_applied', 0)}",
+        *_op5_coverage_markdown_lines(payload),
         f"- Total bloqueados por politica de lote: {payload.get('total_blocked_by_batch_policy', 0)}",
         f"- Total erros reais de extracao: {payload.get('total_real_extraction_errors', 0)}",
         f"- Total erros reais de aplicacao: {payload.get('total_real_application_errors', 0)}",
@@ -2974,6 +3082,24 @@ def _completion_summary_markdown_lines(payload: dict) -> list[str]:
         ]
     )
     return lines
+
+
+def _op5_coverage_markdown_lines(payload: dict) -> list[str]:
+    coverage = payload.get("op5_workbook_coverage")
+    if not isinstance(coverage, dict) or not coverage:
+        return []
+    return [
+        f"- Cobertura OP5 status: {coverage.get('guarantee_status')}",
+        f"- Cobertura OP5 acoes planejadas: {coverage.get('planned_excel_actions', 0)}",
+        f"- Cobertura OP5 acoes aplicadas: {coverage.get('applied_excel_actions', 0)}",
+        f"- Cobertura OP5 ja cobertos: {coverage.get('already_covered_protocols', 0)}",
+        f"- Cobertura OP5 elegiveis conhecidos: {coverage.get('known_eligible_protocols', 0)}",
+        f"- Cobertura OP5 elegiveis restantes: {coverage.get('known_eligible_remaining', 0)}",
+        "- Cobertura OP5 todos elegiveis conhecidos na planilha: "
+        f"{coverage.get('all_known_eligible_added_to_workbook')}",
+        "- Cobertura OP5 garantia global autoritativa: "
+        f"{coverage.get('global_coverage_authoritative')}",
+    ]
 
 
 def _md(value) -> str:

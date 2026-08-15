@@ -5863,6 +5863,119 @@ def test_pipeline_no_safe_protocols_to_apply_remains_blocked(tmp_path: Path) -> 
     assert payload["total_excel_updated"] == 0
 
 
+def test_op5_coverage_reports_known_eligible_remaining_after_real_batch(
+    tmp_path: Path,
+) -> None:
+    pdfs = []
+    download_results = []
+    processing_results = []
+    for index in range(5):
+        protocol = f"26000020{index}"
+        pdf = tmp_path / f"Orcamento_de_Conexao_{protocol}.pdf"
+        pdf.write_bytes(b"%PDF-1.4\n")
+        pdfs.append(pdf)
+        download_results.append(
+            {
+                "protocol": protocol,
+                "download_status": "existing_pdf_after_skip",
+                "process_pdf_path": str(pdf),
+            }
+        )
+        processing_results.append(
+            {
+                "protocol": protocol,
+                "success": True,
+                "action": "update_existing",
+                "excel_status": {"action": "update_existing"},
+            }
+        )
+    settings = DummySettings()
+    settings.DRY_RUN = False
+    download_summary = {
+        "op5_reconciliation_mode": "batch_fast",
+        "total_rows": 247,
+        "total_completed": 226,
+        "total_eligible_after_skip": 9,
+        "total_selected": 5,
+        "source_total_no_change_protocols": 3,
+        "results": download_results,
+        "selected_protocols": [{"protocol": item["protocol"]} for item in download_results],
+    }
+    processing_summary = {
+        "total_success": 5,
+        "total_errors": 0,
+        "total_pdfs_analyzed": 5,
+        "total_updates_planned": 5,
+        "total_updates_applied": 5,
+        "total_excel_updated": 5,
+        "total_no_change_protocols": 0,
+        "results": processing_results,
+    }
+
+    payload = build_pipeline_payload(
+        settings=settings,
+        started_at=datetime(2026, 1, 1, 10, 0, 0),
+        finished_at=datetime(2026, 1, 1, 10, 1, 0),
+        download_summary=download_summary,
+        processing_summary=processing_summary,
+        download_report_path=tmp_path / "download.json",
+        pdf_paths=pdfs,
+    )
+
+    coverage = payload["op5_workbook_coverage"]
+    assert coverage["planned_batch_applied"] is True
+    assert coverage["known_eligible_protocols"] == 9
+    assert coverage["already_covered_protocols"] == 3
+    assert coverage["applied_excel_actions"] == 5
+    assert coverage["known_eligible_remaining"] == 1
+    assert coverage["all_known_eligible_added_to_workbook"] is False
+    assert coverage["global_coverage_authoritative"] is False
+    assert coverage["guarantee_status"] == "KNOWN_ELIGIBLE_REMAINING"
+
+
+def test_op5_plan_preserves_source_coverage_totals() -> None:
+    payload = {
+        "json_report_path": "data/logs/pipeline_cdp_completo.json",
+        "status": "SUCESSO",
+        "requested_batch_limit": 2,
+        "authorized_batch_limit": 60,
+        "authorization_scope": "CONTROLLED_PRODUCTION_OPTION5_UP_TO_60",
+        "workbook_path": "pyproject.toml",
+        "apply_excel": True,
+        "apply_archive": True,
+        "total_errors": 0,
+        "total_eligible_after_skip": 7,
+        "total_no_change_protocols": 2,
+        "total_excel_already_updated": 2,
+        "download": {
+            "total_eligible_after_skip": 7,
+            "frozen_batch": {"protocols": ["2600001048", "2600001049"]},
+            "frozen_pdf_scope": {"digest": "", "artifacts": []},
+        },
+        "processing": {
+            "results": [
+                {
+                    "protocol": "2600001048",
+                    "success": True,
+                    "excel_status": {"action": "update_existing"},
+                },
+                {
+                    "protocol": "2600001049",
+                    "success": True,
+                    "excel_status": {"action": "insert_new_chronological"},
+                },
+            ]
+        },
+    }
+
+    plan = full_pipeline._build_op5_plan_payload(payload)
+
+    assert plan["total_eligible_after_skip"] == 7
+    assert plan["source_total_no_change_protocols"] == 2
+    assert plan["download"]["source_total_eligible_after_skip"] == 7
+    assert plan["download"]["source_total_no_change_protocols"] == 2
+
+
 def test_global_limit_metrics_close_with_processing_categories(tmp_path: Path) -> None:
     pdfs = []
     results = []

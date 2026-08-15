@@ -800,6 +800,7 @@ def test_failed_op5_plan_does_not_leave_previous_latest_plan_usable(
     assert latest_plan["status"] == result["status"]
     assert latest_plan["run_error"] == "failed_return_to_listing"
     assert latest_plan["planned_excel_actions"] == []
+    assert latest_plan["op5_workbook_coverage"]["planned_excel_actions"] == 0
 
 
 def test_option5_real_run_blocks_when_workbook_changed_after_explicit_plan(

@@ -149,6 +149,35 @@ def test_pipeline_summary_shows_reconciliation_totals() -> None:
     assert "portal_workbook_reconciliation_20260728T120000Z.md" in output
 
 
+def test_pipeline_summary_shows_op5_workbook_coverage_warning() -> None:
+    result = _pipeline_result()
+    result.payload.update(
+        {
+            "dry_run": False,
+            "total_excel_updated": 5,
+            "op5_workbook_coverage": {
+                "guarantee_status": "KNOWN_ELIGIBLE_REMAINING",
+                "planned_excel_actions": 5,
+                "applied_excel_actions": 5,
+                "already_covered_protocols": 3,
+                "known_eligible_protocols": 9,
+                "known_eligible_remaining": 1,
+                "all_known_eligible_added_to_workbook": False,
+                "global_coverage_authoritative": False,
+                "all_portal_eligible_added_to_workbook": False,
+            },
+        }
+    )
+
+    output = format_operation_summary("pipeline", result)
+
+    assert "Cobertura OP5:" in output
+    assert "Acoes Excel aplicadas: 5" in output
+    assert "Elegiveis conhecidos restantes: 1" in output
+    assert "Todos os elegiveis conhecidos na planilha: nao" in output
+    assert "cobertura_op5: 1 elegiveis conhecidos ainda nao cobertos pelo lote" in output
+
+
 def test_pipeline_summary_shows_limited_operational_protocol_details() -> None:
     result = _pipeline_result()
     result.payload["protocol_results"] = [
