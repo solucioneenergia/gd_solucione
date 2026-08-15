@@ -29,6 +29,7 @@ from automacao_gd.application.op5_optimization import (
 from automacao_gd.application.reconciliation_service import build_workbook_protocol_index
 from automacao_gd.domain.models import PortalSolicitation
 from automacao_gd.infrastructure.portal.cdp_errors import DownloadNotProducedError
+from automacao_gd.infrastructure.portal import cdp_downloads as cdp_downloads_helpers
 from automacao_gd.infrastructure.portal.cdp_extractors import (
     POINT_OF_CONNECTION_NO_DATE_STATUSES,
     POINT_OF_CONNECTION_STAGE,
@@ -1609,57 +1610,13 @@ def detail_has_completed_status(page) -> bool:
 
 
 def find_connection_budget_target(page):
-    logger.info("Localizando botão/link 'Orçamento de Conexão'.")
-    text_pattern = re.compile(r"Or[çc]amento\s+de\s+Conex[aã]o", re.IGNORECASE)
-    candidates = [
-        page.get_by_role("link", name=text_pattern),
-        page.get_by_role("button", name=text_pattern),
-        page.get_by_text(text_pattern),
-        page.locator("text=Orçamento de Conexão"),
-        page.locator("a:has-text('Orçamento de Conexão')"),
-        page.locator("button:has-text('Orçamento de Conexão')"),
-        page.locator("input[value*='Orçamento de Conexão']"),
-    ]
-
-    for locator in candidates:
-        target = _first_visible(locator, timeout_ms=BUDGET_BUTTON_TIMEOUT_MS)
-        if target is not None:
-            logger.info("'Orçamento de Conexão' encontrado por seletor de texto.")
-            return target
-
-    try:
-        handle = page.evaluate_handle(
-            """
-            () => {
-              const normalize = (value) => (value || "")
-                .normalize("NFD")
-                .replace(/[\\u0300-\\u036f]/g, "")
-                .toUpperCase()
-                .replace(/\\s+/g, " ")
-                .trim();
-              const elements = Array.from(document.querySelectorAll(
-                "a, button, input, [role='button'], [onclick], span, div"
-              ));
-              return elements.find((element) => {
-                const text = [
-                  element.innerText,
-                  element.textContent,
-                  element.value,
-                  element.getAttribute("aria-label"),
-                  element.getAttribute("title")
-                ].filter(Boolean).join(" ");
-                return normalize(text).includes("ORCAMENTO DE CONEXAO");
-              }) || null;
-            }
-            """
-        )
-        element = handle.as_element()
-        if element is not None:
-            logger.info("'Orçamento de Conexão' encontrado por fallback DOM.")
-        return element
-    except PlaywrightError as exc:
-        logger.debug(f"Fallback DOM para orçamento falhou: {exc}")
-        return None
+    return cdp_downloads_helpers.find_connection_budget_target(
+        page,
+        first_visible=_first_visible,
+        budget_button_timeout_ms=BUDGET_BUTTON_TIMEOUT_MS,
+        playwright_error=PlaywrightError,
+        logger=logger,
+    )
 
 
 def download_connection_budget(
@@ -1668,33 +1625,20 @@ def download_connection_budget(
     downloads_root: Path | None = None,
     target=None,
 ) -> Path | None:
-    target = target or find_connection_budget_target(page)
-    if target is None:
-        return None
-
-    settings = get_settings()
-    root = downloads_root or settings.downloads_dir_path
-    protocol_dir = root / sanitize_filename(protocol)
-    protocol_dir.mkdir(parents=True, exist_ok=True)
-    before_pages = list(page.context.pages)
-
-    logger.info(
-        f"Clicando em 'Orçamento de Conexão' para o protocolo {protocol} "
-        f"e aguardando download."
+    return cdp_downloads_helpers.download_connection_budget(
+        page,
+        protocol,
+        downloads_root=downloads_root,
+        target=target,
+        find_connection_budget_target=find_connection_budget_target,
+        get_settings=get_settings,
+        sanitize_filename=sanitize_filename,
+        download_timeout_ms=DOWNLOAD_TIMEOUT_MS,
+        click_timeout_ms=10_000,
+        playwright_timeout_error=PlaywrightTimeoutError,
+        download_not_produced_error=DownloadNotProducedError,
+        logger=logger,
     )
-    try:
-        with page.expect_download(timeout=DOWNLOAD_TIMEOUT_MS) as download_info:
-            target.click(timeout=10_000, no_wait_after=True)
-        download = download_info.value
-    except PlaywrightTimeoutError as exc:
-        raise DownloadNotProducedError(
-            _describe_no_download(page, before_pages)
-        ) from exc
-
-    destination = _next_budget_path(protocol_dir, protocol, download.suggested_filename)
-    download.save_as(str(destination))
-    logger.info(f"PDF salvo em {destination}.")
-    return destination
 
 
 def return_to_listing(page, listing_url: str) -> None:
@@ -1720,34 +1664,33 @@ def wait_detail_loaded(page, protocol: str | None = None) -> None:
 def find_existing_connection_budget_pdfs(
     protocol: str, downloads_root: Path | None = None
 ) -> list[Path]:
-    settings = get_settings()
-    root = Path(downloads_root or settings.downloads_dir_path)
-    protocol_dir = root / sanitize_filename(protocol)
-    if not protocol_dir.exists():
-        return []
-
-    protocol_part = sanitize_filename(protocol)
-    return sorted(
-        protocol_dir.glob(f"Orcamento_de_Conexao_{protocol_part}*.pdf"),
-        key=lambda path: (path.stat().st_mtime, path.name),
-        reverse=True,
+    return cdp_downloads_helpers.find_existing_connection_budget_pdfs(
+        protocol,
+        downloads_root,
+        get_settings=get_settings,
+        sanitize_filename=sanitize_filename,
     )
 
 
 def find_existing_connection_budget_pdf(
     protocol: str, downloads_root: Path | None = None
 ) -> Path | None:
-    existing = find_existing_connection_budget_pdfs(protocol, downloads_root)
-    return existing[0] if existing else None
+    return cdp_downloads_helpers.find_existing_connection_budget_pdf(
+        protocol,
+        downloads_root,
+        find_existing_connection_budget_pdfs=find_existing_connection_budget_pdfs,
+    )
 
 
 def find_existing_download_metadata(
     protocol: str, downloads_root: Path | None = None
 ) -> Path | None:
-    settings = get_settings()
-    root = Path(downloads_root or settings.downloads_dir_path)
-    metadata_path = root / sanitize_filename(protocol) / "metadata.json"
-    return metadata_path if metadata_path.exists() and metadata_path.is_file() else None
+    return cdp_downloads_helpers.find_existing_download_metadata(
+        protocol,
+        downloads_root,
+        get_settings=get_settings,
+        sanitize_filename=sanitize_filename,
+    )
 
 
 def should_open_detail_for_budget(
@@ -1756,17 +1699,15 @@ def should_open_detail_for_budget(
     reprocess_existing_pdfs: bool = False,
     require_completion_metadata: bool = False,
 ) -> bool:
-    if reprocess_existing_pdfs:
-        return True
-    existing_pdf = find_existing_connection_budget_pdf(protocol, downloads_root)
-    metadata_path = find_existing_download_metadata(protocol, downloads_root)
-    if (
-        require_completion_metadata
-        and metadata_path is not None
-        and not _metadata_has_completion_value(metadata_path)
-    ):
-        return True
-    return not (_is_valid_pdf(existing_pdf) and metadata_path is not None)
+    return cdp_downloads_helpers.should_open_detail_for_budget(
+        protocol,
+        downloads_root,
+        reprocess_existing_pdfs,
+        require_completion_metadata,
+        find_existing_connection_budget_pdf=find_existing_connection_budget_pdf,
+        find_existing_download_metadata=find_existing_download_metadata,
+        metadata_has_completion_value=_metadata_has_completion_value,
+    )
 
 
 def _can_reuse_existing_pdf_without_detail(
@@ -6172,39 +6113,19 @@ def _normalize_search(text: str) -> str:
 
 
 def _describe_no_download(page, before_pages: list) -> str:
-    new_pages = [candidate for candidate in page.context.pages if candidate not in before_pages]
-    if new_pages:
-        urls = ", ".join(candidate.url for candidate in new_pages)
-        return (
-            "O Orçamento de Conexão abriu em nova aba em vez de baixar. "
-            f"Abas novas: {urls}"
-        )
-    if "pdf" in (page.url or "").lower():
-        return (
-            "O Orçamento de Conexão parece ter aberto na aba atual em vez de baixar. "
-            f"URL atual: {page.url}"
-        )
-    return (
-        "Clique em 'Orçamento de Conexão' não gerou download dentro do timeout "
-        f"de {DOWNLOAD_TIMEOUT_MS / 1000:.0f}s."
+    return cdp_downloads_helpers.describe_no_download(
+        page,
+        before_pages,
+        download_timeout_ms=DOWNLOAD_TIMEOUT_MS,
     )
 
 
 def _next_budget_path(
     protocol_dir: Path, protocol: str, suggested_filename: str | None
 ) -> Path:
-    suffix = Path(suggested_filename or "").suffix.lower()
-    if suffix != ".pdf":
-        suffix = ".pdf"
-
-    base_name = sanitize_filename(f"Orcamento_de_Conexao_{protocol}")
-    candidate = protocol_dir / f"{base_name}{suffix}"
-    if not candidate.exists():
-        return candidate
-
-    version = 2
-    while True:
-        versioned = protocol_dir / f"{base_name}_v{version}{suffix}"
-        if not versioned.exists():
-            return versioned
-        version += 1
+    return cdp_downloads_helpers.next_budget_path(
+        protocol_dir,
+        protocol,
+        suggested_filename,
+        sanitize_filename=sanitize_filename,
+    )

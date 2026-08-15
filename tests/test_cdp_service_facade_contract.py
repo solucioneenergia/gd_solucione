@@ -133,3 +133,37 @@ def test_cdp_service_keeps_protocol_detail_signatures() -> None:
     assert list(completed_status_signature.parameters) == ["page"]
     assert list(wait_signature.parameters) == ["page", "protocol"]
     assert wait_signature.parameters["protocol"].default is None
+
+
+def test_cdp_service_keeps_download_signatures() -> None:
+    find_target_signature = inspect.signature(cdp_service.find_connection_budget_target)
+    download_signature = inspect.signature(cdp_service.download_connection_budget)
+    find_pdfs_signature = inspect.signature(cdp_service.find_existing_connection_budget_pdfs)
+    find_pdf_signature = inspect.signature(cdp_service.find_existing_connection_budget_pdf)
+    metadata_signature = inspect.signature(cdp_service.find_existing_download_metadata)
+    should_open_signature = inspect.signature(cdp_service.should_open_detail_for_budget)
+
+    assert list(find_target_signature.parameters) == ["page"]
+    assert list(download_signature.parameters) == [
+        "page",
+        "protocol",
+        "downloads_root",
+        "target",
+    ]
+    assert download_signature.parameters["downloads_root"].default is None
+    assert download_signature.parameters["target"].default is None
+    assert list(find_pdfs_signature.parameters) == ["protocol", "downloads_root"]
+    assert find_pdfs_signature.parameters["downloads_root"].default is None
+    assert list(find_pdf_signature.parameters) == ["protocol", "downloads_root"]
+    assert find_pdf_signature.parameters["downloads_root"].default is None
+    assert list(metadata_signature.parameters) == ["protocol", "downloads_root"]
+    assert metadata_signature.parameters["downloads_root"].default is None
+    assert list(should_open_signature.parameters) == [
+        "protocol",
+        "downloads_root",
+        "reprocess_existing_pdfs",
+        "require_completion_metadata",
+    ]
+    assert should_open_signature.parameters["downloads_root"].default is None
+    assert should_open_signature.parameters["reprocess_existing_pdfs"].default is False
+    assert should_open_signature.parameters["require_completion_metadata"].default is False

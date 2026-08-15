@@ -1,6 +1,6 @@
 # SPEC-012 - Refatoracao estrutural segura e desktop instalavel local
 
-Status: em implementacao incremental - Ciclo 3 CDP detalhe do protocolo concluido
+Status: em implementacao incremental - Ciclo 4 CDP download/orcamento indisponivel concluido
 Data: 2026-08-15
 Responsavel: Codex
 Revisores: Operacao GD Neoenergia e revisao tecnica independente
@@ -84,10 +84,13 @@ qual e a proxima etapa de desenvolvimento.
   Evidencia: clique de acompanhamento, espera de detalhe, leitura de cabecalho, texto do detalhe,
   status concluido e extracao da conclusao do ponto de conexao movidos para `cdp_detail.py`, com
   fachada publica de `cdp_service.py` preservada.
-- [ ] Ciclo 4 - CDP download/orcamento indisponivel.
-  Proxima etapa: caracterizar e extrair tentativa de orcamento, timeout curto e PDF indisponivel
-  sem alterar OP5, CLI, Excel ou arquivamento.
+- [x] Ciclo 4 - CDP download/orcamento indisponivel.
+  Evidencia: localizacao do orcamento, tentativa de download, timeout curto, descricao de PDF
+  indisponivel, paths versionados, PDFs existentes e metadata de download movidos para
+  `cdp_downloads.py`, com fachada publica de `cdp_service.py` preservada.
 - [ ] Ciclo 5 - CDP montagem de resumo e reducao final de `cdp_service.py`.
+  Proxima etapa: caracterizar e extrair montagem/contadores de resumo sem alterar OP5, CLI,
+  Excel ou arquivamento.
 - [ ] Ciclo 6 - Pipeline OP5/full_pipeline.py.
 - [ ] Ciclo 7 - Processamento PDF e Excel sem mudanca de escrita.
 - [ ] Ciclo 8 - Desktop instalavel local com icone e atalho.
@@ -232,7 +235,7 @@ A ordem preferida e o estado atual sao:
 2. [x] navegacao/paginacao;
 3. [x] recuperacao de listagem;
 4. [x] detalhe do protocolo;
-5. [ ] download/orcamento indisponivel;
+5. [x] download/orcamento indisponivel;
 6. [ ] montagem de resumo.
 
 Cada extracao deve ter teste de caracterizacao antes da mudanca.
@@ -579,6 +582,15 @@ anteriores; nao apontar silenciosamente para o frontend legado.
   `python -m pytest tests/test_cdp_detail.py tests/test_cdp_service_facade_contract.py tests/test_cdp_portal_navigation.py tests/test_full_cdp_pipeline.py tests/test_op5_stage_b_optimization.py -q`
   com 214 testes passando.
 - [x] `ruff check` nos arquivos tocados do Ciclo 3 sem erros.
+- [x] Ciclo 4 - CDP download/orcamento indisponivel concluido em `cdp_downloads.py`, mantendo
+  `cdp_service.py` como fachada para `find_connection_budget_target`,
+  `download_connection_budget`, `find_existing_connection_budget_pdfs`,
+  `find_existing_connection_budget_pdf`, `find_existing_download_metadata`,
+  `should_open_detail_for_budget`, `_describe_no_download` e `_next_budget_path`.
+- [x] Validacao proporcional executada pelo Codex no fechamento do Ciclo 4:
+  `python -m pytest tests/test_cdp_downloads.py tests/test_cdp_detail.py tests/test_cdp_service_facade_contract.py tests/test_cdp_portal_navigation.py tests/test_full_cdp_pipeline.py tests/test_op5_stage_b_optimization.py -q`
+  com 221 testes passando.
+- [x] `ruff check` nos arquivos tocados do Ciclo 4 sem erros.
 - [ ] Suite completa do projeto apos concluir todos os ciclos.
 - [ ] CI verde apos push final das etapas aplicaveis.
 - [ ] Smoke offline do desktop instalavel.
