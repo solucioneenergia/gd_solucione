@@ -699,6 +699,95 @@ def test_numeric_page_target_not_found_falls_back_to_click_reason() -> None:
     )
 
 
+def test_numeric_page_direct_click_disabled_result() -> None:
+    result = cdp_navigation.build_numeric_page_navigation_result(9)
+
+    marked = cdp_navigation.mark_numeric_page_navigation_direct_click_disabled(
+        result,
+        target_page_number=9,
+        click_result={"stop_reason": "pagination_numeric_target_disabled"},
+    )
+
+    assert marked is result
+    assert marked["status"] == "pagination_numeric_target_disabled"
+    assert marked["error"] == (
+        "Pagina numerica de origem encontrada, mas desabilitada: 9. "
+        "Motivo: pagination_numeric_target_disabled"
+    )
+
+
+def test_numeric_page_direct_click_not_performed_result() -> None:
+    result = cdp_navigation.build_numeric_page_navigation_result(9)
+
+    marked = cdp_navigation.mark_numeric_page_navigation_direct_click_not_performed(
+        result,
+        target_page_number=9,
+        click_result={"stop_reason": "pagination_click_intercepted"},
+    )
+
+    assert marked is result
+    assert marked["status"] == "pagination_click_intercepted"
+    assert marked["error"] == (
+        "Pagina numerica de origem encontrada, mas nao clicada: 9. "
+        "Motivo: pagination_click_intercepted"
+    )
+
+
+def test_numeric_page_post_click_status_results() -> None:
+    unconfirmed = cdp_navigation.build_numeric_page_navigation_result(9)
+    cdp_navigation.mark_numeric_page_navigation_unconfirmed_active(unconfirmed)
+    assert unconfirmed["success"] is True
+    assert unconfirmed["status"] == "recovered_listing_by_numeric_page_unconfirmed_active"
+    assert unconfirmed["method"] == "recovered_listing_by_numeric_page_unconfirmed_active"
+
+    mismatch = cdp_navigation.build_numeric_page_navigation_result(9)
+    cdp_navigation.mark_numeric_page_navigation_active_mismatch(
+        mismatch,
+        target_page_number=9,
+        active_after=8,
+    )
+    assert mismatch["status"] == "pagination_active_page_mismatch"
+    assert mismatch["error"] == "Pagina ativa apos clique: 8; esperado: 9."
+
+    unchanged = cdp_navigation.build_numeric_page_navigation_result(9)
+    cdp_navigation.mark_numeric_page_navigation_click_no_change(
+        unchanged,
+        target_page_number=9,
+    )
+    assert unchanged["status"] == "pagination_click_no_change"
+    assert unchanged["error"] == "Clique na pagina numerica de origem nao alterou a tabela: 9."
+
+    recovered = cdp_navigation.build_numeric_page_navigation_result(9)
+    cdp_navigation.mark_numeric_page_navigation_success(recovered)
+    assert recovered["success"] is True
+    assert recovered["status"] == "recovered_listing_by_numeric_page"
+    assert recovered["method"] == "recovered_listing_by_numeric_page"
+
+    click_error = cdp_navigation.build_numeric_page_navigation_result(9)
+    cdp_navigation.mark_numeric_page_navigation_click_error(
+        click_error,
+        error=RuntimeError("playwright failed"),
+        url_after="listing",
+    )
+    assert click_error["status"] == "pagination_numeric_click_error"
+    assert click_error["error"] == "playwright failed"
+    assert click_error["url_after"] == "listing"
+
+    recovery = cdp_navigation.build_numeric_page_navigation_result(9)
+    cdp_navigation.mark_numeric_page_navigation_recovery_success(
+        recovery,
+        recovery_result={
+            "active_page_after": 9,
+            "signature_after": ("a", "b", 2),
+        },
+        method="recovered_listing_by_sequential_numeric_page",
+    )
+    assert recovery["success"] is True
+    assert recovery["active_page_after"] == 9
+    assert recovery["signature_after"] == ("a", "b", 2)
+    assert recovery["method"] == "recovered_listing_by_sequential_numeric_page"
+
+
 def test_portal_listing_reader_accepts_identification_code_header() -> None:
     source = cdp_service.read_current_page_table_with_row_handles.__code__.co_consts
     script = next(item for item in source if isinstance(item, str) and "mapHeader" in item)

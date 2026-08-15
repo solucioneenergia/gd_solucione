@@ -3937,15 +3937,10 @@ def navigate_to_numeric_page(page, target_page_number: int) -> dict:
                 result["visible_window_navigation"] = visible_window
                 result["url_after"] = visible_window.get("url_after")
                 if visible_window.get("success"):
-                    result.update(
-                        {
-                            "success": True,
-                            "status": "recovered_listing_by_numeric_page",
-                            "method": "recovered_listing_by_forward_visible_numeric_window",
-                            "active_page_after": visible_window.get("active_page_after"),
-                            "signature_after": visible_window.get("signature_after"),
-                            "error": None,
-                        }
+                    cdp_navigation_helpers.mark_numeric_page_navigation_recovery_success(
+                        result,
+                        recovery_result=visible_window,
+                        method="recovered_listing_by_forward_visible_numeric_window",
                     )
                     return result
                 sequential = _navigate_to_numeric_page_sequentially(
@@ -3959,15 +3954,10 @@ def navigate_to_numeric_page(page, target_page_number: int) -> dict:
                 result["active_page_after"] = sequential.get("active_page_after")
                 result["signature_after"] = sequential.get("signature_after")
                 if sequential.get("success"):
-                    result.update(
-                        {
-                            "success": True,
-                            "status": "recovered_listing_by_numeric_page",
-                            "method": "recovered_listing_by_sequential_numeric_page",
-                            "active_page_after": sequential.get("active_page_after"),
-                            "signature_after": sequential.get("signature_after"),
-                            "error": None,
-                        }
+                    cdp_navigation_helpers.mark_numeric_page_navigation_recovery_success(
+                        result,
+                        recovery_result=sequential,
+                        method="recovered_listing_by_sequential_numeric_page",
                     )
                     return result
                 cdp_navigation_helpers.mark_numeric_page_navigation_target_not_found(
@@ -3988,15 +3978,10 @@ def navigate_to_numeric_page(page, target_page_number: int) -> dict:
                 result["visible_window_navigation"] = visible_window
                 result["url_after"] = visible_window.get("url_after")
                 if visible_window.get("success"):
-                    result.update(
-                        {
-                            "success": True,
-                            "status": "recovered_listing_by_numeric_page",
-                            "method": "recovered_listing_by_visible_numeric_window",
-                            "active_page_after": visible_window.get("active_page_after"),
-                            "signature_after": visible_window.get("signature_after"),
-                            "error": None,
-                        }
+                    cdp_navigation_helpers.mark_numeric_page_navigation_recovery_success(
+                        result,
+                        recovery_result=visible_window,
+                        method="recovered_listing_by_visible_numeric_window",
                     )
                     return result
                 sequential = _navigate_to_numeric_page_backwards_sequentially(
@@ -4010,15 +3995,10 @@ def navigate_to_numeric_page(page, target_page_number: int) -> dict:
                 result["active_page_after"] = sequential.get("active_page_after")
                 result["signature_after"] = sequential.get("signature_after")
                 if sequential.get("success"):
-                    result.update(
-                        {
-                            "success": True,
-                            "status": "recovered_listing_by_numeric_page",
-                            "method": "recovered_listing_by_reverse_sequential_numeric_page",
-                            "active_page_after": sequential.get("active_page_after"),
-                            "signature_after": sequential.get("signature_after"),
-                            "error": None,
-                        }
+                    cdp_navigation_helpers.mark_numeric_page_navigation_recovery_success(
+                        result,
+                        recovery_result=sequential,
+                        method="recovered_listing_by_reverse_sequential_numeric_page",
                     )
                     return result
                 cdp_navigation_helpers.mark_numeric_page_navigation_target_not_found(
@@ -4036,21 +4016,17 @@ def navigate_to_numeric_page(page, target_page_number: int) -> dict:
             )
             return result
         if not click_result.get("enabled"):
-            result["error"] = (
-                "Pagina numerica de origem encontrada, mas desabilitada: "
-                f"{target}. Motivo: {click_result.get('stop_reason')}"
-            )
-            result["status"] = click_result.get(
-                "stop_reason", "pagination_numeric_target_disabled"
+            cdp_navigation_helpers.mark_numeric_page_navigation_direct_click_disabled(
+                result,
+                target_page_number=target,
+                click_result=click_result,
             )
             return result
         if not click_result.get("clicked"):
-            result["error"] = (
-                "Pagina numerica de origem encontrada, mas nao clicada: "
-                f"{target}. Motivo: {click_result.get('stop_reason')}"
-            )
-            result["status"] = click_result.get(
-                "stop_reason", "pagination_click_failed"
+            cdp_navigation_helpers.mark_numeric_page_navigation_direct_click_not_performed(
+                result,
+                target_page_number=target,
+                click_result=click_result,
             )
             return result
 
@@ -4063,13 +4039,8 @@ def navigate_to_numeric_page(page, target_page_number: int) -> dict:
         result["url_after"] = _safe_page_url(page)
         if active_after != target:
             if signature_after != signature_before:
-                result.update(
-                    {
-                        "success": True,
-                        "status": "recovered_listing_by_numeric_page_unconfirmed_active",
-                        "method": "recovered_listing_by_numeric_page_unconfirmed_active",
-                        "error": None,
-                    }
+                cdp_navigation_helpers.mark_numeric_page_navigation_unconfirmed_active(
+                    result
                 )
                 return result
             if target > active_before:
@@ -4083,15 +4054,10 @@ def navigate_to_numeric_page(page, target_page_number: int) -> dict:
                 result["sequential_navigation_after_no_change"] = sequential
                 result["url_after"] = sequential.get("url_after")
                 if sequential.get("success"):
-                    result.update(
-                        {
-                            "success": True,
-                            "status": "recovered_listing_by_numeric_page",
-                            "method": "recovered_listing_by_sequential_numeric_page",
-                            "active_page_after": sequential.get("active_page_after"),
-                            "signature_after": sequential.get("signature_after"),
-                            "error": None,
-                        }
+                    cdp_navigation_helpers.mark_numeric_page_navigation_recovery_success(
+                        result,
+                        recovery_result=sequential,
+                        method="recovered_listing_by_sequential_numeric_page",
                     )
                     return result
             if target < active_before:
@@ -4104,43 +4070,33 @@ def navigate_to_numeric_page(page, target_page_number: int) -> dict:
                 result["sequential_navigation_after_no_change"] = sequential
                 result["url_after"] = sequential.get("url_after")
                 if sequential.get("success"):
-                    result.update(
-                        {
-                            "success": True,
-                            "status": "recovered_listing_by_numeric_page",
-                            "method": "recovered_listing_by_reverse_sequential_numeric_page",
-                            "active_page_after": sequential.get("active_page_after"),
-                            "signature_after": sequential.get("signature_after"),
-                            "error": None,
-                        }
+                    cdp_navigation_helpers.mark_numeric_page_navigation_recovery_success(
+                        result,
+                        recovery_result=sequential,
+                        method="recovered_listing_by_reverse_sequential_numeric_page",
                     )
                     return result
-            result["status"] = "pagination_active_page_mismatch"
-            result["error"] = (
-                f"Pagina ativa apos clique: {active_after}; esperado: {target}."
+            cdp_navigation_helpers.mark_numeric_page_navigation_active_mismatch(
+                result,
+                target_page_number=target,
+                active_after=active_after,
             )
             return result
         if signature_after == signature_before:
-            result["status"] = "pagination_click_no_change"
-            result["error"] = (
-                "Clique na pagina numerica de origem nao alterou a tabela: "
-                f"{target}."
+            cdp_navigation_helpers.mark_numeric_page_navigation_click_no_change(
+                result,
+                target_page_number=target,
             )
             return result
 
-        result.update(
-            {
-                "success": True,
-                "status": "recovered_listing_by_numeric_page",
-                "method": "recovered_listing_by_numeric_page",
-                "error": None,
-            }
-        )
+        cdp_navigation_helpers.mark_numeric_page_navigation_success(result)
         return result
     except PlaywrightError as exc:
-        result["status"] = "pagination_numeric_click_error"
-        result["error"] = str(exc)
-        result["url_after"] = _safe_page_url(page)
+        cdp_navigation_helpers.mark_numeric_page_navigation_click_error(
+            result,
+            error=exc,
+            url_after=_safe_page_url(page),
+        )
         return result
 
 

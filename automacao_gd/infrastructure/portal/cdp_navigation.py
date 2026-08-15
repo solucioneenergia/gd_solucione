@@ -272,6 +272,117 @@ def mark_numeric_page_navigation_target_not_found(
     return result
 
 
+def mark_numeric_page_navigation_direct_click_disabled(
+    result: dict,
+    *,
+    target_page_number: int,
+    click_result: dict,
+) -> dict:
+    result["error"] = (
+        "Pagina numerica de origem encontrada, mas desabilitada: "
+        f"{target_page_number}. Motivo: {click_result.get('stop_reason')}"
+    )
+    result["status"] = click_result.get(
+        "stop_reason", "pagination_numeric_target_disabled"
+    )
+    return result
+
+
+def mark_numeric_page_navigation_direct_click_not_performed(
+    result: dict,
+    *,
+    target_page_number: int,
+    click_result: dict,
+) -> dict:
+    result["error"] = (
+        "Pagina numerica de origem encontrada, mas nao clicada: "
+        f"{target_page_number}. Motivo: {click_result.get('stop_reason')}"
+    )
+    result["status"] = click_result.get("stop_reason", "pagination_click_failed")
+    return result
+
+
+def mark_numeric_page_navigation_unconfirmed_active(result: dict) -> dict:
+    result.update(
+        {
+            "success": True,
+            "status": "recovered_listing_by_numeric_page_unconfirmed_active",
+            "method": "recovered_listing_by_numeric_page_unconfirmed_active",
+            "error": None,
+        }
+    )
+    return result
+
+
+def mark_numeric_page_navigation_active_mismatch(
+    result: dict,
+    *,
+    target_page_number: int,
+    active_after: int | None,
+) -> dict:
+    result["status"] = "pagination_active_page_mismatch"
+    result["error"] = (
+        f"Pagina ativa apos clique: {active_after}; esperado: {target_page_number}."
+    )
+    return result
+
+
+def mark_numeric_page_navigation_click_no_change(
+    result: dict,
+    *,
+    target_page_number: int,
+) -> dict:
+    result["status"] = "pagination_click_no_change"
+    result["error"] = (
+        "Clique na pagina numerica de origem nao alterou a tabela: "
+        f"{target_page_number}."
+    )
+    return result
+
+
+def mark_numeric_page_navigation_success(result: dict) -> dict:
+    result.update(
+        {
+            "success": True,
+            "status": "recovered_listing_by_numeric_page",
+            "method": "recovered_listing_by_numeric_page",
+            "error": None,
+        }
+    )
+    return result
+
+
+def mark_numeric_page_navigation_click_error(
+    result: dict,
+    *,
+    error: Exception,
+    url_after: str | None,
+) -> dict:
+    result["status"] = "pagination_numeric_click_error"
+    result["error"] = str(error)
+    result["url_after"] = url_after
+    return result
+
+
+def mark_numeric_page_navigation_recovery_success(
+    result: dict,
+    *,
+    recovery_result: dict,
+    method: str,
+) -> dict:
+    result.update(
+        {
+            "success": True,
+            "status": "recovered_listing_by_numeric_page",
+            "method": method,
+            "active_page_after": recovery_result.get("active_page_after"),
+            "signature_after": recovery_result.get("signature_after"),
+            "error": None,
+        }
+    )
+    return result
+
+
 def find_and_click_previous_listing_page(
     page,
     current_page_number: int,
