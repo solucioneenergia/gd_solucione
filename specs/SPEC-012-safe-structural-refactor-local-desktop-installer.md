@@ -1,6 +1,6 @@
 # SPEC-012 - Refatoracao estrutural segura e desktop instalavel local
 
-Status: proposta para planejamento e implementacao incremental
+Status: em implementacao incremental - Ciclo 2 CDP recuperacao de listagem concluido
 Data: 2026-08-15
 Responsavel: Codex
 Revisores: Operacao GD Neoenergia e revisao tecnica independente
@@ -62,6 +62,40 @@ PDF, arquivamento, CLI e desktop. Definir tambem a preparacao para um desktop in
 com icone customizavel e validacao offline, sem abrir Portal nem executar producao. Separar
 explicitamente limpeza local ignorada de refatoracao de codigo, para que essas frentes nunca sejam
 executadas, revisadas ou revertidas como se fossem a mesma mudanca.
+
+## Controle de execucao da SPEC-012
+
+Este controle deve ser atualizado ao concluir cada secao operacional. A cada fechamento de ciclo,
+a SPEC-012 deve ser retornada atualizada, indicando o que ficou concluido, o que segue pendente e
+qual e a proxima etapa de desenvolvimento.
+
+### Ciclos de desenvolvimento
+
+- [x] Ciclo 0 - Auditoria tecnica e SPEC versionada.
+  Evidencia: SPEC-012 criada como fonte de verdade para refatoracao segura e desktop instalavel
+  local.
+- [x] Ciclo 1 - Fechar CDP Navegacao.
+  Evidencia: extracoes incrementais de navegacao/paginacao em `cdp_navigation.py`, fachada publica
+  de `cdp_service.py` preservada e testes proporcionais confirmados pelo usuario e pelo Codex.
+- [x] Ciclo 2 - CDP recuperacao de listagem.
+  Evidencia: recuperacao de `Minhas Solicitacoes`, retorno apos detalhe e fallbacks de contexto
+  extraidos para `cdp_navigation.py`, com fachada publica de `cdp_service.py` preservada.
+- [ ] Ciclo 3 - CDP detalhe do protocolo.
+  Proxima etapa: caracterizar e extrair abertura/leitura de detalhe do protocolo sem alterar OP5,
+  CLI, Excel ou arquivamento.
+- [ ] Ciclo 4 - CDP download/orcamento indisponivel.
+- [ ] Ciclo 5 - CDP montagem de resumo e reducao final de `cdp_service.py`.
+- [ ] Ciclo 6 - Pipeline OP5/full_pipeline.py.
+- [ ] Ciclo 7 - Processamento PDF e Excel sem mudanca de escrita.
+- [ ] Ciclo 8 - Desktop instalavel local com icone e atalho.
+- [ ] Ciclo 9 - Validacao final, CI e preparo de release local.
+
+### Trilhas
+
+- [ ] Trilha A - Limpeza local ignorada.
+  Status: pendente; nao foi misturada com as refatoracoes de codigo ja commitadas.
+- [x] Trilha B - Refatoracao de codigo rastreado.
+  Status: iniciada e com Ciclo 1 concluido; deve continuar em commits pequenos e separados.
 
 ## Escopo
 
@@ -189,14 +223,14 @@ Mudancas que alterem qualquer item acima devem sair desta SPEC e exigir SPEC pro
 ### RF-004 - Extracao incremental do CDP
 
 `cdp_service.py` deve ser refatorado por fatias pequenas, mantendo uma fachada publica compativel.
-A ordem preferida e:
+A ordem preferida e o estado atual sao:
 
-1. leitura da listagem;
-2. navegacao/paginacao;
-3. recuperacao de listagem;
-4. detalhe do protocolo;
-5. download/orcamento indisponivel;
-6. montagem de resumo.
+1. [x] leitura da listagem;
+2. [x] navegacao/paginacao;
+3. [x] recuperacao de listagem;
+4. [ ] detalhe do protocolo;
+5. [ ] download/orcamento indisponivel;
+6. [ ] montagem de resumo.
 
 Cada extracao deve ter teste de caracterizacao antes da mudanca.
 
@@ -468,9 +502,9 @@ Testes futuros minimos:
       PDFs, `node_modules`, `.venv` ou frontend legado como frontend canonico.
 - [ ] Dado um lote de limpeza local ignorada, quando revisado, entao o diff de arquivos rastreados
       nao contem refatoracao de codigo nem alteracao funcional.
-- [ ] Dado um lote de refatoracao de codigo, quando revisado, entao nao contem remocao de caches,
+- [x] Dado um lote de refatoracao de codigo, quando revisado, entao nao contem remocao de caches,
       builds, logs, downloads, state, dados operacionais ou outros artefatos locais.
-- [ ] Dado o primeiro lote de refatoracao, quando implementado, entao `cdp_service.py` permanece
+- [x] Dado o primeiro lote de refatoracao, quando implementado, entao `cdp_service.py` permanece
       como fachada publica compativel e OP5 continua consumindo o mesmo contrato externo.
 
 ## Rollout
@@ -513,5 +547,28 @@ anteriores; nao apontar silenciosamente para o frontend legado.
 
 ## Evidencias de homologacao
 
-A preencher durante implementacao futura. Esta criacao de SPEC nao executou testes, Portal/CDP,
-planilha, build, instalador ou limpeza local.
+- [x] SPEC-012 criada e versionada para planejamento incremental.
+- [x] Primeira fatia de `cdp_service.py` executada sem limpeza local ignorada misturada:
+  `cdp_errors.py`, `cdp_extractors.py`, teste de fachada e SPEC-012.
+- [x] Ciclo 1 - CDP Navegacao concluido em commits pequenos:
+  `4a58939`, `fcf6e65`, `a1d8a02`, `42b7748`, `62a4937`, `6549d6f`, `a2a09b1`.
+- [x] Validacao proporcional confirmada pelo usuario em 2026-08-15:
+  `python -m pytest tests/test_cdp_service_facade_contract.py tests/test_cdp_portal_navigation.py tests/test_full_cdp_pipeline.py tests/test_op5_stage_b_optimization.py -q`
+  com 194 testes passando antes do fechamento definitivo do Ciclo 1.
+- [x] Validacao proporcional executada pelo Codex no fechamento do Ciclo 1:
+  mesma suite direcionada com 197 testes passando.
+- [x] `ruff check` nos arquivos tocados do Ciclo 1 sem erros.
+- [x] `git diff --check` sem falha; apenas avisos de CRLF existentes no ambiente Windows.
+- [x] Ciclo 2 - CDP recuperacao de listagem concluido em `cdp_navigation.py`, mantendo
+  `cdp_service.py` como fachada para `return_to_listing`, `ensure_listing_page`,
+  `ensure_minhas_solicitacoes`, `_return_to_listing_after_detail`,
+  `_recover_listing_in_new_context_page`, `_recover_listing_by_detail_return_control`,
+  `_recover_listing_by_authenticated_home_icon` e `_recover_minhas_solicitacoes`.
+- [x] Validacao proporcional executada pelo Codex no fechamento do Ciclo 2:
+  `python -m pytest tests/test_cdp_service_facade_contract.py tests/test_cdp_portal_navigation.py tests/test_full_cdp_pipeline.py tests/test_op5_stage_b_optimization.py -q`
+  com 207 testes passando.
+- [x] `ruff check` nos arquivos tocados do Ciclo 2 sem erros.
+- [ ] Suite completa do projeto apos concluir todos os ciclos.
+- [ ] CI verde apos push final das etapas aplicaveis.
+- [ ] Smoke offline do desktop instalavel.
+- [ ] Homologacao operacional com Portal/CDP, planilha e arquivamento quando autorizada.

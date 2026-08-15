@@ -81,3 +81,34 @@ def test_cdp_service_keeps_numeric_page_navigation_signature() -> None:
     signature = inspect.signature(cdp_service.navigate_to_numeric_page)
 
     assert list(signature.parameters) == ["page", "target_page_number"]
+
+
+def test_cdp_service_keeps_listing_recovery_signatures() -> None:
+    ensure_listing_signature = inspect.signature(cdp_service.ensure_listing_page)
+    ensure_minhas_signature = inspect.signature(cdp_service.ensure_minhas_solicitacoes)
+    return_signature = inspect.signature(cdp_service.return_to_listing)
+    recover_signature = inspect.signature(cdp_service._recover_minhas_solicitacoes)
+    after_detail_signature = inspect.signature(cdp_service._return_to_listing_after_detail)
+
+    assert list(ensure_listing_signature.parameters) == ["page", "listing_url"]
+    assert list(ensure_minhas_signature.parameters) == ["page", "listing_url"]
+    assert list(return_signature.parameters) == ["page", "listing_url"]
+    assert list(recover_signature.parameters) == [
+        "page",
+        "listing_url",
+        "allow_active_navigation",
+    ]
+    assert (
+        recover_signature.parameters["allow_active_navigation"].kind
+        is inspect.Parameter.KEYWORD_ONLY
+    )
+    assert list(after_detail_signature.parameters) == [
+        "detail_page",
+        "listing_page",
+        "listing_url",
+        "allow_active_navigation",
+    ]
+    assert (
+        after_detail_signature.parameters["allow_active_navigation"].kind
+        is inspect.Parameter.KEYWORD_ONLY
+    )

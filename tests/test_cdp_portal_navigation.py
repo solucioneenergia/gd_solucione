@@ -319,6 +319,261 @@ def test_locator_href_root_policy_is_explicit() -> None:
     )
 
 
+def test_recover_minhas_solicitacoes_reports_existing_listing() -> None:
+    calls = []
+
+    class Page:
+        url = "https://gdneoenergiapernambuco.neoenergia.com/minhas"
+
+    recovery = cdp_navigation.recover_minhas_solicitacoes(
+        Page(),
+        "https://gdneoenergiapernambuco.neoenergia.com/minhas",
+        has_minhas_solicitacoes_table=lambda page: True,
+        safe_page_url=lambda page: page.url,
+        is_unsafe_navigation_url=lambda current_url, listing_url: False,
+        click_minhas_solicitacoes_navigation=lambda page: calls.append("menu")
+        or False,
+        wait_minhas_solicitacoes=lambda page: calls.append("wait") or False,
+        goto_listing_url=lambda page, listing_url: calls.append("goto"),
+        reload_page=lambda page: calls.append("reload"),
+        playwright_error=RuntimeError,
+        logger=SimpleNamespace(debug=lambda message: None),
+    )
+
+    assert recovery == {
+        "success": True,
+        "status": "ok",
+        "method": "already_on_listing",
+        "url_before": "https://gdneoenergiapernambuco.neoenergia.com/minhas",
+        "url_after": "https://gdneoenergiapernambuco.neoenergia.com/minhas",
+        "error": None,
+    }
+    assert calls == []
+
+
+def test_recover_minhas_solicitacoes_respects_passive_mode() -> None:
+    calls = []
+
+    class Page:
+        url = "https://gdneoenergiapernambuco.neoenergia.com/detalhe"
+
+        def go_back(self, **kwargs):
+            calls.append("history")
+
+    recovery = cdp_navigation.recover_minhas_solicitacoes(
+        Page(),
+        "https://gdneoenergiapernambuco.neoenergia.com/minhas",
+        allow_active_navigation=False,
+        has_minhas_solicitacoes_table=lambda page: False,
+        safe_page_url=lambda page: page.url,
+        is_unsafe_navigation_url=lambda current_url, listing_url: False,
+        click_minhas_solicitacoes_navigation=lambda page: calls.append("menu")
+        or False,
+        wait_minhas_solicitacoes=lambda page: calls.append("wait") or False,
+        goto_listing_url=lambda page, listing_url: calls.append("goto"),
+        reload_page=lambda page: calls.append("reload"),
+        playwright_error=RuntimeError,
+        logger=SimpleNamespace(debug=lambda message: None),
+        manual_recovery_message=lambda: "manual recovery required",
+    )
+
+    assert recovery["success"] is False
+    assert recovery["status"] == "failed_return_to_listing"
+    assert recovery["method"] is None
+    assert recovery["error"] == "manual recovery required"
+    assert recovery["url_after"] == "https://gdneoenergiapernambuco.neoenergia.com/detalhe"
+    assert calls == []
+
+
+def test_recover_minhas_solicitacoes_uses_menu_before_url_reload_and_history() -> None:
+    calls = []
+
+    class Page:
+        url = "https://gdneoenergiapernambuco.neoenergia.com/detalhe"
+
+        def go_back(self, **kwargs):
+            calls.append(("history", kwargs))
+
+    def wait_minhas_solicitacoes(page):
+        calls.append("wait")
+        return True
+
+    recovery = cdp_navigation.recover_minhas_solicitacoes(
+        Page(),
+        "https://gdneoenergiapernambuco.neoenergia.com/minhas",
+        has_minhas_solicitacoes_table=lambda page: False,
+        safe_page_url=lambda page: page.url,
+        is_unsafe_navigation_url=lambda current_url, listing_url: False,
+        click_minhas_solicitacoes_navigation=lambda page: calls.append("menu")
+        or True,
+        wait_minhas_solicitacoes=wait_minhas_solicitacoes,
+        goto_listing_url=lambda page, listing_url: calls.append("goto"),
+        reload_page=lambda page: calls.append("reload"),
+        playwright_error=RuntimeError,
+        logger=SimpleNamespace(debug=lambda message: None),
+    )
+
+    assert recovery["success"] is True
+    assert recovery["status"] == "recovered_listing_by_menu"
+    assert recovery["method"] == "recovered_listing_by_menu"
+    assert calls == ["menu", "wait"]
+
+
+def test_ensure_listing_page_returns_page_when_recovery_succeeds() -> None:
+    page = object()
+
+    recovered = cdp_navigation.ensure_listing_page(
+        page,
+        "listing",
+        recover_minhas_solicitacoes=lambda page, listing_url: {
+            "success": True,
+            "error": None,
+        },
+    )
+
+    assert recovered is page
+
+
+def test_ensure_listing_page_raises_recovery_error_when_recovery_fails() -> None:
+    try:
+        cdp_navigation.ensure_listing_page(
+            object(),
+            "listing",
+            recover_minhas_solicitacoes=lambda page, listing_url: {
+                "success": False,
+                "error": "failed safely",
+            },
+        )
+    except RuntimeError as exc:
+        assert str(exc) == "failed safely"
+    else:
+        raise AssertionError("ensure_listing_page should raise RuntimeError")
+
+
+def test_return_to_listing_raises_when_listing_cannot_be_ensured() -> None:
+    events = []
+
+    try:
+        cdp_navigation.return_to_listing(
+            object(),
+            "listing",
+            ensure_minhas_solicitacoes=lambda page, listing_url: False,
+            logger=SimpleNamespace(info=lambda message: events.append(message)),
+        )
+    except RuntimeError as exc:
+        assert str(exc) == "Nao foi possivel retornar para a tabela de listagem."
+    else:
+        raise AssertionError("return_to_listing should raise RuntimeError")
+
+    assert events == ["Garantindo retorno para a listagem 'Minhas Solicitacoes'."]
+
+
+def test_return_to_listing_after_detail_closes_separate_detail_and_recovers_listing() -> None:
+    events = []
+
+    class Page:
+        def __init__(self, name: str) -> None:
+            self.name = name
+            self.closed = False
+
+        def close(self) -> None:
+            events.append(("close", self.name))
+            self.closed = True
+
+    detail_page = Page("detail")
+    listing_page = Page("listing")
+
+    recovered_page, recovery = cdp_navigation.return_to_listing_after_detail(
+        detail_page,
+        listing_page,
+        "listing-url",
+        page_is_closed=lambda page: page.closed,
+        recover_minhas_solicitacoes=lambda page, listing_url, **kwargs: {
+            "success": True,
+            "status": "ok",
+            "method": "already_on_listing",
+            "error": None,
+        },
+        recover_listing_in_new_context_page=lambda page, listing_url, **kwargs: (
+            page,
+            {"success": False, "error": "not needed"},
+        ),
+        recover_listing_by_detail_return_control=lambda page, listing_url, **kwargs: {
+            "success": False,
+            "error": "not needed",
+        },
+        recover_listing_by_authenticated_home_icon=lambda page, listing_url, **kwargs: {
+            "success": False,
+            "error": "not needed",
+        },
+        playwright_error=RuntimeError,
+        logger=SimpleNamespace(debug=lambda message: events.append(("debug", message))),
+    )
+
+    assert recovered_page is listing_page
+    assert recovery["success"] is True
+    assert events == [("close", "detail")]
+
+
+def test_recover_listing_in_new_context_page_uses_existing_open_listing_page() -> None:
+    class Page:
+        def __init__(self, name: str) -> None:
+            self.name = name
+            self.context = None
+
+    current = Page("current")
+    candidate = Page("candidate")
+    closed = Page("closed")
+    current.context = SimpleNamespace(pages=[current, closed, candidate])
+
+    recovered_page, recovery = cdp_navigation.recover_listing_in_new_context_page(
+        current,
+        "listing-url",
+        previous_error="previous",
+        page_is_closed=lambda page: page is closed,
+        safe_page_url=lambda page: page.name,
+        recover_minhas_solicitacoes=lambda page, listing_url, **kwargs: {
+            "success": page is candidate,
+            "status": "ok" if page is candidate else "failed_return_to_listing",
+            "method": "already_on_listing" if page is candidate else None,
+            "error": None if page is candidate else "no listing",
+        },
+        manual_recovery_message=lambda: "manual recovery required",
+        playwright_error=RuntimeError,
+        logger=SimpleNamespace(debug=lambda message: None),
+    )
+
+    assert recovered_page is candidate
+    assert recovery["success"] is True
+    assert recovery["status"] == "recovered_listing_by_existing_context_page"
+    assert recovery["method"] == "recovered_listing_by_existing_context_page"
+
+
+def test_recover_listing_by_detail_return_control_rejects_unsafe_context() -> None:
+    class Page:
+        url = "https://example.com/detalhe"
+
+    recovery = cdp_navigation.recover_listing_by_detail_return_control(
+        Page(),
+        "https://gdneoenergiapernambuco.neoenergia.com/minhas",
+        previous_error="previous",
+        page_is_closed=lambda page: False,
+        safe_page_url=lambda page: page.url,
+        is_unsafe_authenticated_control_context_url=lambda current_url, listing_url: True,
+        click_detail_return_to_listing=lambda page: True,
+        wait_minhas_solicitacoes=lambda page: True,
+        listing_has_rows=lambda page: True,
+        manual_recovery_message=lambda: "manual recovery required",
+        playwright_error=RuntimeError,
+    )
+
+    assert recovery["success"] is False
+    assert recovery["status"] == "failed_return_to_listing"
+    assert recovery["method"] == "recovered_listing_by_detail_return_control"
+    assert recovery["error"] == "manual recovery required"
+    assert recovery["url_after"] == "https://example.com/detalhe"
+
+
 def test_previous_listing_page_reports_clicked_result(monkeypatch) -> None:
     monkeypatch.setattr(
         cdp_service,

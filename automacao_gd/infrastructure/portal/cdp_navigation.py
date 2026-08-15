@@ -448,3 +448,419 @@ def find_and_click_next_listing_page(
         result["stop_reason"] = "last_page_reached"
         return result
     return result
+
+
+def recover_minhas_solicitacoes(
+    page,
+    listing_url: str,
+    *,
+    has_minhas_solicitacoes_table,
+    safe_page_url,
+    is_unsafe_navigation_url,
+    click_minhas_solicitacoes_navigation,
+    wait_minhas_solicitacoes,
+    goto_listing_url,
+    reload_page,
+    playwright_error,
+    logger,
+    manual_recovery_message=None,
+    detail_timeout_ms: int = 20_000,
+    allow_active_navigation: bool = True,
+) -> dict:
+    result = {
+        "success": False,
+        "status": "failed_return_to_listing",
+        "method": None,
+        "url_before": safe_page_url(page),
+        "url_after": None,
+        "error": None,
+    }
+    last_error: Exception | None = None
+
+    if has_minhas_solicitacoes_table(page):
+        result.update(
+            {
+                "success": True,
+                "status": "ok",
+                "method": "already_on_listing",
+                "url_after": safe_page_url(page),
+            }
+        )
+        return result
+
+    recovery_message = (
+        manual_recovery_message
+        if manual_recovery_message is not None
+        else lambda: "Nao foi possivel retornar para a tabela de listagem."
+    )
+
+    if not allow_active_navigation:
+        result["error"] = recovery_message()
+        result["url_after"] = safe_page_url(page)
+        return result
+
+    unsafe_url = is_unsafe_navigation_url(safe_page_url(page), listing_url)
+    if unsafe_url:
+        result["error"] = recovery_message()
+        result["url_after"] = safe_page_url(page)
+        return result
+
+    if not unsafe_url and click_minhas_solicitacoes_navigation(page):
+        if wait_minhas_solicitacoes(page):
+            result.update(
+                {
+                    "success": True,
+                    "status": "recovered_listing_by_menu",
+                    "method": "recovered_listing_by_menu",
+                    "url_after": safe_page_url(page),
+                }
+            )
+            return result
+
+    try:
+        goto_listing_url(page, listing_url)
+        if wait_minhas_solicitacoes(page):
+            result.update(
+                {
+                    "success": True,
+                    "status": "recovered_listing_by_url",
+                    "method": "recovered_listing_by_url",
+                    "url_after": safe_page_url(page),
+                }
+            )
+            return result
+    except playwright_error as exc:
+        last_error = exc
+        logger.debug(f"Falha ao navegar para URL salva da listagem: {exc}")
+
+    try:
+        reload_page(page)
+        if wait_minhas_solicitacoes(page):
+            result.update(
+                {
+                    "success": True,
+                    "status": "recovered_listing_by_reload",
+                    "method": "recovered_listing_by_reload",
+                    "url_after": safe_page_url(page),
+                }
+            )
+            return result
+    except playwright_error as exc:
+        last_error = exc
+        logger.debug(f"Falha ao recarregar listagem: {exc}")
+
+    if not unsafe_url:
+        try:
+            page.go_back(wait_until="networkidle", timeout=detail_timeout_ms)
+            if wait_minhas_solicitacoes(page):
+                result.update(
+                    {
+                        "success": True,
+                        "status": "recovered_listing_by_history",
+                        "method": "recovered_listing_by_history",
+                        "url_after": safe_page_url(page),
+                    }
+                )
+                return result
+        except playwright_error as exc:
+            last_error = exc
+            logger.debug(f"Falha ao voltar pelo historico: {exc}")
+
+    error = "Nao foi possivel retornar para a tabela de listagem."
+    if last_error:
+        error = f"{error} Ultimo erro: {last_error}"
+    result["error"] = error
+    result["url_after"] = safe_page_url(page)
+    return result
+
+
+def ensure_listing_page(
+    page,
+    listing_url: str,
+    *,
+    recover_minhas_solicitacoes,
+):
+    recovery = recover_minhas_solicitacoes(page, listing_url)
+    if recovery["success"]:
+        return page
+    raise RuntimeError(recovery["error"])
+
+
+def ensure_minhas_solicitacoes(
+    page,
+    listing_url: str,
+    *,
+    recover_minhas_solicitacoes,
+) -> bool:
+    return bool(recover_minhas_solicitacoes(page, listing_url)["success"])
+
+
+def return_to_listing(
+    page,
+    listing_url: str,
+    *,
+    ensure_minhas_solicitacoes,
+    logger,
+) -> None:
+    logger.info("Garantindo retorno para a listagem 'Minhas Solicitacoes'.")
+    if ensure_minhas_solicitacoes(page, listing_url):
+        return
+    raise RuntimeError("Nao foi possivel retornar para a tabela de listagem.")
+
+
+def return_to_listing_after_detail(
+    detail_page,
+    listing_page,
+    listing_url: str,
+    *,
+    page_is_closed,
+    recover_minhas_solicitacoes,
+    recover_listing_in_new_context_page,
+    recover_listing_by_detail_return_control,
+    recover_listing_by_authenticated_home_icon,
+    playwright_error,
+    logger,
+    allow_active_navigation: bool = False,
+):
+    if detail_page is not listing_page:
+        if not page_is_closed(listing_page):
+            if not page_is_closed(detail_page):
+                try:
+                    detail_page.close()
+                except playwright_error as exc:
+                    logger.debug(f"Falha ao fechar aba de detalhe: {exc}")
+            recovery = recover_minhas_solicitacoes(
+                listing_page,
+                listing_url,
+                allow_active_navigation=allow_active_navigation,
+            )
+            if not recovery["success"]:
+                fallback_page, fallback_recovery = recover_listing_in_new_context_page(
+                    listing_page,
+                    listing_url,
+                    previous_error=recovery.get("error"),
+                    allow_active_navigation=allow_active_navigation,
+                )
+                if fallback_recovery["success"] or fallback_recovery.get("error"):
+                    return fallback_page, fallback_recovery
+            return listing_page, recovery
+    recovery = recover_minhas_solicitacoes(
+        detail_page,
+        listing_url,
+        allow_active_navigation=allow_active_navigation,
+    )
+    if not recovery["success"]:
+        local_return_recovery = recover_listing_by_detail_return_control(
+            detail_page,
+            listing_url,
+            previous_error=recovery.get("error"),
+        )
+        if local_return_recovery["success"]:
+            return detail_page, local_return_recovery
+        home_recovery = recover_listing_by_authenticated_home_icon(
+            detail_page,
+            listing_url,
+            previous_error=recovery.get("error"),
+        )
+        if home_recovery["success"]:
+            return detail_page, home_recovery
+        fallback_page, fallback_recovery = recover_listing_in_new_context_page(
+            detail_page,
+            listing_url,
+            previous_error=recovery.get("error"),
+            allow_active_navigation=allow_active_navigation,
+        )
+        if fallback_recovery["success"] or fallback_recovery.get("error"):
+            return fallback_page, fallback_recovery
+    return detail_page, recovery
+
+
+def recover_listing_in_new_context_page(
+    page,
+    listing_url: str,
+    *,
+    page_is_closed,
+    safe_page_url,
+    recover_minhas_solicitacoes,
+    manual_recovery_message,
+    playwright_error,
+    logger,
+    previous_error: str | None = None,
+    allow_active_navigation: bool = True,
+) -> tuple[object, dict]:
+    result = {
+        "success": False,
+        "status": "failed_return_to_listing",
+        "method": "existing_context_listing_only",
+        "url_before": safe_page_url(page),
+        "url_after": None,
+        "error": previous_error or "Nao foi possivel retornar para a tabela de listagem.",
+    }
+    try:
+        context = getattr(page, "context", None)
+        if context is None:
+            return page, result
+        for candidate in list(getattr(context, "pages", []) or []):
+            if candidate is page or page_is_closed(candidate):
+                continue
+            recovery = recover_minhas_solicitacoes(
+                candidate,
+                listing_url,
+                allow_active_navigation=allow_active_navigation,
+            )
+            if recovery["success"]:
+                recovery.update(
+                    {
+                        "status": "recovered_listing_by_existing_context_page",
+                        "method": "recovered_listing_by_existing_context_page",
+                    }
+                )
+                return candidate, recovery
+        result["error"] = manual_recovery_message()
+        return page, result
+    except playwright_error as exc:
+        result["error"] = str(exc)
+        result["url_after"] = safe_page_url(page)
+        logger.debug(f"Falha ao recuperar listagem em nova aba: {exc}")
+        return page, result
+
+
+def recover_listing_by_detail_return_control(
+    page,
+    listing_url: str,
+    *,
+    page_is_closed,
+    safe_page_url,
+    is_unsafe_authenticated_control_context_url,
+    click_detail_return_to_listing,
+    wait_minhas_solicitacoes,
+    listing_has_rows,
+    manual_recovery_message,
+    playwright_error,
+    previous_error: str | None = None,
+) -> dict:
+    result = {
+        "success": False,
+        "status": "failed_return_to_listing",
+        "method": "recovered_listing_by_detail_return_control",
+        "url_before": safe_page_url(page),
+        "url_after": None,
+        "error": previous_error or manual_recovery_message(),
+    }
+    if page_is_closed(page):
+        result["url_after"] = safe_page_url(page)
+        return result
+    if is_unsafe_authenticated_control_context_url(safe_page_url(page), listing_url):
+        result["error"] = manual_recovery_message()
+        result["url_after"] = safe_page_url(page)
+        return result
+    if not click_detail_return_to_listing(page):
+        result["url_after"] = safe_page_url(page)
+        return result
+    try:
+        page.wait_for_timeout(500)
+    except playwright_error:
+        pass
+    if wait_minhas_solicitacoes(page) and listing_has_rows(page):
+        result.update(
+            {
+                "success": True,
+                "status": "recovered_listing_by_detail_return_control",
+                "url_after": safe_page_url(page),
+                "error": None,
+            }
+        )
+        return result
+    result["error"] = manual_recovery_message()
+    result["url_after"] = safe_page_url(page)
+    return result
+
+
+def successful_home_listing_recovery(page, result: dict, *, safe_page_url) -> dict:
+    result.update(
+        {
+            "success": True,
+            "status": "recovered_listing_by_authenticated_home_icon",
+            "url_after": safe_page_url(page),
+            "error": None,
+        }
+    )
+    return result
+
+
+def recover_listing_by_authenticated_home_icon(
+    page,
+    listing_url: str,
+    *,
+    page_is_closed,
+    page_looks_access_denied,
+    is_unsafe_authenticated_control_context_url,
+    safe_page_url,
+    context_pages_snapshot,
+    click_authenticated_home_icon,
+    context_pages_changed,
+    wait_minhas_solicitacoes,
+    listing_has_rows,
+    click_home_minhas_solicitacoes_control,
+    is_insecure_portal_http_url,
+    manual_recovery_message,
+    playwright_error,
+    previous_error: str | None = None,
+) -> dict:
+    result = {
+        "success": False,
+        "status": "failed_return_to_listing",
+        "method": "recovered_listing_by_authenticated_home_icon",
+        "url_before": safe_page_url(page),
+        "url_after": None,
+        "error": previous_error or manual_recovery_message(),
+    }
+    if page_is_closed(page) or page_looks_access_denied(page):
+        result["error"] = manual_recovery_message()
+        result["url_after"] = safe_page_url(page)
+        return result
+    if is_unsafe_authenticated_control_context_url(safe_page_url(page), listing_url):
+        result["error"] = manual_recovery_message()
+        result["url_after"] = safe_page_url(page)
+        return result
+
+    pages_before = context_pages_snapshot(page)
+    if not click_authenticated_home_icon(page, listing_url):
+        result["url_after"] = safe_page_url(page)
+        return result
+    if context_pages_changed(page, pages_before):
+        result["error"] = manual_recovery_message()
+        result["url_after"] = safe_page_url(page)
+        return result
+
+    try:
+        page.wait_for_timeout(500)
+    except playwright_error:
+        pass
+
+    if page_looks_access_denied(page) or is_insecure_portal_http_url(safe_page_url(page)):
+        result["error"] = manual_recovery_message()
+        result["url_after"] = safe_page_url(page)
+        return result
+    if wait_minhas_solicitacoes(page) and listing_has_rows(page):
+        return successful_home_listing_recovery(page, result, safe_page_url=safe_page_url)
+    if click_home_minhas_solicitacoes_control(page, listing_url):
+        try:
+            page.wait_for_timeout(500)
+        except playwright_error:
+            pass
+        if (
+            not page_looks_access_denied(page)
+            and not is_insecure_portal_http_url(safe_page_url(page))
+            and wait_minhas_solicitacoes(page)
+            and listing_has_rows(page)
+        ):
+            return successful_home_listing_recovery(
+                page,
+                result,
+                safe_page_url=safe_page_url,
+            )
+
+    result["error"] = manual_recovery_message()
+    result["url_after"] = safe_page_url(page)
+    return result
