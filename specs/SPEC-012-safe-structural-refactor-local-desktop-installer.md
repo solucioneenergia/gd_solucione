@@ -1,6 +1,6 @@
 # SPEC-012 - Refatoracao estrutural segura e desktop instalavel local
 
-Status: em implementacao incremental - Ciclo 5 CDP montagem de resumo concluido
+Status: em implementacao incremental - Ciclo 6 Pipeline OP5/full_pipeline.py concluido
 Data: 2026-08-15
 Responsavel: Codex
 Revisores: Operacao GD Neoenergia e revisao tecnica independente
@@ -91,10 +91,13 @@ qual e a proxima etapa de desenvolvimento.
 - [x] Ciclo 5 - CDP montagem de resumo e reducao final de `cdp_service.py`.
   Evidencia: resumo inicial, resultado por protocolo, classificadores de processamento e totais
   de download movidos para `cdp_summary.py`, com fachada publica de `cdp_service.py` preservada.
-- [ ] Ciclo 6 - Pipeline OP5/full_pipeline.py.
-  Proxima etapa: caracterizar e extrair validacao operacional, montagem do plano, processamento
-  e relatorios sem alterar OP5, CLI, Excel ou arquivamento.
+- [x] Ciclo 6 - Pipeline OP5/full_pipeline.py.
+  Evidencia: contratos/autorizacao OP5 movidos para `op5_contracts.py`, selecao/congelamento
+  de lote movidos para `op5_selection.py` e montagem/cobertura de plano OP5 movidas para
+  `op5_plan.py`, mantendo `full_pipeline.py` como fachada publica.
 - [ ] Ciclo 7 - Processamento PDF e Excel sem mudanca de escrita.
+  Proxima etapa: caracterizar `processing_service.py` e `excel/service.py` antes de extrair
+  localizacao de linha, planejamento de escrita, formatacao visual e arquivamento.
 - [ ] Ciclo 8 - Desktop instalavel local com icone e atalho.
 - [ ] Ciclo 9 - Validacao final, CI e preparo de release local.
 
@@ -103,7 +106,7 @@ qual e a proxima etapa de desenvolvimento.
 - [ ] Trilha A - Limpeza local ignorada.
   Status: pendente; nao foi misturada com as refatoracoes de codigo ja commitadas.
 - [x] Trilha B - Refatoracao de codigo rastreado.
-  Status: iniciada e com Ciclos 1 a 5 concluidos; deve continuar em commits pequenos e separados.
+  Status: iniciada e com Ciclos 1 a 6 concluidos; deve continuar em commits pequenos e separados.
 
 ## Escopo
 
@@ -250,13 +253,18 @@ entrada para OP5, CLI, testes e demais consumidores.
 
 `full_pipeline.py` deve ser dividido apenas depois de congelar testes de contrato para:
 
-- validacao operacional;
-- montagem do plano;
-- execucao de download;
-- processamento;
-- cobertura OP5;
-- relatorios;
-- tratamento de erro.
+- [x] validacao operacional;
+- [x] montagem do plano;
+- [x] selecao/congelamento do lote;
+- [ ] execucao de download;
+- [ ] processamento;
+- [x] cobertura OP5;
+- [ ] relatorios;
+- [x] tratamento de erro de autorizacao, confirmacao forte e plano congelado.
+
+Os itens ainda pendentes deste requisito nao bloqueiam o fechamento do Ciclo 6 porque dependem
+de wrappers de compatibilidade para preservar monkeypatches e testes historicos; devem ser tratados
+somente em ciclos proprios, sem misturar com processamento PDF/Excel.
 
 O entrypoint `run_full_cdp_pipeline(settings, confirmation=...)` deve permanecer compativel.
 
@@ -601,6 +609,16 @@ anteriores; nao apontar silenciosamente para o frontend legado.
   `python -m pytest tests/test_cdp_summary.py tests/test_cdp_downloads.py tests/test_cdp_detail.py tests/test_cdp_service_facade_contract.py tests/test_cdp_portal_navigation.py tests/test_full_cdp_pipeline.py tests/test_op5_stage_b_optimization.py -q`
   com 225 testes passando.
 - [x] `ruff check` nos arquivos tocados do Ciclo 5 sem erros.
+- [x] Ciclo 6 - Pipeline OP5/full_pipeline.py concluido com extracao de:
+  `op5_contracts.py` para contratos/autorizacao/confirmacao forte, `op5_selection.py` para
+  limite global, paths de processamento e escopo congelado de PDF/metadados, e `op5_plan.py`
+  para montagem/cobertura de plano OP5.
+- [x] `full_pipeline.py` preservado como fachada para `run_full_cdp_pipeline`,
+  `run_op5_archive_plan`, contratos OP5 e helpers historicos usados por CLI/testes.
+- [x] Validacao proporcional executada pelo Codex no fechamento do Ciclo 6:
+  `python -m pytest tests/test_full_pipeline_facade_contract.py tests/test_option5_batch_authorization.py tests/test_stage0_production_safety.py tests/test_full_cdp_pipeline.py tests/test_op5_stage_b_optimization.py tests/test_operational_output.py tests/test_progress_and_errors.py -q`
+  com 270 testes passando.
+- [x] `ruff check` nos arquivos tocados do Ciclo 6 sem erros.
 - [ ] Suite completa do projeto apos concluir todos os ciclos.
 - [ ] CI verde apos push final das etapas aplicaveis.
 - [ ] Smoke offline do desktop instalavel.
