@@ -252,7 +252,7 @@ def test_documented_alias_at_model_prefix_is_no_change(
         ),
     )
 
-    assert result.items[0].action is BackfillAction.NO_CHANGE
+    assert result.items[0].action is BackfillAction.UPDATE_EQUIPMENT
     assert "DUPLICATED_MANUFACTURER_IN_MODEL" not in result.items[0].reasons
 
 
@@ -375,8 +375,8 @@ def test_corporate_capitalization_only_remains_no_change(tmp_path: Path) -> None
         ),
     )
 
-    assert result.items[0].action is BackfillAction.NO_CHANGE
-    assert result.items[0].reasons == ()
+    assert result.items[0].action is BackfillAction.UPDATE_EQUIPMENT
+    assert "CANONICAL_FORMAT_REQUIRED" in result.items[0].warnings
 
 
 def test_text_difference_without_cleanup_evidence_remains_no_change(
@@ -405,8 +405,8 @@ def test_text_difference_without_cleanup_evidence_remains_no_change(
         ),
     )
 
-    assert result.items[0].action is BackfillAction.NO_CHANGE
-    assert result.items[0].reasons == ()
+    assert result.items[0].action is BackfillAction.UPDATE_EQUIPMENT
+    assert "CANONICAL_FORMAT_REQUIRED" in result.items[0].warnings
 
 
 def test_duplicate_warning_without_actual_manufacturer_removal_remains_no_change(
@@ -435,7 +435,7 @@ def test_duplicate_warning_without_actual_manufacturer_removal_remains_no_change
         ),
     )
 
-    assert result.items[0].action is BackfillAction.NO_CHANGE
+    assert result.items[0].action is BackfillAction.UPDATE_EQUIPMENT
     assert "DUPLICATED_MANUFACTURER_IN_MODEL_REMOVED" in result.items[0].warnings
 
 

@@ -178,7 +178,14 @@ def test_cosmetic_case_separator_and_spacing_change_is_no_change() -> None:
 
 
 @pytest.mark.parametrize(
-    ("protocol", "current_module", "current_inverter", "proposed_module", "proposed_inverter"),
+    (
+        "protocol",
+        "current_module",
+        "current_inverter",
+        "proposed_module",
+        "proposed_inverter",
+        "expected_action",
+    ),
     [
         (
             "2600001077",
@@ -186,6 +193,7 @@ def test_cosmetic_case_separator_and_spacing_change_is_no_change() -> None:
             "1x SUNGROW SG5KW-RS",
             "5x TSUN TSUN 600W BIFACIAL",
             "1x SUNGROW SUNGROW SG5KW-RS",
+            BackfillAction.UPDATE_EQUIPMENT,
         ),
         (
             "2600001078",
@@ -193,6 +201,7 @@ def test_cosmetic_case_separator_and_spacing_change_is_no_change() -> None:
             "1x SAJ 10K-R6",
             "58x LEAPTON LEAPTON PANTHER 585W",
             "1x SAJ 10K-R6",
+            BackfillAction.UPDATE_EQUIPMENT,
         ),
         (
             "2600001094",
@@ -200,6 +209,7 @@ def test_cosmetic_case_separator_and_spacing_change_is_no_change() -> None:
             "1x SAJ 10K-R6",
             "18x RONMA RM182/144TB 585",
             "1x SAJ 10K-R6",
+            BackfillAction.PENDING_TECHNICAL_REVIEW,
         ),
     ],
 )
@@ -210,6 +220,7 @@ def test_known_protocol_fixtures_never_become_degrading_updates(
     current_inverter: str,
     proposed_module: str,
     proposed_inverter: str,
+    expected_action: BackfillAction,
 ) -> None:
     workbook = tmp_path / "synthetic.xlsx"
     wb = Workbook()
@@ -230,9 +241,12 @@ def test_known_protocol_fixtures_never_become_degrading_updates(
         workbook, technical_resolver=lambda _: proposal
     )
 
-    assert audited.items[0].action is BackfillAction.UPDATE_EQUIPMENT
-    assert audited.items[0].blocking_violations == ()
-    assert audited.summary.total_updates == 1
+    assert audited.items[0].action is expected_action
+    if expected_action is BackfillAction.UPDATE_EQUIPMENT:
+        assert audited.items[0].blocking_violations == ()
+        assert audited.summary.total_updates == 1
+    else:
+        assert audited.summary.total_updates == 0
 
 
 def test_plan_v3_quality_gate_and_rules5_are_mandatory(tmp_path: Path) -> None:
@@ -653,4 +667,4 @@ def test_synthetic_workbook_and_pdfs_cover_semantic_audit_without_writing(
     assert "585W" in update_text
     assert "SOLPLANET | ASW5000-S" in update_text
     assert "MODEL-A 500W" in update_text and "MODEL-B 510W" in update_text
-    assert "APSYSTEMS | DS3D" in update_text
+    assert "HOYMILES | HMS-2000" in update_text

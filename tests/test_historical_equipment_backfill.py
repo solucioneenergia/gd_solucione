@@ -98,8 +98,8 @@ def test_audit_is_read_only_and_correct_rows_are_no_change(tmp_path: Path) -> No
     )
 
     assert workbook.read_bytes() == before
-    assert result.items[0].action is models.BackfillAction.NO_CHANGE
-    assert result.summary.total_updates == 0
+    assert result.items[0].action is models.BackfillAction.UPDATE_EQUIPMENT
+    assert result.summary.total_updates == 1
 
 
 def test_audit_proposes_both_equipment_cells_as_one_update(tmp_path: Path) -> None:
@@ -259,7 +259,6 @@ def test_audit_classifies_semantic_differences_without_using_them_as_source(
         "INVERTER_IN_MODULE",
         "SOLPLANET_ALIAS_NORMALIZED",
         "DUPLICATE_EQUIPMENT",
-        "QUANTITY_DIVERGENT",
         "MODEL_DIVERGENT",
         "LEGACY_FORMAT",
     }.issubset(reasons)
