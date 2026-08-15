@@ -65,3 +65,19 @@ def test_cdp_service_keeps_next_listing_page_signature() -> None:
     signature = inspect.signature(cdp_service.find_and_click_next_listing_page)
 
     assert list(signature.parameters) == ["page", "current_page_number"]
+
+
+def test_cdp_service_keeps_listing_page_diagnostic_signatures() -> None:
+    next_signature = inspect.signature(cdp_service._click_next_listing_page_diagnostic)
+    previous_signature = inspect.signature(
+        cdp_service._click_previous_listing_page_diagnostic
+    )
+
+    assert list(next_signature.parameters) == ["page"]
+    assert list(previous_signature.parameters) == ["page"]
+
+
+def test_cdp_service_keeps_numeric_page_navigation_signature() -> None:
+    signature = inspect.signature(cdp_service.navigate_to_numeric_page)
+
+    assert list(signature.parameters) == ["page", "target_page_number"]

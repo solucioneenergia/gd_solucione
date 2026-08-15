@@ -3895,32 +3895,15 @@ def _reload_current_listing_when_rows_are_empty(page) -> dict:
 
 def navigate_to_numeric_page(page, target_page_number: int) -> dict:
     target = int(target_page_number or 1)
-    result = {
-        "success": False,
-        "status": "failed_return_to_listing",
-        "method": "numeric_page_navigation",
-        "target_page_number": target,
-        "active_page_before": None,
-        "active_page_after": None,
-        "signature_before": None,
-        "signature_after": None,
-        "click_result": None,
-        "url_after": None,
-        "error": None,
-    }
+    result = cdp_navigation_helpers.build_numeric_page_navigation_result(target)
     active_before = get_active_numeric_page(page)
     result["active_page_before"] = active_before
     if active_before == target:
-        result.update(
-            {
-                "success": True,
-                "status": "already_on_target_page",
-                "method": "numeric_page_not_needed",
-                "active_page_after": active_before,
-                "url_after": _safe_page_url(page),
-            }
+        return cdp_navigation_helpers.mark_numeric_page_navigation_already_on_target(
+            result,
+            active_page=active_before,
+            url_after=_safe_page_url(page),
         )
-        return result
     if active_before is None:
         if _has_minhas_solicitacoes_table(page):
             active_before = 1
@@ -5309,45 +5292,34 @@ def _click_next_listing_page_diagnostic(page) -> dict:
             }
             """
         )
-        if isinstance(result, bool):
-            result = {
-                "found": result,
-                "enabled": result,
-                "clicked": result,
-                "selector": "legacy-boolean-evaluate",
-                "text": None,
-                "class_name": None,
-                "stop_reason": None if result else "pagination_next_not_found",
-            }
-        if not isinstance(result, dict):
-            result = {
-                "found": False,
-                "enabled": False,
-                "clicked": False,
-                "selector": None,
-                "text": None,
-                "class_name": None,
-                "stop_reason": "pagination_next_not_found",
-            }
-        if result.get("clicked"):
-            logger.info(
+        return cdp_navigation_helpers.finish_listing_page_click_diagnostic(
+            result=result,
+            legacy_not_found_stop_reason="pagination_next_not_found",
+            fallback_not_found_stop_reason="pagination_next_not_found",
+            click_error_stop_reason_prefix="pagination_click_error",
+            clicked_log_message=(
                 "Avancando para a proxima pagina da listagem "
-                f"(selector={result.get('selector')}, text={result.get('text')})."
-            )
-        else:
-            logger.info(f"Proxima pagina nao clicada: {result}")
-        return result
+                "(selector={selector}, text={text})."
+            ),
+            not_clicked_log_message="Proxima pagina nao clicada: {result}",
+            click_error_log_message="Falha ao clicar na proxima pagina",
+            logger=logger,
+        )
     except (PlaywrightError, AttributeError) as exc:
-        logger.warning(f"Falha ao clicar na proxima pagina: {exc}")
-        return {
-            "found": False,
-            "enabled": False,
-            "clicked": False,
-            "selector": None,
-            "text": None,
-            "class_name": None,
-            "stop_reason": f"pagination_click_error: {exc}",
-        }
+        return cdp_navigation_helpers.finish_listing_page_click_diagnostic(
+            result=None,
+            legacy_not_found_stop_reason="pagination_next_not_found",
+            fallback_not_found_stop_reason="pagination_next_not_found",
+            click_error_stop_reason_prefix="pagination_click_error",
+            clicked_log_message=(
+                "Avancando para a proxima pagina da listagem "
+                "(selector={selector}, text={text})."
+            ),
+            not_clicked_log_message="Proxima pagina nao clicada: {result}",
+            click_error_log_message="Falha ao clicar na proxima pagina",
+            logger=logger,
+            error=exc,
+        )
 
 
 def _click_previous_listing_page_diagnostic(page) -> dict:
@@ -5462,45 +5434,34 @@ def _click_previous_listing_page_diagnostic(page) -> dict:
             }
             """
         )
-        if isinstance(result, bool):
-            result = {
-                "found": result,
-                "enabled": result,
-                "clicked": result,
-                "selector": "legacy-boolean-evaluate",
-                "text": None,
-                "class_name": None,
-                "stop_reason": None if result else "pagination_previous_not_found",
-            }
-        if not isinstance(result, dict):
-            result = {
-                "found": False,
-                "enabled": False,
-                "clicked": False,
-                "selector": None,
-                "text": None,
-                "class_name": None,
-                "stop_reason": "pagination_previous_not_found",
-            }
-        if result.get("clicked"):
-            logger.info(
+        return cdp_navigation_helpers.finish_listing_page_click_diagnostic(
+            result=result,
+            legacy_not_found_stop_reason="pagination_previous_not_found",
+            fallback_not_found_stop_reason="pagination_previous_not_found",
+            click_error_stop_reason_prefix="pagination_previous_click_error",
+            clicked_log_message=(
                 "Retornando para a pagina anterior da listagem "
-                f"(selector={result.get('selector')}, text={result.get('text')})."
-            )
-        else:
-            logger.info(f"Pagina anterior nao clicada: {result}")
-        return result
+                "(selector={selector}, text={text})."
+            ),
+            not_clicked_log_message="Pagina anterior nao clicada: {result}",
+            click_error_log_message="Falha ao clicar na pagina anterior",
+            logger=logger,
+        )
     except (PlaywrightError, AttributeError) as exc:
-        logger.warning(f"Falha ao clicar na pagina anterior: {exc}")
-        return {
-            "found": False,
-            "enabled": False,
-            "clicked": False,
-            "selector": None,
-            "text": None,
-            "class_name": None,
-            "stop_reason": f"pagination_previous_click_error: {exc}",
-        }
+        return cdp_navigation_helpers.finish_listing_page_click_diagnostic(
+            result=None,
+            legacy_not_found_stop_reason="pagination_previous_not_found",
+            fallback_not_found_stop_reason="pagination_previous_not_found",
+            click_error_stop_reason_prefix="pagination_previous_click_error",
+            clicked_log_message=(
+                "Retornando para a pagina anterior da listagem "
+                "(selector={selector}, text={text})."
+            ),
+            not_clicked_log_message="Pagina anterior nao clicada: {result}",
+            click_error_log_message="Falha ao clicar na pagina anterior",
+            logger=logger,
+            error=exc,
+        )
 
 
 def _click_next_listing_page(page) -> bool:

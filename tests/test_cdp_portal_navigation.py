@@ -491,6 +491,85 @@ def test_next_listing_page_reports_last_page_when_button_not_found(monkeypatch) 
     assert result["stop_reason"] == "last_page_reached"
 
 
+def test_next_listing_page_diagnostic_accepts_legacy_boolean_result() -> None:
+    class Page:
+        def evaluate(self, script: str) -> bool:
+            assert "pagination_next_not_found" in script
+            return True
+
+    result = cdp_service._click_next_listing_page_diagnostic(Page())
+
+    assert result == {
+        "found": True,
+        "enabled": True,
+        "clicked": True,
+        "selector": "legacy-boolean-evaluate",
+        "text": None,
+        "class_name": None,
+        "stop_reason": None,
+    }
+
+
+def test_previous_listing_page_diagnostic_accepts_legacy_boolean_result() -> None:
+    class Page:
+        def evaluate(self, script: str) -> bool:
+            assert "pagination_previous_not_found" in script
+            return False
+
+    result = cdp_service._click_previous_listing_page_diagnostic(Page())
+
+    assert result == {
+        "found": False,
+        "enabled": False,
+        "clicked": False,
+        "selector": "legacy-boolean-evaluate",
+        "text": None,
+        "class_name": None,
+        "stop_reason": "pagination_previous_not_found",
+    }
+
+
+def test_next_listing_page_diagnostic_reports_click_errors() -> None:
+    class Page:
+        def evaluate(self, script: str) -> dict:
+            raise AttributeError("missing evaluate")
+
+    result = cdp_service._click_next_listing_page_diagnostic(Page())
+
+    assert result["found"] is False
+    assert result["enabled"] is False
+    assert result["clicked"] is False
+    assert result["stop_reason"] == "pagination_click_error: missing evaluate"
+
+
+def test_navigate_to_numeric_page_reports_already_on_target(monkeypatch) -> None:
+    monkeypatch.setattr(cdp_service, "get_active_numeric_page", lambda page: 4)
+    monkeypatch.setattr(
+        cdp_service,
+        "_safe_page_url",
+        lambda page: "https://gdneoenergiapernambuco.neoenergia.com/minhas",
+    )
+
+    result = cdp_service.navigate_to_numeric_page(
+        page=object(),
+        target_page_number=4,
+    )
+
+    assert result == {
+        "success": True,
+        "status": "already_on_target_page",
+        "method": "numeric_page_not_needed",
+        "target_page_number": 4,
+        "active_page_before": 4,
+        "active_page_after": 4,
+        "signature_before": None,
+        "signature_after": None,
+        "click_result": None,
+        "url_after": "https://gdneoenergiapernambuco.neoenergia.com/minhas",
+        "error": None,
+    }
+
+
 def test_portal_listing_reader_accepts_identification_code_header() -> None:
     source = cdp_service.read_current_page_table_with_row_handles.__code__.co_consts
     script = next(item for item in source if isinstance(item, str) and "mapHeader" in item)
