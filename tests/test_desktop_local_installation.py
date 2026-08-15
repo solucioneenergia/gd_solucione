@@ -42,9 +42,13 @@ def test_windows_build_uses_solucione_name_and_validated_icon() -> None:
     source = (ROOT / "scripts" / "build_windows.ps1").read_text(encoding="utf-8")
 
     assert '$AppName = "Solucione Nordeste"' in source
+    assert "$PythonPath" in source
+    assert "PYTHON_BUILD_ENV_INVALID" in source
     assert "app_icon.ico" in source
     assert "--icon" in source
     assert '--name "$AppName"' in source
+    assert "-m PyInstaller" in source
+    assert "Activate.ps1" not in source
     assert "apps/desktop/resources" in source
     assert "DESKTOP_ICON_INVALID" in source
     assert "Assert-DesktopIconFile" in source
@@ -73,6 +77,7 @@ def test_local_install_scripts_create_shortcut_without_dev_or_operational_steps(
         ]
     )
     assert "Solucione Nordeste.lnk" in combined
+    assert "_internal\\apps\\desktop\\resources\\app_icon.ico" in combined
     assert "apps\\desktop\\resources\\app_icon.ico" in combined
     assert "WScript.Shell" in combined
     assert "IconLocation" in combined

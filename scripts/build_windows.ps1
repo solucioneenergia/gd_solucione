@@ -1,6 +1,7 @@
 param(
     [string]$AppName = "Solucione Nordeste",
-    [string]$IconPath = ""
+    [string]$IconPath = "",
+    [string]$PythonPath = ""
 )
 
 $ErrorActionPreference = "Stop"
@@ -35,6 +36,46 @@ function Assert-DesktopIconFile {
     }
     finally {
         $Stream.Dispose()
+    }
+}
+
+function Resolve-BuildPython {
+    param(
+        [string]$RequestedPythonPath
+    )
+
+    if (-not [string]::IsNullOrWhiteSpace($RequestedPythonPath)) {
+        $ResolvedPython = Resolve-Path -LiteralPath $RequestedPythonPath -ErrorAction SilentlyContinue
+        if (-not $ResolvedPython) {
+            throw "PYTHON_BUILD_ENV_INVALID: python informado nao encontrado: $RequestedPythonPath"
+        }
+        return $ResolvedPython.Path
+    }
+
+    $VenvPython = Join-Path $ProjectRoot ".venv\Scripts\python.exe"
+    if (-not (Test-Path -LiteralPath $VenvPython)) {
+        if (-not (Get-Command py -ErrorAction SilentlyContinue)) {
+            throw "PYTHON_BUILD_ENV_INVALID: py -3.12 nao encontrado para criar .venv."
+        }
+        py -3.12 -m venv .venv
+    }
+    return $VenvPython
+}
+
+function Assert-BuildPython {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Path
+    )
+
+    try {
+        & $Path --version | Out-Null
+    }
+    catch {
+        throw "PYTHON_BUILD_ENV_INVALID: python do build nao executa: $Path"
+    }
+    if ($LASTEXITCODE -ne 0) {
+        throw "PYTHON_BUILD_ENV_INVALID: python do build retornou codigo $LASTEXITCODE`: $Path"
     }
 }
 
@@ -74,14 +115,12 @@ if (-not (Test-Path (Join-Path $FrontendDist "index.html"))) {
     throw "Build frontend canônico ausente: apps\desktop\frontend\dist\index.html"
 }
 
-if (-not (Test-Path ".venv")) {
-    py -3.12 -m venv .venv
-}
-& .\.venv\Scripts\Activate.ps1
-python -m pip install --upgrade pip
-pip install -r requirements-build.txt
+$BuildPython = Resolve-BuildPython -RequestedPythonPath $PythonPath
+Assert-BuildPython -Path $BuildPython
+& $BuildPython -m pip install --upgrade pip
+& $BuildPython -m pip install -r requirements-build.txt
 
-python -m PyInstaller `
+& $BuildPython -m PyInstaller `
     --noconfirm `
     --clean `
     --windowed `

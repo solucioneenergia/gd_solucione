@@ -3703,6 +3703,15 @@ def navigate_to_numeric_page(page, target_page_number: int) -> dict:
         )
         if should_return:
             return result
+    if active_before is None:
+        result.update(
+            {
+                "status": "cannot_confirm_active_page",
+                "error": "Nao foi possivel detectar a pagina ativa antes da navegacao.",
+                "url_after": _safe_page_url(page),
+            }
+        )
+        return result
 
     try:
         rows_before = read_current_page_table_with_row_handles(page)

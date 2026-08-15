@@ -37,7 +37,10 @@ if (-not (Test-Path -LiteralPath $InstalledExecutable)) {
 if ($CreateShortcut) {
     $ShortcutScript = Join-Path $PSScriptRoot "create_desktop_shortcut.ps1"
     $ShortcutPath = Join-Path ([Environment]::GetFolderPath("Desktop")) "Solucione Nordeste.lnk"
-    $IconPath = Join-Path $InstallRoot "apps\desktop\resources\app_icon.ico"
+    $IconPath = Join-Path $InstallRoot "_internal\apps\desktop\resources\app_icon.ico"
+    if (-not (Test-Path -LiteralPath $IconPath)) {
+        $IconPath = Join-Path $InstallRoot "apps\desktop\resources\app_icon.ico"
+    }
     if (-not (Test-Path -LiteralPath $IconPath)) {
         $IconPath = $InstalledExecutable
     }

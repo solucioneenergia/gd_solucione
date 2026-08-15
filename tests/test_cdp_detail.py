@@ -31,28 +31,28 @@ class _DetailPage:
 def test_extract_detail_header_reads_protocol_and_client_from_detail_title() -> None:
     page = _DetailPage(
         body="Unidade consumidora\nTitular: Cliente do Corpo",
-        titles=["Solicitação 2601123456: MARIA DA SILVA"],
+        titles=["Solicitação 2600001107: CLIENTE SINTETICO LTDA"],
     )
 
     header = cdp_detail.extract_detail_header(page)
 
     assert header == {
-        "detail_protocol": "2601123456",
-        "detail_client_name": "MARIA DA SILVA",
+        "detail_protocol": "2600001107",
+        "detail_client_name": "SINTETICO LTDA",
     }
 
 
 def test_extract_detail_header_falls_back_to_body_client_when_title_has_only_protocol() -> None:
     page = _DetailPage(
-        body="Dados gerais\nCliente: JOAO PEREIRA\nEtapa atual",
-        titles=["Detalhe do protocolo 2601654321"],
+        body="Dados gerais\nCliente: CLIENTE SINTETICO LTDA\nEtapa atual",
+        titles=["Detalhe do protocolo 2600001106"],
     )
 
     header = cdp_detail.extract_detail_header(page)
 
     assert header == {
-        "detail_protocol": "2601654321",
-        "detail_client_name": "JOAO PEREIRA",
+        "detail_protocol": "2600001106",
+        "detail_client_name": "SINTETICO LTDA",
     }
 
 
@@ -145,7 +145,7 @@ def test_wait_detail_loaded_waits_for_protocol_text() -> None:
 
     cdp_detail.wait_detail_loaded(
         Page(),
-        "2601123456",
+        "2600001107",
         detail_timeout_ms=20_000,
         playwright_error=RuntimeError,
         playwright_timeout_error=TimeoutError,
@@ -154,6 +154,6 @@ def test_wait_detail_loaded_waits_for_protocol_text() -> None:
 
     assert events == [
         ("load", "domcontentloaded", 20_000),
-        ("text", "2601123456"),
+        ("text", "2600001107"),
         ("wait_text", 20_000),
     ]

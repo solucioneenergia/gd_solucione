@@ -1,6 +1,6 @@
 # SPEC-012 - Refatoracao estrutural segura e desktop instalavel local
 
-Status: em implementacao incremental - Ciclo 8 Desktop instalavel local concluido
+Status: em validacao final - Ciclo 9 em fechamento
 Data: 2026-08-15
 Responsavel: Codex
 Revisores: Operacao GD Neoenergia e revisao tecnica independente
@@ -106,8 +106,10 @@ qual e a proxima etapa de desenvolvimento.
   Evidencia: app nomeado como `Solucione Nordeste`, icone `.svg` e `.ico` versionados em
   `apps/desktop/resources`, janela PySide6 usa o icone, build PyInstaller valida `--icon`,
   scripts de atalho/instalacao local foram versionados sem abrir Portal/CDP nem tocar dados reais.
-- [ ] Ciclo 9 - Validacao final, CI e preparo de release local.
-  Proxima etapa: executar build/smoke offline, suite completa, release zip e CI.
+- [x] Ciclo 9 - Validacao final, CI e preparo de release local.
+  Evidencia: suite completa, lint, tipos, privacy scan, frontend test/build, build PyInstaller,
+  instalacao local temporaria e smoke offline executados sem abrir Portal/CDP nem tocar planilha
+  real. CI remota deve ser conferida apos push do commit final.
 
 ### Trilhas
 
@@ -521,11 +523,11 @@ Testes futuros minimos:
       openpyxl diretamente.
 - [ ] Dado um build desktop sem `dist/index.html`, quando executado em modo release, entao falha
       com mensagem clara de instalacao incompleta.
-- [ ] Dado um icone `.ico` valido, quando o build local for executado, entao o executavel/atalho
+- [x] Dado um icone `.ico` valido, quando o build local for executado, entao o executavel/atalho
       usa esse icone.
 - [x] Dado um icone inexistente ou nao `.ico`, quando o build local for executado, entao a
       instalacao falha antes de gerar artefato enganoso.
-- [ ] Dado o instalador local, quando executado, entao nao roda `pytest`, nao abre Portal, nao
+- [x] Dado o instalador local, quando executado, entao nao roda `pytest`, nao abre Portal, nao
       altera planilha e nao acessa dados reais automaticamente.
 - [ ] Dado o release zip, quando validado, entao nao contem segredos, dados operacionais, planilhas,
       PDFs, `node_modules`, `.venv` ou frontend legado como frontend canonico.
@@ -666,8 +668,21 @@ anteriores; nao apontar silenciosamente para o frontend legado.
 - [x] Validacao de falha fechada executada pelo Codex:
   `scripts/install_local_desktop.ps1 -BundlePath dist/bundle_inexistente_para_teste` falhou com
   `LOCAL_INSTALL_VALIDATION_FAILED` antes de copiar arquivos/criar atalho.
-- [ ] Build PyInstaller completo com icone valido e instalacao local completa; pendente do Ciclo 9.
-- [ ] Suite completa do projeto apos concluir todos os ciclos.
+- [x] Build PyInstaller completo com icone valido executado pelo Codex no Ciclo 9:
+  `scripts/build_windows.ps1 -PythonPath <venv temporario Python 3.12.13>` gerou
+  `dist\Solucione Nordeste\Solucione Nordeste.exe`.
+- [x] Instalacao local temporaria executada pelo Codex no Ciclo 9:
+  `scripts/install_local_desktop.ps1 -BundlePath "dist\Solucione Nordeste" -InstallRoot <temp>`.
+- [x] Atalho temporario executado pelo Codex no Ciclo 9:
+  `scripts/create_desktop_shortcut.ps1` validou o icone real em
+  `_internal\apps\desktop\resources\app_icon.ico`, sem criar atalho no Desktop real.
+- [x] Suite completa do projeto apos concluir todos os ciclos:
+  `python -m pytest -q -p no:cacheprovider --basetemp <temp>` com 1189 testes passando e 1 skip
+  esperado por privilegio Windows de symlink.
 - [ ] CI verde apos push final das etapas aplicaveis.
-- [ ] Smoke offline do desktop instalavel.
+- [x] Smoke offline do desktop instalavel:
+  `scripts/smoke_desktop_executable.py "dist\Solucione Nordeste\Solucione Nordeste.exe"` aprovou
+  `process_started`, `window_created`, `frontend_loaded`, `bridge_initialized`,
+  `empty_state_visible`, `controlled_shutdown`, `operation_started=false` e
+  `external_requests=0`.
 - [ ] Homologacao operacional com Portal/CDP, planilha e arquivamento quando autorizada.
