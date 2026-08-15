@@ -6,7 +6,10 @@ from types import SimpleNamespace
 
 from src.cdp_portal_service import (
     _download_result_from_record,
+    _is_portal_root_or_index_url,
+    _is_unsafe_authenticated_control_context_url,
     _is_unsafe_navigation_url,
+    _locator_href_is_unsafe,
     _reuse_existing_pdf_without_detail,
     find_existing_download_metadata,
     should_open_detail_for_budget,
@@ -192,6 +195,73 @@ def test_unsafe_navigation_urls_are_rejected_for_history() -> None:
     assert _is_unsafe_navigation_url("about:blank", listing_url) is True
     assert _is_unsafe_navigation_url("https://example.com/home", listing_url) is True
     assert _is_unsafe_navigation_url(listing_url, listing_url) is False
+
+
+def test_navigation_root_and_index_are_rejected_for_history() -> None:
+    listing_url = "https://gdneoenergiapernambuco.neoenergia.com/minhas"
+
+    assert _is_portal_root_or_index_url(
+        "https://gdneoenergiapernambuco.neoenergia.com/"
+    )
+    assert _is_portal_root_or_index_url(
+        "https://gdneoenergiapernambuco.neoenergia.com/index.jsf"
+    )
+    assert _is_unsafe_navigation_url(
+        "https://gdneoenergiapernambuco.neoenergia.com/",
+        listing_url,
+    ) is True
+    assert _is_unsafe_navigation_url(
+        "https://gdneoenergiapernambuco.neoenergia.com/index.jsf",
+        listing_url,
+    ) is True
+
+
+def test_authenticated_control_context_rejects_external_or_internal_urls() -> None:
+    listing_url = "https://gdneoenergiapernambuco.neoenergia.com/minhas"
+
+    assert _is_unsafe_authenticated_control_context_url("about:blank", listing_url) is True
+    assert (
+        _is_unsafe_authenticated_control_context_url(
+            "https://example.com/home",
+            listing_url,
+        )
+        is True
+    )
+    assert (
+        _is_unsafe_authenticated_control_context_url(
+            "https://gdneoenergiapernambuco.neoenergia.com/detalhe",
+            listing_url,
+        )
+        is False
+    )
+
+
+def test_locator_href_root_policy_is_explicit() -> None:
+    listing_url = "https://gdneoenergiapernambuco.neoenergia.com/minhas"
+
+    class Locator:
+        def get_attribute(self, name: str, **kwargs) -> str:
+            assert name == "href"
+            return "https://gdneoenergiapernambuco.neoenergia.com/"
+
+    locator = Locator()
+
+    assert (
+        _locator_href_is_unsafe(
+            locator,
+            listing_url,
+            allow_same_host_root_or_index=False,
+        )
+        is True
+    )
+    assert (
+        _locator_href_is_unsafe(
+            locator,
+            listing_url,
+            allow_same_host_root_or_index=True,
+        )
+        is False
+    )
 
 
 def test_portal_listing_reader_accepts_identification_code_header() -> None:

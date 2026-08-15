@@ -10,6 +10,15 @@ from automacao_gd.infrastructure.portal.cdp_extractors import (
 from automacao_gd.infrastructure.portal.cdp_extractors import (
     extract_point_of_connection_completion_from_text as internal_completion_extractor,
 )
+from automacao_gd.infrastructure.portal.cdp_navigation import (
+    _is_portal_root_or_index_url as internal_is_portal_root_or_index_url,
+)
+from automacao_gd.infrastructure.portal.cdp_navigation import (
+    _is_unsafe_navigation_url as internal_is_unsafe_navigation_url,
+)
+from automacao_gd.infrastructure.portal.cdp_navigation import (
+    is_insecure_portal_http_url as internal_is_insecure_portal_http_url,
+)
 
 
 def test_cdp_service_keeps_completion_extraction_facade() -> None:
@@ -25,3 +34,12 @@ def test_cdp_service_keeps_completion_extraction_facade() -> None:
 
 def test_cdp_service_keeps_download_error_facade() -> None:
     assert cdp_service.DownloadNotProducedError is InternalDownloadNotProducedError
+
+
+def test_cdp_service_keeps_navigation_facade() -> None:
+    assert cdp_service._is_unsafe_navigation_url is internal_is_unsafe_navigation_url
+    assert (
+        cdp_service._is_portal_root_or_index_url
+        is internal_is_portal_root_or_index_url
+    )
+    assert cdp_service.is_insecure_portal_http_url is internal_is_insecure_portal_http_url

@@ -37,6 +37,13 @@ from automacao_gd.infrastructure.portal.cdp_extractors import (
     _next_timeline_stage_index,
     extract_point_of_connection_completion_from_text,
 )
+from automacao_gd.infrastructure.portal.cdp_navigation import (
+    PORTAL_GD_HOST,
+    _is_portal_root_or_index_url,
+    _is_unsafe_authenticated_control_context_url,
+    _is_unsafe_navigation_url,
+    is_insecure_portal_http_url,
+)
 from automacao_gd.infrastructure.pdf.service import extract_generation_data
 
 
@@ -62,11 +69,17 @@ INCOMPLETE_PAGINATION_STOP_REASONS = {
     "pagination_duplicate_page_content",
     "cannot_confirm_active_page",
 }
-PORTAL_GD_HOST = "gdneoenergiapernambuco.neoenergia.com"
 _CDP_EXTRACTOR_FACADE_EXPORTS = (
     POINT_OF_CONNECTION_STAGE_LABEL,
     _find_stage_ranges,
     _next_timeline_stage_index,
+)
+_CDP_NAVIGATION_FACADE_EXPORTS = (
+    PORTAL_GD_HOST,
+    _is_portal_root_or_index_url,
+    _is_unsafe_authenticated_control_context_url,
+    _is_unsafe_navigation_url,
+    is_insecure_portal_http_url,
 )
 
 
@@ -174,11 +187,6 @@ def portal_login_required_message() -> str:
         "Sessao do Portal GD expirada ou tela de login/CAPTCHA detectada. "
         "Faca login manual no Edge e deixe a listagem 'Minhas Solicitacoes' aberta."
     )
-
-
-def is_insecure_portal_http_url(url: str) -> bool:
-    parsed = urlparse(url or "")
-    return parsed.scheme == "http" and parsed.netloc.lower() == PORTAL_GD_HOST
 
 
 def read_current_page_table_with_row_handles(page) -> list[dict]:
@@ -6223,53 +6231,6 @@ def _safe_page_url(page) -> str:
         return page.url or ""
     except PlaywrightError:
         return ""
-
-
-def _is_unsafe_navigation_url(current_url: str | None, listing_url: str | None) -> bool:
-    current = urlparse(current_url or "")
-    listing = urlparse(listing_url or "")
-    if is_insecure_portal_http_url(listing_url or ""):
-        return True
-    if listing.scheme and listing.scheme.lower() != "https":
-        return True
-    if current.scheme.lower() in {"about", "edge", "chrome"}:
-        return True
-    if not current.netloc:
-        return True
-    if is_insecure_portal_http_url(current_url or ""):
-        return True
-    expected_host = urlparse(listing_url or "").netloc.lower()
-    if expected_host and current.netloc.lower() != expected_host:
-        return True
-    if _is_portal_root_or_index_url(current_url or "", expected_host):
-        return True
-    return False
-
-
-def _is_unsafe_authenticated_control_context_url(
-    current_url: str | None,
-    listing_url: str | None,
-) -> bool:
-    current = urlparse(current_url or "")
-    if current.scheme.lower() in {"about", "edge", "chrome"}:
-        return True
-    if not current.netloc:
-        return True
-    if is_insecure_portal_http_url(current_url or ""):
-        return True
-    expected_host = urlparse(listing_url or "").netloc.lower()
-    if expected_host and current.netloc.lower() != expected_host:
-        return True
-    return False
-
-
-def _is_portal_root_or_index_url(url: str, expected_host: str | None = None) -> bool:
-    parsed = urlparse(url or "")
-    host = (expected_host or PORTAL_GD_HOST).lower()
-    if parsed.netloc.lower() != host:
-        return False
-    path = (parsed.path or "/").rstrip("/").lower()
-    return path in {"", "/index.jsf"}
 
 
 def _listing_has_rows(page) -> bool:
