@@ -318,6 +318,64 @@ def test_locator_href_root_policy_is_explicit() -> None:
     )
 
 
+def test_previous_listing_page_reports_clicked_result(monkeypatch) -> None:
+    monkeypatch.setattr(
+        cdp_service,
+        "_click_previous_listing_page_diagnostic",
+        lambda page: {
+            "found": True,
+            "enabled": True,
+            "clicked": True,
+            "selector": ".ui-paginator-prev",
+            "text": "Anterior",
+            "class_name": "",
+            "stop_reason": None,
+        },
+    )
+
+    result = cdp_service.find_and_click_previous_listing_page(
+        page=object(),
+        current_page_number=7,
+    )
+
+    assert result["found"] is True
+    assert result["enabled"] is True
+    assert result["previous_page_available"] is True
+    assert result["mode"] == "previous_button"
+    assert result["current_page_number"] == 7
+    assert result["target_page_number"] == 6
+    assert result["stop_reason"] == "pagination_previous_clicked"
+
+
+def test_previous_listing_page_reports_first_page_when_not_found(monkeypatch) -> None:
+    monkeypatch.setattr(
+        cdp_service,
+        "_click_previous_listing_page_diagnostic",
+        lambda page: {
+            "found": False,
+            "enabled": False,
+            "clicked": False,
+            "selector": None,
+            "text": None,
+            "class_name": None,
+            "stop_reason": "pagination_previous_not_found",
+        },
+    )
+
+    result = cdp_service.find_and_click_previous_listing_page(
+        page=object(),
+        current_page_number=1,
+    )
+
+    assert result["found"] is False
+    assert result["enabled"] is False
+    assert result["previous_page_available"] is False
+    assert result["mode"] == "previous_button"
+    assert result["current_page_number"] == 1
+    assert result["target_page_number"] == 1
+    assert result["stop_reason"] == "pagination_previous_not_found"
+
+
 def test_portal_listing_reader_accepts_identification_code_header() -> None:
     source = cdp_service.read_current_page_table_with_row_handles.__code__.co_consts
     script = next(item for item in source if isinstance(item, str) and "mapHeader" in item)

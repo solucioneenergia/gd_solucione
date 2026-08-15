@@ -53,3 +53,9 @@ def test_cdp_service_keeps_numeric_paginator_click_signature() -> None:
         signature.parameters["target_page_number"].kind
         is inspect.Parameter.KEYWORD_ONLY
     )
+
+
+def test_cdp_service_keeps_previous_listing_page_signature() -> None:
+    signature = inspect.signature(cdp_service.find_and_click_previous_listing_page)
+
+    assert list(signature.parameters) == ["page", "current_page_number"]

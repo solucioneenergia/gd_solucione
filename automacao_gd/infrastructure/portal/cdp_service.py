@@ -5097,28 +5097,11 @@ def find_and_click_next_listing_page(page, current_page_number: int) -> dict:
 
 
 def find_and_click_previous_listing_page(page, current_page_number: int) -> dict:
-    previous_button = _click_previous_listing_page_diagnostic(page)
-    result = {
-        **previous_button,
-        "mode": "previous_button",
-        "current_page_number": current_page_number,
-        "target_page_number": max(1, int(current_page_number or 1) - 1),
-    }
-    if previous_button.get("clicked"):
-        result["found"] = True
-        result["enabled"] = True
-        result["previous_page_available"] = True
-        result["stop_reason"] = "pagination_previous_clicked"
-        return result
-    if not previous_button.get("found") or not previous_button.get("enabled"):
-        result["found"] = False
-        result["enabled"] = False
-        result["previous_page_available"] = False
-        result["stop_reason"] = (
-            previous_button.get("stop_reason") or "first_page_reached"
-        )
-        return result
-    return result
+    return cdp_navigation_helpers.find_and_click_previous_listing_page(
+        page,
+        current_page_number,
+        click_previous_listing_page_diagnostic=_click_previous_listing_page_diagnostic,
+    )
 
 
 def inspect_next_page_availability(page, current_page_number: int) -> dict:
