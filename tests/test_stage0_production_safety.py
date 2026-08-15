@@ -1609,7 +1609,7 @@ def test_interactive_option5_accepts_safe_partial_plan_with_technical_pending_re
                 "total_pending_review": 1,
                 "results": [
                     {
-                        "protocol": "2500999999",
+                        "protocol": "2600001107",
                         "action": "pending_technical_review",
                         "technical_validation_status": "pending_review",
                     }
