@@ -16,6 +16,7 @@ from src.cdp_portal_service import (
 )
 from src.models import PortalSolicitation
 
+from automacao_gd.infrastructure.portal import cdp_navigation
 from automacao_gd.infrastructure.portal import cdp_service
 from automacao_gd.infrastructure.portal.browser import PersistentBrowserPortalGDAutomation
 
@@ -653,6 +654,49 @@ def test_navigate_to_numeric_page_cannot_confirm_active_without_table(
         == "https://gdneoenergiapernambuco.neoenergia.com/detalhe"
     )
     assert result["error"] == "Nao foi possivel detectar a pagina ativa antes da navegacao."
+
+
+def test_numeric_page_target_not_found_prefers_sequential_error() -> None:
+    result = cdp_navigation.build_numeric_page_navigation_result(9)
+    click_result = {
+        "stop_reason": "pagination_numeric_target_not_found",
+    }
+    sequential = {
+        "status": "last_page_reached",
+        "error": "A pagina 9 nao esta mais disponivel no Portal.",
+    }
+
+    marked = cdp_navigation.mark_numeric_page_navigation_target_not_found(
+        result,
+        target_page_number=9,
+        click_result=click_result,
+        sequential_result=sequential,
+    )
+
+    assert marked is result
+    assert marked["status"] == "last_page_reached"
+    assert marked["error"] == "A pagina 9 nao esta mais disponivel no Portal."
+
+
+def test_numeric_page_target_not_found_falls_back_to_click_reason() -> None:
+    result = cdp_navigation.build_numeric_page_navigation_result(9)
+    click_result = {
+        "stop_reason": "pagination_numeric_target_not_found",
+    }
+
+    marked = cdp_navigation.mark_numeric_page_navigation_target_not_found(
+        result,
+        target_page_number=9,
+        click_result=click_result,
+        sequential_result=None,
+    )
+
+    assert marked is result
+    assert marked["status"] == "pagination_numeric_target_not_found"
+    assert marked["error"] == (
+        "Pagina numerica de origem nao encontrada: 9. "
+        "Motivo: pagination_numeric_target_not_found"
+    )
 
 
 def test_portal_listing_reader_accepts_identification_code_header() -> None:

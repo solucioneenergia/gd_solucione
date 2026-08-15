@@ -3970,15 +3970,11 @@ def navigate_to_numeric_page(page, target_page_number: int) -> dict:
                         }
                     )
                     return result
-                result["status"] = (
-                    sequential.get("status")
-                    or click_result.get("stop_reason")
-                    or "pagination_numeric_target_not_found"
-                )
-                result["error"] = (
-                    sequential.get("error")
-                    or "Pagina numerica de origem nao encontrada: "
-                    f"{target}. Motivo: {click_result.get('stop_reason')}"
+                cdp_navigation_helpers.mark_numeric_page_navigation_target_not_found(
+                    result,
+                    target_page_number=target,
+                    click_result=click_result,
+                    sequential_result=sequential,
                 )
                 return result
             if target < active_before:
@@ -4025,23 +4021,18 @@ def navigate_to_numeric_page(page, target_page_number: int) -> dict:
                         }
                     )
                     return result
-                result["status"] = (
-                    sequential.get("status")
-                    or click_result.get("stop_reason")
-                    or "pagination_numeric_target_not_found"
-                )
-                result["error"] = (
-                    sequential.get("error")
-                    or "Pagina numerica de origem nao encontrada: "
-                    f"{target}. Motivo: {click_result.get('stop_reason')}"
+                cdp_navigation_helpers.mark_numeric_page_navigation_target_not_found(
+                    result,
+                    target_page_number=target,
+                    click_result=click_result,
+                    sequential_result=sequential,
                 )
                 return result
-            result["error"] = (
-                "Pagina numerica de origem nao encontrada: "
-                f"{target}. Motivo: {click_result.get('stop_reason')}"
-            )
-            result["status"] = click_result.get(
-                "stop_reason", "pagination_numeric_target_not_found"
+            cdp_navigation_helpers.mark_numeric_page_navigation_target_not_found(
+                result,
+                target_page_number=target,
+                click_result=click_result,
+                sequential_result=None,
             )
             return result
         if not click_result.get("enabled"):

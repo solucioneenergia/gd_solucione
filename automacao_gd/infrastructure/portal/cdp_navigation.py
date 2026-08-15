@@ -251,6 +251,27 @@ def resolve_numeric_page_navigation_active_before(
     return None, True, result
 
 
+def mark_numeric_page_navigation_target_not_found(
+    result: dict,
+    *,
+    target_page_number: int,
+    click_result: dict,
+    sequential_result: dict | None,
+) -> dict:
+    sequential = sequential_result or {}
+    result["status"] = (
+        sequential.get("status")
+        or click_result.get("stop_reason")
+        or "pagination_numeric_target_not_found"
+    )
+    result["error"] = (
+        sequential.get("error")
+        or "Pagina numerica de origem nao encontrada: "
+        f"{target_page_number}. Motivo: {click_result.get('stop_reason')}"
+    )
+    return result
+
+
 def find_and_click_previous_listing_page(
     page,
     current_page_number: int,
