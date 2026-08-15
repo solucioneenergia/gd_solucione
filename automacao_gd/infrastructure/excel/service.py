@@ -20,6 +20,21 @@ from automacao_gd.infrastructure.excel.availability import (
     classify_workbook_write_error,
     validate_workbook_availability,
 )
+from automacao_gd.infrastructure.excel.excel_update_helpers import (
+    OPEN_COMPLETION_TEXT,
+    base_excel_result as _base_excel_result,
+    completion_value_matches as _completion_value_matches,
+    equipment_text_matches as _equipment_text_matches,
+    has_text as _has_text,
+    is_open_completion_value as _is_open_completion_value,
+    normalize_cell as _normalize_cell,
+    normalize_equipment_text as _normalize_equipment_text,
+    payload_value as _payload_value,
+    set_payload_value as _set_payload_value,
+    sheet_name_for_entry_date as _sheet_name_for_entry_date,
+    sheet_name_for_year as _sheet_name_for_year,
+    status_payload as _status_payload,
+)
 from automacao_gd.infrastructure.logging import logger
 from automacao_gd.infrastructure.persistence.atomic import atomic_copy_file
 from automacao_gd.domain.models import GenerationData, PortalSolicitation
@@ -37,7 +52,6 @@ REQUIRED_COLUMNS = [
 MAIN_WORKSHEET_NAMES = ["2022 - 2023", "2024", "2025", "2026"]
 DATE_NUMBER_FORMAT = "dd/mm/yyyy"
 TEXT_NUMBER_FORMAT = "@"
-OPEN_COMPLETION_TEXT = "EM ABERTO"
 TOP_LAYOUT_SCAN_ROWS = 5
 SAFE_LOGO_TEXT = "SOLUCIONE NORDESTE ENERGIA ELÉTRICA"
 SAFE_COLUMN_WIDTHS = {
@@ -1398,66 +1412,11 @@ def update_row_by_protocol(
     return target_row
 
 
-def _base_excel_result(protocol: str, dry_run: bool) -> dict:
-    return {
-        "success": False,
-        "can_write": False,
-        "protocol": protocol,
-        "row_found": False,
-        "row_number": None,
-        "created_new_row": False,
-        "backup_path": None,
-        "dry_run": dry_run,
-        "worksheet": None,
-        "target_sheet": None,
-        "existing_sheet": None,
-        "source_sheet": None,
-        "source_row": None,
-        "target_row": None,
-        "existing_row": None,
-        "new_row": None,
-        "moved_from": None,
-        "moved_to": None,
-        "entry_date": None,
-        "ingress_no_change": None,
-        "module_no_change": None,
-        "inverter_no_change": None,
-        "equipment_no_change": None,
-        "completion_no_change": None,
-        "completion_action": None,
-        "action": None,
-        "warning": None,
-        "error": None,
-        "code": None,
-        "technical_cause": None,
-    }
-
-
 def _set_workbook_operational_error(result: dict, exc: PermissionError) -> None:
     classified = classify_workbook_write_error(exc)
     result["error"] = classified.user_message
     result["code"] = classified.code.value
     result["technical_cause"] = classified.technical_cause
-
-
-def _status_payload(item: dict) -> dict:
-    status = item.get("excel_status")
-    return status if isinstance(status, dict) else item
-
-
-def _payload_value(item: dict, status: dict, key: str) -> Any:
-    value = item.get(key)
-    return status.get(key) if value is None else value
-
-
-def _set_payload_value(item: dict, status: dict, key: str, value: Any) -> None:
-    item[key] = value
-    if status is not item:
-        status[key] = value
-
-
-def _sheet_name_for_entry_date(entry_dt: date) -> str:
-    return _sheet_name_for_year(entry_dt.year)
 
 
 def _apply_safe_workbook_sheet_layout(ws: Worksheet) -> None:
@@ -1872,12 +1831,6 @@ def get_target_sheet_from_entry_date_or_protocol(
     return None
 
 
-def _sheet_name_for_year(year: int) -> str:
-    if year in {2022, 2023}:
-        return "2022 - 2023"
-    return str(year)
-
-
 def _get_or_prepare_target_sheet(
     wb: Workbook, sheet_map: dict[str, dict], target_sheet: str, dry_run: bool
 ) -> dict:
@@ -2234,39 +2187,6 @@ def _row_required_update_state(
     }
 
 
-def _completion_value_matches(current: Any, expected: Any) -> bool:
-    if expected is None:
-        return True
-    if _is_open_completion_value(expected):
-        return _normalize_cell(current) == OPEN_COMPLETION_TEXT
-    expected_date = parse_date(expected)
-    if expected_date is None:
-        return False
-    return parse_date(current) == expected_date
-
-
-def _is_open_completion_value(value: Any) -> bool:
-    return _normalize_cell(value) == _normalize_cell(OPEN_COMPLETION_TEXT)
-
-
-def _equipment_text_matches(current: Any, expected: str | None) -> bool:
-    if expected is None:
-        return True
-    if not _has_text(expected):
-        return not _has_text(current)
-    return _normalize_equipment_text(current) == _normalize_equipment_text(expected)
-
-
-def _normalize_equipment_text(value: Any) -> str:
-    text = "" if value is None else str(value)
-    lines = [
-        re.sub(r"\s+", " ", line).strip()
-        for line in text.replace("\r\n", "\n").replace("\r", "\n").split("\n")
-        if line.strip()
-    ]
-    return "\n".join(lines)
-
-
 def _copy_row_values(
     source_ws: Worksheet, source_row: int, target_ws: Worksheet, target_row: int
 ) -> None:
@@ -2354,10 +2274,6 @@ def _normalize_header(value: Any) -> str:
     return re.sub(r"\s+", " ", text).strip()
 
 
-def _normalize_cell(value: Any) -> str:
-    return re.sub(r"\s+", "", "" if value is None else str(value)).strip()
-
-
 def _column_by_normalized_name(columns: dict[str, int], normalized_name: str) -> int:
     wanted = re.sub(r"\s+", "", normalized_name)
     for name, column in columns.items():
@@ -2372,10 +2288,6 @@ def _column_by_normalized_name(columns: dict[str, int], normalized_name: str) ->
 def _set_cell_if_value(ws: Worksheet, row: int, column: int, value: str | None) -> None:
     if value is not None:
         ws.cell(row=row, column=column).value = value
-
-
-def _has_text(value: Any) -> bool:
-    return bool(str(value or "").strip())
 
 
 def _ensure_workbook_writable(workbook_path: Path) -> None:

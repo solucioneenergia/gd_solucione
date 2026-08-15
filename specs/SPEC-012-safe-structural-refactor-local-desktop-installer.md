@@ -1,6 +1,6 @@
 # SPEC-012 - Refatoracao estrutural segura e desktop instalavel local
 
-Status: em implementacao incremental - Ciclo 6 Pipeline OP5/full_pipeline.py concluido
+Status: em implementacao incremental - Ciclo 7 Processamento PDF e Excel concluido
 Data: 2026-08-15
 Responsavel: Codex
 Revisores: Operacao GD Neoenergia e revisao tecnica independente
@@ -95,10 +95,14 @@ qual e a proxima etapa de desenvolvimento.
   Evidencia: contratos/autorizacao OP5 movidos para `op5_contracts.py`, selecao/congelamento
   de lote movidos para `op5_selection.py` e montagem/cobertura de plano OP5 movidas para
   `op5_plan.py`, mantendo `full_pipeline.py` como fachada publica.
-- [ ] Ciclo 7 - Processamento PDF e Excel sem mudanca de escrita.
-  Proxima etapa: caracterizar `processing_service.py` e `excel/service.py` antes de extrair
-  localizacao de linha, planejamento de escrita, formatacao visual e arquivamento.
+- [x] Ciclo 7 - Processamento PDF e Excel sem mudanca de escrita.
+  Evidencia: helpers puros de resultado, estado e metricas do processamento movidos para
+  `processing_results.py`; helpers puros de payload e comparacao Excel movidos para
+  `excel_update_helpers.py`; `process_downloaded_pdfs` e `update_excel_from_pdf_data`
+  preservados como fachadas sem mudanca de escrita.
 - [ ] Ciclo 8 - Desktop instalavel local com icone e atalho.
+  Proxima etapa: preparar build/instalacao local a partir de `apps/desktop`, icone `.ico`
+  validado e criacao opcional de atalho, sem abrir Portal/CDP nem tocar dados reais.
 - [ ] Ciclo 9 - Validacao final, CI e preparo de release local.
 
 ### Trilhas
@@ -106,7 +110,7 @@ qual e a proxima etapa de desenvolvimento.
 - [ ] Trilha A - Limpeza local ignorada.
   Status: pendente; nao foi misturada com as refatoracoes de codigo ja commitadas.
 - [x] Trilha B - Refatoracao de codigo rastreado.
-  Status: iniciada e com Ciclos 1 a 6 concluidos; deve continuar em commits pequenos e separados.
+  Status: iniciada e com Ciclos 1 a 7 concluidos; deve continuar em commits pequenos e separados.
 
 ## Escopo
 
@@ -273,15 +277,20 @@ O entrypoint `run_full_cdp_pipeline(settings, confirmation=...)` deve permanecer
 `processing_service.py` e `excel/service.py` devem ser refatorados sem alterar regra de escrita.
 As extracoes candidatas sao:
 
-- localizacao de linha/protocolo;
-- writer de linha;
-- formatacao visual da linha;
-- backup e escrita atomica;
-- planejamento de atualizacao;
-- arquivamento;
-- persistencia de state.
+- [x] helpers puros de resultado, estado e metricas do processamento;
+- [x] helpers puros de payload e comparacao Excel;
+- [ ] localizacao de linha/protocolo;
+- [ ] writer de linha;
+- [ ] formatacao visual da linha;
+- [ ] backup e escrita atomica;
+- [ ] planejamento de atualizacao;
+- [ ] arquivamento;
+- [ ] persistencia de state.
 
 Qualquer mudanca de conteudo escrito na planilha fica fora desta SPEC.
+As funcoes de escrita, salvamento, backup, arquivamento e persistencia operacional nao foram
+extraidas no Ciclo 7; mover essas partes exigira caracterizacao propria para evitar mudanca de
+efeito real.
 
 ### RF-007 - Fronteiras de Clean Architecture
 
@@ -619,6 +628,18 @@ anteriores; nao apontar silenciosamente para o frontend legado.
   `python -m pytest tests/test_full_pipeline_facade_contract.py tests/test_option5_batch_authorization.py tests/test_stage0_production_safety.py tests/test_full_cdp_pipeline.py tests/test_op5_stage_b_optimization.py tests/test_operational_output.py tests/test_progress_and_errors.py -q`
   com 270 testes passando.
 - [x] `ruff check` nos arquivos tocados do Ciclo 6 sem erros.
+- [x] Ciclo 7 - Processamento PDF e Excel sem mudanca de escrita concluido com extracao de:
+  `processing_results.py` para helpers puros de resultado/estado/metrica do processamento e
+  `excel_update_helpers.py` para helpers puros de payload/comparacao Excel.
+- [x] `processing_service.py` preservado como fachada para `process_downloaded_pdfs` e helpers
+  historicos; `excel/service.py` preservado como fachada para `update_excel_from_pdf_data` e
+  helpers historicos usados por testes/consumidores.
+- [x] Validacao de caracterizacao do Ciclo 7 executada pelo Codex:
+  `python -m pytest tests/test_processing_excel_facade_contract.py -q` com 3 testes passando.
+- [x] Validacao proporcional executada pelo Codex no fechamento do Ciclo 7:
+  `python -m pytest tests/test_processing_excel_facade_contract.py tests/test_processing_service.py tests/test_processing_resilience.py tests/test_stage1_review_regressions.py tests/test_stage1_terminal_persistence.py tests/test_terminal_operation_safety.py tests/test_equipment_format_v2.py tests/test_full_cdp_pipeline.py tests/test_op5_stage_b_optimization.py tests/test_stage0_production_safety.py -q`
+  com 371 testes passando.
+- [x] `ruff check` nos arquivos tocados do Ciclo 7 sem erros.
 - [ ] Suite completa do projeto apos concluir todos os ciclos.
 - [ ] CI verde apos push final das etapas aplicaveis.
 - [ ] Smoke offline do desktop instalavel.
