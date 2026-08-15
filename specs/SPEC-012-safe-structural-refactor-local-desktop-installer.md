@@ -1,6 +1,6 @@
 # SPEC-012 - Refatoracao estrutural segura e desktop instalavel local
 
-Status: em implementacao incremental - Ciclo 4 CDP download/orcamento indisponivel concluido
+Status: em implementacao incremental - Ciclo 5 CDP montagem de resumo concluido
 Data: 2026-08-15
 Responsavel: Codex
 Revisores: Operacao GD Neoenergia e revisao tecnica independente
@@ -88,10 +88,12 @@ qual e a proxima etapa de desenvolvimento.
   Evidencia: localizacao do orcamento, tentativa de download, timeout curto, descricao de PDF
   indisponivel, paths versionados, PDFs existentes e metadata de download movidos para
   `cdp_downloads.py`, com fachada publica de `cdp_service.py` preservada.
-- [ ] Ciclo 5 - CDP montagem de resumo e reducao final de `cdp_service.py`.
-  Proxima etapa: caracterizar e extrair montagem/contadores de resumo sem alterar OP5, CLI,
-  Excel ou arquivamento.
+- [x] Ciclo 5 - CDP montagem de resumo e reducao final de `cdp_service.py`.
+  Evidencia: resumo inicial, resultado por protocolo, classificadores de processamento e totais
+  de download movidos para `cdp_summary.py`, com fachada publica de `cdp_service.py` preservada.
 - [ ] Ciclo 6 - Pipeline OP5/full_pipeline.py.
+  Proxima etapa: caracterizar e extrair validacao operacional, montagem do plano, processamento
+  e relatorios sem alterar OP5, CLI, Excel ou arquivamento.
 - [ ] Ciclo 7 - Processamento PDF e Excel sem mudanca de escrita.
 - [ ] Ciclo 8 - Desktop instalavel local com icone e atalho.
 - [ ] Ciclo 9 - Validacao final, CI e preparo de release local.
@@ -101,7 +103,7 @@ qual e a proxima etapa de desenvolvimento.
 - [ ] Trilha A - Limpeza local ignorada.
   Status: pendente; nao foi misturada com as refatoracoes de codigo ja commitadas.
 - [x] Trilha B - Refatoracao de codigo rastreado.
-  Status: iniciada e com Ciclo 1 concluido; deve continuar em commits pequenos e separados.
+  Status: iniciada e com Ciclos 1 a 5 concluidos; deve continuar em commits pequenos e separados.
 
 ## Escopo
 
@@ -236,7 +238,7 @@ A ordem preferida e o estado atual sao:
 3. [x] recuperacao de listagem;
 4. [x] detalhe do protocolo;
 5. [x] download/orcamento indisponivel;
-6. [ ] montagem de resumo.
+6. [x] montagem de resumo.
 
 Cada extracao deve ter teste de caracterizacao antes da mudanca.
 
@@ -591,6 +593,14 @@ anteriores; nao apontar silenciosamente para o frontend legado.
   `python -m pytest tests/test_cdp_downloads.py tests/test_cdp_detail.py tests/test_cdp_service_facade_contract.py tests/test_cdp_portal_navigation.py tests/test_full_cdp_pipeline.py tests/test_op5_stage_b_optimization.py -q`
   com 221 testes passando.
 - [x] `ruff check` nos arquivos tocados do Ciclo 4 sem erros.
+- [x] Ciclo 5 - CDP montagem de resumo concluido em `cdp_summary.py`, mantendo `cdp_service.py`
+  como fachada para `_initial_download_summary`, `_download_result_from_record`,
+  `_result_has_valid_pdf_for_processing`, `_result_is_metadata_only_for_processing` e
+  `_refresh_download_totals`.
+- [x] Validacao proporcional executada pelo Codex no fechamento do Ciclo 5:
+  `python -m pytest tests/test_cdp_summary.py tests/test_cdp_downloads.py tests/test_cdp_detail.py tests/test_cdp_service_facade_contract.py tests/test_cdp_portal_navigation.py tests/test_full_cdp_pipeline.py tests/test_op5_stage_b_optimization.py -q`
+  com 225 testes passando.
+- [x] `ruff check` nos arquivos tocados do Ciclo 5 sem erros.
 - [ ] Suite completa do projeto apos concluir todos os ciclos.
 - [ ] CI verde apos push final das etapas aplicaveis.
 - [ ] Smoke offline do desktop instalavel.

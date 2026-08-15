@@ -167,3 +167,25 @@ def test_cdp_service_keeps_download_signatures() -> None:
     assert should_open_signature.parameters["downloads_root"].default is None
     assert should_open_signature.parameters["reprocess_existing_pdfs"].default is False
     assert should_open_signature.parameters["require_completion_metadata"].default is False
+
+
+def test_cdp_service_keeps_summary_helper_signatures() -> None:
+    initial_signature = inspect.signature(cdp_service._initial_download_summary)
+    result_signature = inspect.signature(cdp_service._download_result_from_record)
+    valid_pdf_signature = inspect.signature(cdp_service._result_has_valid_pdf_for_processing)
+    metadata_only_signature = inspect.signature(
+        cdp_service._result_is_metadata_only_for_processing
+    )
+    refresh_signature = inspect.signature(cdp_service._refresh_download_totals)
+
+    assert list(initial_signature.parameters) == [
+        "started_at",
+        "downloads_root",
+        "max_completed",
+        "reprocess_existing_pdfs",
+        "process_existing_after_skip",
+    ]
+    assert list(result_signature.parameters) == ["record"]
+    assert list(valid_pdf_signature.parameters) == ["result"]
+    assert list(metadata_only_signature.parameters) == ["result"]
+    assert list(refresh_signature.parameters) == ["summary"]
