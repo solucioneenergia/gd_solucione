@@ -6,6 +6,7 @@ Status recomendados: rascunho, proposta, aceita, implementada, rejeitada ou subs
 
 ## Novo padrão
 
+- [SPEC-012 - Refatoracao estrutural segura e desktop instalavel local](SPEC-012-safe-structural-refactor-local-desktop-installer.md) - proposta para planejamento e implementacao incremental.
 - [SPEC-009 — Prontidão segura e auditável do terminal](SPEC-009-terminal-production-readiness.md) — aceita para implementação.
 - [SPEC-000 — Fundação de governança de engenharia](SPEC-000-engineering-governance-foundation.md) — aceita.
 - [SPEC-002 — Auditoria e correção histórica de equipamentos](SPEC-002-historical-equipment-backfill.md) — aceita para implementação.
