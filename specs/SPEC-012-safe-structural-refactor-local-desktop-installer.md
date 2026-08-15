@@ -1,6 +1,6 @@
 # SPEC-012 - Refatoracao estrutural segura e desktop instalavel local
 
-Status: em implementacao incremental - Ciclo 2 CDP recuperacao de listagem concluido
+Status: em implementacao incremental - Ciclo 3 CDP detalhe do protocolo concluido
 Data: 2026-08-15
 Responsavel: Codex
 Revisores: Operacao GD Neoenergia e revisao tecnica independente
@@ -80,10 +80,13 @@ qual e a proxima etapa de desenvolvimento.
 - [x] Ciclo 2 - CDP recuperacao de listagem.
   Evidencia: recuperacao de `Minhas Solicitacoes`, retorno apos detalhe e fallbacks de contexto
   extraidos para `cdp_navigation.py`, com fachada publica de `cdp_service.py` preservada.
-- [ ] Ciclo 3 - CDP detalhe do protocolo.
-  Proxima etapa: caracterizar e extrair abertura/leitura de detalhe do protocolo sem alterar OP5,
-  CLI, Excel ou arquivamento.
+- [x] Ciclo 3 - CDP detalhe do protocolo.
+  Evidencia: clique de acompanhamento, espera de detalhe, leitura de cabecalho, texto do detalhe,
+  status concluido e extracao da conclusao do ponto de conexao movidos para `cdp_detail.py`, com
+  fachada publica de `cdp_service.py` preservada.
 - [ ] Ciclo 4 - CDP download/orcamento indisponivel.
+  Proxima etapa: caracterizar e extrair tentativa de orcamento, timeout curto e PDF indisponivel
+  sem alterar OP5, CLI, Excel ou arquivamento.
 - [ ] Ciclo 5 - CDP montagem de resumo e reducao final de `cdp_service.py`.
 - [ ] Ciclo 6 - Pipeline OP5/full_pipeline.py.
 - [ ] Ciclo 7 - Processamento PDF e Excel sem mudanca de escrita.
@@ -228,7 +231,7 @@ A ordem preferida e o estado atual sao:
 1. [x] leitura da listagem;
 2. [x] navegacao/paginacao;
 3. [x] recuperacao de listagem;
-4. [ ] detalhe do protocolo;
+4. [x] detalhe do protocolo;
 5. [ ] download/orcamento indisponivel;
 6. [ ] montagem de resumo.
 
@@ -568,6 +571,14 @@ anteriores; nao apontar silenciosamente para o frontend legado.
   `python -m pytest tests/test_cdp_service_facade_contract.py tests/test_cdp_portal_navigation.py tests/test_full_cdp_pipeline.py tests/test_op5_stage_b_optimization.py -q`
   com 207 testes passando.
 - [x] `ruff check` nos arquivos tocados do Ciclo 2 sem erros.
+- [x] Ciclo 3 - CDP detalhe do protocolo concluido em `cdp_detail.py`, mantendo `cdp_service.py`
+  como fachada para `click_follow_eye_button`, `wait_detail_loaded`,
+  `extract_detail_header`, `extract_completion_date`,
+  `extract_point_of_connection_completion` e `detail_has_completed_status`.
+- [x] Validacao proporcional executada pelo Codex no fechamento do Ciclo 3:
+  `python -m pytest tests/test_cdp_detail.py tests/test_cdp_service_facade_contract.py tests/test_cdp_portal_navigation.py tests/test_full_cdp_pipeline.py tests/test_op5_stage_b_optimization.py -q`
+  com 214 testes passando.
+- [x] `ruff check` nos arquivos tocados do Ciclo 3 sem erros.
 - [ ] Suite completa do projeto apos concluir todos os ciclos.
 - [ ] CI verde apos push final das etapas aplicaveis.
 - [ ] Smoke offline do desktop instalavel.

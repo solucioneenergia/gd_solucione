@@ -112,3 +112,24 @@ def test_cdp_service_keeps_listing_recovery_signatures() -> None:
         after_detail_signature.parameters["allow_active_navigation"].kind
         is inspect.Parameter.KEYWORD_ONLY
     )
+
+
+def test_cdp_service_keeps_protocol_detail_signatures() -> None:
+    click_signature = inspect.signature(cdp_service.click_follow_eye_button)
+    header_signature = inspect.signature(cdp_service.extract_detail_header)
+    completion_signature = inspect.signature(
+        cdp_service.extract_point_of_connection_completion
+    )
+    completion_date_signature = inspect.signature(cdp_service.extract_completion_date)
+    completed_status_signature = inspect.signature(cdp_service.detail_has_completed_status)
+    wait_signature = inspect.signature(cdp_service.wait_detail_loaded)
+
+    assert list(click_signature.parameters) == ["row_locator", "action_cell_index"]
+    assert click_signature.parameters["action_cell_index"].default is None
+    assert list(header_signature.parameters) == ["page"]
+    assert list(completion_signature.parameters) == ["page", "protocol"]
+    assert completion_signature.parameters["protocol"].default is None
+    assert list(completion_date_signature.parameters) == ["page"]
+    assert list(completed_status_signature.parameters) == ["page"]
+    assert list(wait_signature.parameters) == ["page", "protocol"]
+    assert wait_signature.parameters["protocol"].default is None
