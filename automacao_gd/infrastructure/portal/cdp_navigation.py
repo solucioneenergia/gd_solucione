@@ -165,3 +165,40 @@ def find_and_click_previous_listing_page(
         )
         return result
     return result
+
+
+def find_and_click_next_listing_page(
+    page,
+    current_page_number: int,
+    *,
+    find_and_click_next_numeric_page,
+    click_next_listing_page_diagnostic,
+) -> dict:
+    numeric = find_and_click_next_numeric_page(page, current_page_number)
+    if numeric.get("found"):
+        return numeric
+
+    next_button = click_next_listing_page_diagnostic(page)
+    numeric_links = list(numeric.get("numeric_page_links_found") or [])
+    result = {
+        **next_button,
+        "mode": "next_button",
+        "current_page_number": current_page_number,
+        "target_page_number": current_page_number + 1,
+        "numeric_page_links_found": numeric_links,
+        "numeric_page_links_count": len(numeric_links),
+        "numeric_probe": numeric,
+    }
+    if next_button.get("clicked"):
+        result["found"] = True
+        result["enabled"] = True
+        result["next_page_available"] = True
+        result["stop_reason"] = "pagination_next_clicked"
+        return result
+    if not next_button.get("found") or not next_button.get("enabled"):
+        result["found"] = False
+        result["enabled"] = False
+        result["next_page_available"] = False
+        result["stop_reason"] = "last_page_reached"
+        return result
+    return result

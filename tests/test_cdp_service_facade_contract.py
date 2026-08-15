@@ -59,3 +59,9 @@ def test_cdp_service_keeps_previous_listing_page_signature() -> None:
     signature = inspect.signature(cdp_service.find_and_click_previous_listing_page)
 
     assert list(signature.parameters) == ["page", "current_page_number"]
+
+
+def test_cdp_service_keeps_next_listing_page_signature() -> None:
+    signature = inspect.signature(cdp_service.find_and_click_next_listing_page)
+
+    assert list(signature.parameters) == ["page", "current_page_number"]

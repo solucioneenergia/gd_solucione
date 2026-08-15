@@ -376,6 +376,121 @@ def test_previous_listing_page_reports_first_page_when_not_found(monkeypatch) ->
     assert result["stop_reason"] == "pagination_previous_not_found"
 
 
+def test_next_listing_page_returns_numeric_probe_when_found(monkeypatch) -> None:
+    numeric_result = {
+        "found": True,
+        "mode": "numeric",
+        "target_page_number": 8,
+        "numeric_page_links_found": ["8"],
+    }
+
+    monkeypatch.setattr(
+        cdp_service,
+        "find_and_click_next_numeric_page",
+        lambda page, current_page_number: numeric_result,
+    )
+
+    def unexpected_next_button_probe(page):
+        raise AssertionError("next button probe should not run after numeric match")
+
+    monkeypatch.setattr(
+        cdp_service,
+        "_click_next_listing_page_diagnostic",
+        unexpected_next_button_probe,
+    )
+
+    result = cdp_service.find_and_click_next_listing_page(
+        page=object(),
+        current_page_number=7,
+    )
+
+    assert result is numeric_result
+
+
+def test_next_listing_page_reports_clicked_button_result(monkeypatch) -> None:
+    numeric_result = {
+        "found": False,
+        "numeric_page_links_found": ["7", "9"],
+    }
+
+    monkeypatch.setattr(
+        cdp_service,
+        "find_and_click_next_numeric_page",
+        lambda page, current_page_number: numeric_result,
+    )
+    monkeypatch.setattr(
+        cdp_service,
+        "_click_next_listing_page_diagnostic",
+        lambda page: {
+            "found": True,
+            "enabled": True,
+            "clicked": True,
+            "selector": ".ui-paginator-next",
+            "text": "Proxima",
+            "class_name": "",
+            "stop_reason": None,
+        },
+    )
+
+    result = cdp_service.find_and_click_next_listing_page(
+        page=object(),
+        current_page_number=7,
+    )
+
+    assert result["found"] is True
+    assert result["enabled"] is True
+    assert result["next_page_available"] is True
+    assert result["mode"] == "next_button"
+    assert result["current_page_number"] == 7
+    assert result["target_page_number"] == 8
+    assert result["numeric_page_links_found"] == ["7", "9"]
+    assert result["numeric_page_links_count"] == 2
+    assert result["numeric_probe"] is numeric_result
+    assert result["stop_reason"] == "pagination_next_clicked"
+
+
+def test_next_listing_page_reports_last_page_when_button_not_found(monkeypatch) -> None:
+    numeric_result = {
+        "found": False,
+        "numeric_page_links_found": ["7"],
+    }
+
+    monkeypatch.setattr(
+        cdp_service,
+        "find_and_click_next_numeric_page",
+        lambda page, current_page_number: numeric_result,
+    )
+    monkeypatch.setattr(
+        cdp_service,
+        "_click_next_listing_page_diagnostic",
+        lambda page: {
+            "found": False,
+            "enabled": False,
+            "clicked": False,
+            "selector": None,
+            "text": None,
+            "class_name": None,
+            "stop_reason": "pagination_next_not_found",
+        },
+    )
+
+    result = cdp_service.find_and_click_next_listing_page(
+        page=object(),
+        current_page_number=7,
+    )
+
+    assert result["found"] is False
+    assert result["enabled"] is False
+    assert result["next_page_available"] is False
+    assert result["mode"] == "next_button"
+    assert result["current_page_number"] == 7
+    assert result["target_page_number"] == 8
+    assert result["numeric_page_links_found"] == ["7"]
+    assert result["numeric_page_links_count"] == 1
+    assert result["numeric_probe"] is numeric_result
+    assert result["stop_reason"] == "last_page_reached"
+
+
 def test_portal_listing_reader_accepts_identification_code_header() -> None:
     source = cdp_service.read_current_page_table_with_row_handles.__code__.co_consts
     script = next(item for item in source if isinstance(item, str) and "mapHeader" in item)
